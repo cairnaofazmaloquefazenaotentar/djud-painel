@@ -70,13 +70,21 @@ export async function GET(request: NextRequest) {
           organizacao: { select: { id: true, name: true } },
           responsavel: { select: { id: true, name: true, email: true } },
           criadoPor: { select: { id: true, name: true } },
+          _count: { select: { attachments: true } },
         },
       }),
       db.demanda.count({ where }),
     ]);
 
+    // Map demandas to include attachmentCount
+    const demandasWithCount = demandas.map((demanda: any) => ({
+      ...demanda,
+      attachmentCount: demanda._count?.attachments || 0,
+      _count: undefined, // Remove the _count object from response
+    }));
+
     return NextResponse.json({
-      data: demandas,
+      data: demandasWithCount,
       pagination: {
         page: params.page,
         pageSize: params.pageSize,

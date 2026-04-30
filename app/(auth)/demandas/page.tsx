@@ -29,6 +29,7 @@ interface Demanda {
   organizacao?: { id: string; name: string } | null;
   responsavel?: { id: string; name: string } | null;
   criadoEm: string;
+  attachmentCount?: number;
 }
 
 const statusColors: Record<string, "active" | "warning" | "error" | "pending"> = {
@@ -198,6 +199,15 @@ export default function DemandasPage() {
       header: "Responsável",
       cell: ({ row }) => (
         <span className="text-sm">{row.original.responsavel?.name || "-"}</span>
+      ),
+    },
+    {
+      accessorKey: "attachmentCount",
+      header: "Arquivos",
+      cell: ({ row }) => (
+        <span className="text-sm text-muted-foreground">
+          {row.original.attachmentCount || 0} arquivo{row.original.attachmentCount !== 1 ? "s" : ""}
+        </span>
       ),
     },
     {

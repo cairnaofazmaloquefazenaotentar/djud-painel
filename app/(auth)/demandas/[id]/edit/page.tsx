@@ -8,6 +8,7 @@ import { z } from "zod";
 import { createDemandaSchema } from "@/lib/schemas";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { AttachmentsManager } from "@/components/attachments-manager";
 import { Loader2 } from "lucide-react";
 
 // Use a form-specific schema that matches HTML form inputs (strings)
@@ -29,6 +30,19 @@ const demandaFormSchema = z.object({
 
 type DemandaFormData = z.infer<typeof demandaFormSchema>;
 
+interface Attachment {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  mimeType: string;
+  uploadedAt: string;
+  uploadedBy: {
+    id: string;
+    name: string;
+  };
+  storagePath: string;
+}
+
 interface Demanda {
   id: string;
   numero: string;
@@ -46,6 +60,7 @@ interface Demanda {
   origemDemanda?: string;
   organizacao?: { id: string; name: string };
   responsavel?: { id: string; name: string };
+  attachments?: Attachment[];
 }
 
 export default function EditDemandaPage() {
@@ -62,6 +77,7 @@ export default function EditDemandaPage() {
   const [responsaveis, setResponsaveis] = useState<
     Array<{ id: string; name: string }>
   >([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const form = useForm<DemandaFormData>({
     resolver: zodResolver(demandaFormSchema),
@@ -101,9 +117,13 @@ export default function EditDemandaPage() {
     if (!isNew) {
       const loadDemanda = async () => {
         try {
-          const res = await fetch(`/api/demandas/${demandaId}`);
-          if (res.ok) {
-            const demanda: Demanda = await res.json();
+          const [demandaRes, attachmentsRes] = await Promise.all([
+            fetch(`/api/demandas/${demandaId}`),
+            fetch(`/api/demandas/${demandaId}/attachments`),
+          ]);
+
+          if (demandaRes.ok) {
+            const demanda: Demanda = await demandaRes.json();
             form.reset({
               numero: demanda.numero,
               titulo: demanda.titulo,
@@ -123,6 +143,11 @@ export default function EditDemandaPage() {
               ano: demanda.ano ? String(demanda.ano) : "",
               origemDemanda: demanda.origemDemanda || "",
             });
+          }
+
+          if (attachmentsRes.ok) {
+            const data = await attachmentsRes.json();
+            setAttachments(data.data || []);
           }
         } catch (error) {
           console.error("Erro ao carregar demanda:", error);
@@ -418,6 +443,17 @@ export default function EditDemandaPage() {
               </div>
             </div>
           </div>
+
+          {/* Seção: Anexos - apenas em edit */}
+          {!isNew && (
+            <div className="border-t border-border pt-6">
+              <AttachmentsManager
+                demandaId={demandaId}
+                existingAttachments={attachments}
+                onAttachmentsChange={setAttachments}
+              />
+            </div>
+          )}
 
           {/* Error Message */}
           {form.formState.errors.root && (

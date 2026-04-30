@@ -25,6 +25,7 @@ model User {
   demandasResponsavel     Demanda[]  @relation("DemandaResponsavel")
   demandasCriadas         Demanda[]  @relation("DemandaCriadoPor")
   demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
+  attachments             Attachment[] @relation("UserAttachments")
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -153,6 +154,7 @@ model Demanda {
   metadados                    Json?
   criadoEm                     DateTime          @default(now())
   atualizadoEm                 DateTime          @updatedAt
+  attachments                  Attachment[]
 
   @@index([ano])
   @@index([formaCumprimento])
@@ -163,6 +165,22 @@ model Demanda {
   @@index([organizacaoId])
   @@index([responsavelId])
   @@index([criadoPorId])
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  demandaId    String
+  demanda      Demanda  @relation(fields: [demandaId], references: [id], onDelete: Cascade)
+  fileName     String
+  mimeType     String
+  fileSize     Int
+  storagePath  String
+  uploadedAt   DateTime @default(now())
+  uploadedById String
+  uploadedBy   User     @relation("UserAttachments", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([demandaId])
+  @@index([uploadedById])
 }
 
 model DataSource {
