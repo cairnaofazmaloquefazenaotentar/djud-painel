@@ -60,17 +60,24 @@ const authConfig: NextAuthConfig = {
 
       return true;
     },
-    async session({ session, user }: any) {
-      if (session.user) {
-        session.user.id = user.id;
-        session.user.role = (user as any).role || "OPERATOR";
+    async session({ session, token }: any) {
+      if (session.user && token) {
+        session.user.id = token.id as string;
+        session.user.role = (token.role as string) || "OPERATOR";
       }
       return session;
     },
     async jwt({ token, user }: any) {
       if (user) {
         token.id = user.id;
-        token.role = (user as any).role || "OPERATOR";
+
+        // Buscar role do banco de dados
+        const dbUser = await db.user.findUnique({
+          where: { id: user.id },
+          select: { role: true },
+        });
+
+        token.role = dbUser?.role || "OPERATOR";
       }
       return token;
     },
