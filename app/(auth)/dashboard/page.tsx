@@ -2,18 +2,17 @@
 
 import { useSession, signOut } from "next-auth/react";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/layout/page-header";
 
 export default function DashboardPage() {
   const { data: session } = useSession();
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground mt-2">
-          Bem-vindo ao DJUD Painel — Etapa 2
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description="Bem-vindo ao DJUD Painel — Etapa 3"
+      />
 
       {/* User Info Card */}
       <div className="bg-card border border-border rounded-lg p-6 space-y-4">
