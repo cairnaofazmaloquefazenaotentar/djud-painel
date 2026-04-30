@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
     });
 
     await createAuditLog({
-      userId: session.user.id,
+      userId: session.user.id as string,
       action: "CREATE",
       entity: "User",
       entityId: user.id,

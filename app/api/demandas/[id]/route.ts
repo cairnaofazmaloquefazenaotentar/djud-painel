@@ -97,7 +97,7 @@ export async function PUT(
     }
 
     await createAuditLog({
-      userId: session.user.id,
+      userId: session.user.id as string,
       action: "UPDATE",
       entity: "Demanda",
       entityId: id,
@@ -154,7 +154,7 @@ export async function DELETE(
     });
 
     await createAuditLog({
-      userId: session.user.id,
+      userId: session.user.id as string,
       action: "DELETE",
       entity: "Demanda",
       entityId: id,
