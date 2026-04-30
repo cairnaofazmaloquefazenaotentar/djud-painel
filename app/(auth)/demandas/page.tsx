@@ -65,28 +65,14 @@ export default function DemandasPage() {
   const [prioridade, setPrioridade] = useState(searchParams.get("prioridade") || "");
   const [organizacao, setOrganizacao] = useState(searchParams.get("organizacao") || "");
   const [busca, setBusca] = useState(searchParams.get("busca") || "");
-  const [dataInicio, setDataInicio] = useQueryState("dataInicio", {
-    defaultValue: "",
-  });
-  const [dataFim, setDataFim] = useQueryState("dataFim", { defaultValue: "" });
-  const [uf, setUf] = useQueryState("uf", { defaultValue: "" });
-  const [tipoRepresentacao, setTipoRepresentacao] = useQueryState(
-    "tipoRepresentacao",
-    { defaultValue: "" }
-  );
-  const [areaFinalistica, setAreaFinalistica] = useQueryState("areaFinalistica", {
-    defaultValue: "",
-  });
-  const [formaCumprimento, setFormaCumprimento] = useQueryState(
-    "formaCumprimento",
-    { defaultValue: "" }
-  );
-  const [trfRegiao, setTrfRegiao] = useQueryState("trfRegiao", {
-    defaultValue: "",
-  });
-  const [ordenacao, setOrdenacao] = useQueryState("ordenacao", {
-    defaultValue: "criado",
-  });
+  const [dataInicio, setDataInicio] = useState(searchParams.get("dataInicio") || "");
+  const [dataFim, setDataFim] = useState(searchParams.get("dataFim") || "");
+  const [uf, setUf] = useState(searchParams.get("uf") || "");
+  const [tipoRepresentacao, setTipoRepresentacao] = useState(searchParams.get("tipoRepresentacao") || "");
+  const [areaFinalistica, setAreaFinalistica] = useState(searchParams.get("areaFinalistica") || "");
+  const [formaCumprimento, setFormaCumprimento] = useState(searchParams.get("formaCumprimento") || "");
+  const [trfRegiao, setTrfRegiao] = useState(searchParams.get("trfRegiao") || "");
+  const [ordenacao, setOrdenacao] = useState(searchParams.get("ordenacao") || "criado");
 
   useEffect(() => {
     const fetchMetrics = async () => {

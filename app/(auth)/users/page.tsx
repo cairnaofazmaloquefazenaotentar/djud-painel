@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryState } from "nuqs";
+import { useSearchParams } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -41,6 +41,7 @@ const roleLabels: Record<string, string> = {
 
 export default function UsersPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [total, setTotal] = useState(0);
@@ -51,9 +52,9 @@ export default function UsersPage() {
   }>({ open: false });
 
   // Filtros
-  const [page, setPage] = useQueryState("page", { defaultValue: "1" });
-  const [busca, setBusca] = useQueryState("busca", { defaultValue: "" });
-  const [role, setRole] = useQueryState("role", { defaultValue: "" });
+  const [page, setPage] = useState(searchParams.get("page") || "1");
+  const [busca, setBusca] = useState(searchParams.get("busca") || "");
+  const [role, setRole] = useState(searchParams.get("role") || "");
 
   useEffect(() => {
     const fetchUsers = async () => {

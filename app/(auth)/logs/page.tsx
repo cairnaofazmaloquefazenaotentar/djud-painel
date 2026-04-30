@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryState } from "nuqs";
+import { useSearchParams } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -41,18 +41,19 @@ const actionConfig: Record<string, { status: ActionStatus; label: string }> = {
 };
 
 export default function LogsPage() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const [page, setPage] = useQueryState("page", { defaultValue: "1" });
-  const [busca, setBusca] = useQueryState("busca", { defaultValue: "" });
-  const [action, setAction] = useQueryState("action", { defaultValue: "" });
-  const [entity, setEntity] = useQueryState("entity", { defaultValue: "" });
-  const [dataInicio, setDataInicio] = useQueryState("dataInicio", { defaultValue: "" });
-  const [dataFim, setDataFim] = useQueryState("dataFim", { defaultValue: "" });
+  const [page, setPage] = useState(searchParams.get("page") || "1");
+  const [busca, setBusca] = useState(searchParams.get("busca") || "");
+  const [action, setAction] = useState(searchParams.get("action") || "");
+  const [entity, setEntity] = useState(searchParams.get("entity") || "");
+  const [dataInicio, setDataInicio] = useState(searchParams.get("dataInicio") || "");
+  const [dataFim, setDataFim] = useState(searchParams.get("dataFim") || "");
 
   useEffect(() => {
     const fetchLogs = async () => {
