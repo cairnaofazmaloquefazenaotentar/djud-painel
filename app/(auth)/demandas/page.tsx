@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -14,8 +15,9 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download } from "lucide-react";
+import { Plus, Trash2, Edit2, Download, Lock } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
+import { rolePermissions } from "@/lib/permissions";
 
 interface Demanda {
   id: string;
@@ -46,6 +48,7 @@ const prioridadeColors: Record<string, "active" | "warning" | "error"> = {
 export default function DemandasPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
   const [loading, setLoading] = useState(true);
   const [demandas, setDemandas] = useState<Demanda[]>([]);
   const [total, setTotal] = useState(0);
@@ -55,6 +58,14 @@ export default function DemandasPage() {
     demandaId?: string;
     demandaNumero?: string;
   }>({ open: false });
+
+  // Verificar permissões
+  const userRole = (session?.user as any)?.role || "OPERATOR";
+  const permissions = rolePermissions[userRole as keyof typeof rolePermissions] || [];
+  const canCreate = permissions.includes("demandas:write");
+  const canEdit = permissions.includes("demandas:write");
+  const canDelete = permissions.includes("demandas:delete");
+  const canExport = permissions.includes("export:csv");
 
   // Filtros
   const [page, setPage] = useState(searchParams.get("page") || "1");
@@ -203,30 +214,56 @@ export default function DemandasPage() {
       header: "Ações",
       cell: ({ row }) => (
         <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              router.push(`/demandas/${row.original.id}/edit`)
-            }
-            className="h-8 px-2"
-          >
-            <Edit2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              setDeleteDialog({
-                open: true,
-                demandaId: row.original.id,
-                demandaNumero: row.original.numero,
-              })
-            }
-            className="h-8 px-2 text-destructive hover:text-destructive/90"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          {canEdit ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                router.push(`/demandas/${row.original.id}/edit`)
+              }
+              className="h-8 px-2"
+              title="Editar demanda"
+            >
+              <Edit2 className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled
+              className="h-8 px-2 opacity-50 cursor-not-allowed"
+              title="Sem permissão para editar"
+            >
+              <Lock className="h-4 w-4" />
+            </Button>
+          )}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setDeleteDialog({
+                  open: true,
+                  demandaId: row.original.id,
+                  demandaNumero: row.original.numero,
+                })
+              }
+              className="h-8 px-2 text-destructive hover:text-destructive/90"
+              title="Deletar demanda"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled
+              className="h-8 px-2 opacity-50 cursor-not-allowed"
+              title="Sem permissão para deletar"
+            >
+              <Lock className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       ),
     },
@@ -241,14 +278,23 @@ export default function DemandasPage() {
         description={`${total} demanda${total !== 1 ? "s" : ""} encontrada${total !== 1 ? "s" : ""}`}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleExport}>
-              <Download className="h-4 w-4 mr-2" />
-              Exportar CSV
-            </Button>
-            <Button onClick={() => router.push("/demandas/new")}>
-              <Plus className="h-4 w-4 mr-2" />
-              Nova Demanda
-            </Button>
+            {canExport && (
+              <Button variant="outline" onClick={handleExport}>
+                <Download className="h-4 w-4 mr-2" />
+                Exportar CSV
+              </Button>
+            )}
+            {canCreate ? (
+              <Button onClick={() => router.push("/demandas/new")}>
+                <Plus className="h-4 w-4 mr-2" />
+                Nova Demanda
+              </Button>
+            ) : (
+              <Button disabled title="Sem permissão para criar demandas">
+                <Plus className="h-4 w-4 mr-2" />
+                Nova Demanda
+              </Button>
+            )}
           </div>
         }
       />

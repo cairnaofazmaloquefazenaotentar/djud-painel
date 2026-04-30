@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/page-header";
 import {
@@ -14,8 +15,9 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2 } from "lucide-react";
+import { Plus, Trash2, Edit2, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { rolePermissions } from "@/lib/permissions";
 
 interface User {
   id: string;
@@ -42,6 +44,7 @@ const roleLabels: Record<string, string> = {
 export default function UsersPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { data: session } = useSession();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [total, setTotal] = useState(0);
@@ -50,6 +53,13 @@ export default function UsersPage() {
     userId?: string;
     userName?: string;
   }>({ open: false });
+
+  // Verificar permissões
+  const userRole = (session?.user as any)?.role || "OPERATOR";
+  const permissions = rolePermissions[userRole as keyof typeof rolePermissions] || [];
+  const canCreate = permissions.includes("users:write");
+  const canEdit = permissions.includes("users:write");
+  const canDelete = permissions.includes("users:delete");
 
   // Filtros
   const [page, setPage] = useState(searchParams.get("page") || "1");
@@ -142,30 +152,56 @@ export default function UsersPage() {
       header: "Ações",
       cell: ({ row }) => (
         <div className="flex gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              router.push(`/users/${row.original.id}/edit`)
-            }
-            className="h-8 px-2"
-          >
-            <Edit2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              setDeleteDialog({
-                open: true,
-                userId: row.original.id,
-                userName: row.original.name || "",
-              })
-            }
-            className="h-8 px-2 text-destructive hover:text-destructive/90"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          {canEdit ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                router.push(`/users/${row.original.id}/edit`)
+              }
+              className="h-8 px-2"
+              title="Editar usuário"
+            >
+              <Edit2 className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled
+              className="h-8 px-2 opacity-50 cursor-not-allowed"
+              title="Sem permissão para editar"
+            >
+              <Lock className="h-4 w-4" />
+            </Button>
+          )}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setDeleteDialog({
+                  open: true,
+                  userId: row.original.id,
+                  userName: row.original.name || "",
+                })
+              }
+              className="h-8 px-2 text-destructive hover:text-destructive/90"
+              title="Deletar usuário"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled
+              className="h-8 px-2 opacity-50 cursor-not-allowed"
+              title="Sem permissão para deletar"
+            >
+              <Lock className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       ),
     },
@@ -179,10 +215,17 @@ export default function UsersPage() {
         title="Usuários"
         description="Gestão de usuários e permissões"
         actions={
-          <Button onClick={() => router.push("/users/new")}>
-            <Plus className="h-4 w-4 mr-2" />
-            Novo Usuário
-          </Button>
+          canCreate ? (
+            <Button onClick={() => router.push("/users/new")}>
+              <Plus className="h-4 w-4 mr-2" />
+              Novo Usuário
+            </Button>
+          ) : (
+            <Button disabled title="Sem permissão para criar usuários">
+              <Plus className="h-4 w-4 mr-2" />
+              Novo Usuário
+            </Button>
+          )
         }
       />
 

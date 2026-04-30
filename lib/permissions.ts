@@ -3,7 +3,7 @@ import { Session } from "next-auth";
 export type UserRole = "ADMIN" | "MANAGER" | "OPERATOR";
 
 // Mapeamento de permissões por role
-const rolePermissions: Record<UserRole, string[]> = {
+export const rolePermissions: Record<UserRole, string[]> = {
   ADMIN: [
     // Dashboard
     "dashboard:read",
