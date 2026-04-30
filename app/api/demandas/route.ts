@@ -117,8 +117,8 @@ export async function POST(request: NextRequest) {
     const demanda = await db.demanda.create({
       data: {
         ...data,
-        criadoPorId: session.user.id,
-      },
+        criadoPorId: session.user.id as string,
+      } as any,
       include: {
         organizacao: { select: { id: true, name: true } },
         responsavel: { select: { id: true, name: true } },
