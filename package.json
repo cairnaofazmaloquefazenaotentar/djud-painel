@@ -10,7 +10,9 @@
     "tokens": "tsx design-system/generate-css.ts",
     "tokens:check": "tsx design-system/generate-css.ts --check",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
@@ -43,6 +45,14 @@
     "prisma": "^5.13.0",
     "tailwindcss": "^4",
     "tsx": "^4.7.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "storybook": "8.6.18",
+    "@storybook/react": "8.6.18",
+    "@storybook/nextjs": "8.6.18",
+    "@storybook/addon-essentials": "8.6.18",
+    "@storybook/blocks": "8.6.18",
+    "@storybook/test": "8.6.18",
+    "@storybook/addon-onboarding": "8.6.18",
+    "@storybook/addon-interactions": "8.6.18"
   }
 }
