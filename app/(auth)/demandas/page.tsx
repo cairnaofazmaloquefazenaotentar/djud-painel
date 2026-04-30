@@ -14,7 +14,8 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2 } from "lucide-react";
+import { Plus, Trash2, Edit2, Download } from "lucide-react";
+import { formatDateTime } from "@/lib/utils";
 
 interface Demanda {
   id: string;
@@ -104,6 +105,43 @@ export default function DemandasPage() {
     } catch (error) {
       console.error("Erro ao deletar demanda:", error);
     }
+  };
+
+  const handleExport = async () => {
+    const params = new URLSearchParams();
+    params.append("pageSize", "1000");
+    if (busca) params.append("busca", busca);
+    if (status) params.append("status", status);
+    if (prioridade) params.append("prioridade", prioridade);
+
+    const res = await fetch(`/api/demandas?${params.toString()}`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const csv = [
+      ["Data", "Número", "Título", "Status", "Prioridade", "Responsável", "Criado por"].join(","),
+      ...data.data.map((demanda: Demanda) =>
+        [
+          formatDateTime(demanda.criadoEm),
+          demanda.numero,
+          demanda.titulo,
+          demanda.status || "",
+          demanda.prioridade || "",
+          demanda.responsavel?.name || "",
+          "N/A",
+        ]
+          .map((v) => `"${v}"`)
+          .join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `demandas_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const columns: ColumnDef<Demanda>[] = [
@@ -202,10 +240,16 @@ export default function DemandasPage() {
         title="Demandas"
         description={`${total} demanda${total !== 1 ? "s" : ""} encontrada${total !== 1 ? "s" : ""}`}
         actions={
-          <Button onClick={() => router.push("/demandas/new")}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nova Demanda
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="h-4 w-4 mr-2" />
+              Exportar CSV
+            </Button>
+            <Button onClick={() => router.push("/demandas/new")}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nova Demanda
+            </Button>
+          </div>
         }
       />
 

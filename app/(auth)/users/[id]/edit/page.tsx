@@ -7,6 +7,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { updateUserSchema, CreateUserInput } from "@/lib/user-schemas";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { FormInput } from "@/components/ui/form-input";
+import { FormSelect } from "@/components/ui/form-select";
 import { Loader2 } from "lucide-react";
 
 interface UserFormData {
@@ -117,72 +119,56 @@ export default function EditUserPage() {
       <div className="bg-card border border-border rounded-lg p-6 max-w-2xl">
         <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
           {/* Nome */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Nome</label>
-            <input
-              type="text"
-              placeholder="Nome completo"
-              {...form.register("name")}
-              className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            />
-            {form.formState.errors.name && (
-              <p className="text-sm text-destructive">
-                {form.formState.errors.name.message}
-              </p>
-            )}
-          </div>
+          <FormInput
+            label="Nome"
+            type="text"
+            placeholder="Nome completo"
+            registration={form.register("name")}
+            error={form.formState.errors.name}
+            helperText="Nome completo do usuário no sistema"
+            required
+          />
 
           {/* Email */}
           {isNew && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground">Email</label>
-              <input
-                type="email"
-                placeholder="email@exemplo.com"
-                {...form.register("email")}
-                className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-              {form.formState.errors.email && (
-                <p className="text-sm text-destructive">
-                  {form.formState.errors.email.message}
-                </p>
-              )}
-            </div>
+            <FormInput
+              label="Email"
+              type="email"
+              placeholder="email@exemplo.com"
+              registration={form.register("email")}
+              error={form.formState.errors.email}
+              helperText="Email único para login. Não pode ser alterado depois de criado"
+              required
+            />
           )}
 
           {/* Role */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Role</label>
-            <select
-              {...form.register("role")}
-              className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="OPERATOR">Operador</option>
-              <option value="MANAGER">Gerenciador</option>
-              <option value="ADMIN">Administrador</option>
-            </select>
-            {form.formState.errors.role && (
-              <p className="text-sm text-destructive">
-                {form.formState.errors.role.message}
-              </p>
-            )}
-          </div>
+          <FormSelect
+            label="Função"
+            registration={form.register("role")}
+            error={form.formState.errors.role}
+            helperText="Define o nível de permissão do usuário no sistema"
+            required
+            placeholder="Selecionar função..."
+            options={[
+              { value: "OPERATOR", label: "Operador - Acesso básico (ler)" },
+              { value: "MANAGER", label: "Gerenciador - Acesso intermediário" },
+              { value: "ADMIN", label: "Administrador - Acesso total" },
+            ]}
+          />
 
           {/* Organização */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Organização</label>
-            <select
-              {...form.register("organizacaoId")}
-              className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">Selecionar organização...</option>
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <FormSelect
+            label="Organização"
+            registration={form.register("organizacaoId")}
+            error={form.formState.errors.organizacaoId}
+            helperText="Organização responsável. Deixe em branco se não aplicável"
+            placeholder="Selecionar organização..."
+            options={organizations.map((org) => ({
+              value: org.id,
+              label: org.name,
+            }))}
+          />
 
           {/* Error */}
           {form.formState.errors.root && (
