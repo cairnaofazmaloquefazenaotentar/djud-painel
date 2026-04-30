@@ -7,16 +7,17 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
     const demanda = await db.demanda.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         organizacao: { select: { id: true, name: true } },
         responsavel: { select: { id: true, name: true, email: true } },
@@ -43,9 +44,10 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
@@ -60,7 +62,7 @@ export async function PUT(
     }
 
     const demanda = await db.demanda.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!demanda) {
@@ -74,7 +76,7 @@ export async function PUT(
     const data = updateDemandaSchema.parse(body);
 
     const updated = await db.demanda.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         ...data,
         atualizadoPorId: session.user.id,

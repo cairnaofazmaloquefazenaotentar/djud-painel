@@ -7,16 +7,17 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
     const user = await db.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         name: true,
@@ -47,16 +48,17 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
     const isAdmin = hasRole(session.user as any, "ADMIN");
-    if (!isAdmin && session.user.id !== params.id) {
+    if (!isAdmin && session.user.id !== id) {
       return NextResponse.json(
         { error: "Sem permissão para editar este usuário" },
         { status: 403 }
@@ -64,7 +66,7 @@ export async function PUT(
     }
 
     const user = await db.user.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!user) {
@@ -86,7 +88,7 @@ export async function PUT(
     }
 
     const updated = await db.user.update({
-      where: { id: params.id },
+      where: { id },
       data,
       select: {
         id: true,
