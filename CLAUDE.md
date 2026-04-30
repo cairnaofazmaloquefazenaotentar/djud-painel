@@ -10,7 +10,7 @@
 - **Tables:** TanStack Table v8 + nuqs (URL state)
 - **Gráficos:** Recharts
 - **Emails:** Resend
-- **Design System:** `design-system/tokens.ts` (oklch + tweakcn) + Storybook 8
+- **Design System:** `design-system/tokens.ts` (oklch + tweakcn)
 - **CI/CD:** GitHub Actions → Vercel
 
 ## Estrutura de Pastas
@@ -78,13 +78,11 @@ Definido em `lib/permissions.ts` via `rolePermissions`.
 
 ```bash
 npm run dev              # Dev server (localhost:3000)
-npm run storybook        # Storybook (localhost:6006)
 npm run tokens           # Regenerar globals.css a partir de tokens.ts
 npm run tokens:check     # Validar sync (usado no CI)
 npm run db:push          # Sync Prisma schema → banco
 npm run build            # Build production
 npm run lint             # ESLint check
-npm run build-storybook  # Build Storybook estático
 ```
 
 ## Variáveis de Ambiente
