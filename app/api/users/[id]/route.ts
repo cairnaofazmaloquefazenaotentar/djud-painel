@@ -1,3 +1,5 @@
+export const runtime = "nodejs";
+
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { updateUserSchema } from "@/lib/user-schemas";
