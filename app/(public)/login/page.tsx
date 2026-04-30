@@ -24,12 +24,15 @@ export default function LoginPage() {
       email,
       password,
       callbackUrl,
-      redirect: true,
+      redirect: false, // Use redirect: false to get the result
     });
 
     if (!result?.ok) {
       setError("Email ou senha inválidos.");
       setIsLoading(false);
+    } else {
+      // If login is successful, redirect manually
+      window.location.href = callbackUrl;
     }
   };
 
