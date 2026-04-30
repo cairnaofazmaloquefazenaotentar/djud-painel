@@ -6,12 +6,29 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "tokens": "tsx design-system/generate-css.ts",
+    "tokens:check": "tsx design-system/generate-css.ts --check",
+    "db:push": "prisma db push",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "next": "16.2.4",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "next-auth": "^4.24.0",
+    "@prisma/client": "^5.13.0",
+    "zod": "^3.22.0",
+    "react-hook-form": "^7.51.0",
+    "@tanstack/react-query": "^5.45.0",
+    "@tanstack/react-table": "^8.17.0",
+    "nuqs": "^2.0.0",
+    "shadcn-ui": "^0.8.0",
+    "recharts": "^2.12.0",
+    "lucide-react": "^0.378.0",
+    "sonner": "^1.4.0",
+    "resend": "^3.0.0",
+    "date-fns": "^3.3.0"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -21,6 +38,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "prisma": "^5.13.0",
+    "tsx": "^4.7.0"
   }
 }

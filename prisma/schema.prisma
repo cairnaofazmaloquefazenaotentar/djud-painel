@@ -1,0 +1,186 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Auth.js standard entities
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(OPERATOR)
+  organizationId String?
+  organization  Organization? @relation(fields: [organizationId], references: [id])
+
+  accounts      Account[]
+  sessions      Session[]
+  auditLogs     AuditLog[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// Backoffice entities
+enum UserRole {
+  ADMIN
+  MANAGER
+  OPERATOR
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
+  active    Boolean  @default(true)
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  name        UserRole
+  description String?
+  permissions Permission[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([name])
+}
+
+model Permission {
+  id      String @id @default(cuid())
+  action  String // e.g., "demandas:read", "users:write"
+  roleId  String
+  role    Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([action, roleId])
+  @@index([roleId])
+}
+
+// DJUD-specific entities
+enum FormaCumprimento {
+  AQUISICAO_DJUD
+  DEPOSITO_JUDICIAL
+  ENTREGA_CEAF
+}
+
+model Demanda {
+  id                           String            @id @default(cuid())
+  projeto                      String
+  ano                          Int
+  origemDemanda                String?
+  status                       String?
+  prioridade                   String?
+  pontoControle                String?
+  trfRegiao                    Int?
+  ufResidencia                 String?
+  ufOcorrencia                 String?
+  municipio                    String?
+  tipoRepresentacaoJudicial    String?
+  areaTematicaConsultor        String?
+  areaFinalisticaMs            String?
+  formaCumprimento             FormaCumprimento?
+  valorEstimado                Decimal?
+  createdAt                    DateTime          @default(now())
+  updatedAt                    DateTime          @updatedAt
+
+  @@index([ano])
+  @@index([formaCumprimento])
+  @@index([trfRegiao])
+  @@index([ufResidencia])
+  @@index([status])
+  @@index([prioridade])
+}
+
+model DataSource {
+  id              String   @id @default(cuid())
+  fileName        String
+  importedAt      DateTime @default(now())
+  importedByUserId String
+  rowCount        Int
+  sha256          String   @unique
+  schemaVersion   String   @default("1.0")
+  status          String   @default("ACTIVE") // ACTIVE, ARCHIVED, FAILED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([sha256])
+}
+
+model UserView {
+  id         String   @id @default(cuid())
+  userId     String
+  name       String
+  querystring String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // create, update, delete, login, export, import
+  entity    String   // demanda, user, organization, role
+  entityId  String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entity])
+  @@index([createdAt])
+}
