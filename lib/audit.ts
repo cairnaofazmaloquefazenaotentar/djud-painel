@@ -2,9 +2,10 @@ import { db } from "./db";
 
 export interface CreateAuditLogInput {
   userId: string;
-  action: "create" | "read" | "update" | "delete" | "login" | "logout" | "export" | "import";
-  entity: string; // e.g., "demanda", "user", "organization"
+  action: "CREATE" | "READ" | "UPDATE" | "DELETE" | "LOGIN" | "LOGOUT" | "EXPORT" | "IMPORT" | "create" | "read" | "update" | "delete" | "login" | "logout" | "export" | "import";
+  entity: string; // e.g., "Demanda", "User", "Organization"
   entityId?: string;
+  changes?: Record<string, any>;
   metadata?: Record<string, any>;
 }
 
@@ -13,16 +14,17 @@ export async function createAuditLog({
   action,
   entity,
   entityId,
+  changes,
   metadata,
 }: CreateAuditLogInput) {
   try {
     await db.auditLog.create({
       data: {
         userId,
-        action,
+        action: action.toUpperCase(),
         entity,
         entityId,
-        metadata,
+        changes: changes || metadata,
       },
     });
   } catch (error) {

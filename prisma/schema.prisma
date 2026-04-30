@@ -18,11 +18,14 @@ model User {
   organizationId String?
   organization  Organization? @relation(fields: [organizationId], references: [id])
 
-  accounts      Account[]
-  sessions      Session[]
-  auditLogs     AuditLog[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  accounts                Account[]
+  sessions                Session[]
+  auditLogs               AuditLog[]
+  demandasResponsavel     Demanda[]  @relation("DemandaResponsavel")
+  demandasCriadas         Demanda[]  @relation("DemandaCriadoPor")
+  demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
+  createdAt               DateTime   @default(now())
+  updatedAt               DateTime   @updatedAt
 
   @@index([organizationId])
   @@index([email])
@@ -74,14 +77,15 @@ enum UserRole {
 }
 
 model Organization {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   name      String
-  slug      String   @unique
+  slug      String    @unique
   logoUrl   String?
-  active    Boolean  @default(true)
+  active    Boolean   @default(true)
   users     User[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  demandas  Demanda[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([slug])
 }
@@ -116,6 +120,9 @@ enum FormaCumprimento {
 
 model Demanda {
   id                           String            @id @default(cuid())
+  numero                       String            @unique
+  titulo                       String
+  descricao                    String            @db.Text
   projeto                      String
   ano                          Int
   origemDemanda                String?
@@ -131,8 +138,20 @@ model Demanda {
   areaFinalisticaMs            String?
   formaCumprimento             FormaCumprimento?
   valorEstimado                Decimal?
-  createdAt                    DateTime          @default(now())
-  updatedAt                    DateTime          @updatedAt
+  dataInicio                   DateTime?
+  dataVencimento               DateTime?
+  organizacaoId                String?
+  organizacao                  Organization?     @relation(fields: [organizacaoId], references: [id], onDelete: SetNull)
+  responsavelId                String?
+  responsavel                  User?             @relation("DemandaResponsavel", fields: [responsavelId], references: [id], onDelete: SetNull)
+  criadoPorId                  String
+  criadoPor                    User              @relation("DemandaCriadoPor", fields: [criadoPorId], references: [id], onDelete: Restrict)
+  atualizadoPorId              String?
+  atualizadoPor                User?             @relation("DemandaAtualizadoPor", fields: [atualizadoPorId], references: [id], onDelete: SetNull)
+  tags                         String[]
+  metadados                    Json?
+  criadoEm                     DateTime          @default(now())
+  atualizadoEm                 DateTime          @updatedAt
 
   @@index([ano])
   @@index([formaCumprimento])
@@ -140,6 +159,9 @@ model Demanda {
   @@index([ufResidencia])
   @@index([status])
   @@index([prioridade])
+  @@index([organizacaoId])
+  @@index([responsavelId])
+  @@index([criadoPorId])
 }
 
 model DataSource {
@@ -173,10 +195,11 @@ model AuditLog {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action    String   // create, update, delete, login, export, import
-  entity    String   // demanda, user, organization, role
+  action    String   // CREATE, READ, UPDATE, DELETE, LOGIN, EXPORT, IMPORT
+  entity    String   // Demanda, User, Organization, Role
   entityId  String?
-  metadata  Json?
+  changes   Json?    // before/after values for updates
+  metadata  Json?    // additional context
   createdAt DateTime @default(now())
 
   @@index([userId])
