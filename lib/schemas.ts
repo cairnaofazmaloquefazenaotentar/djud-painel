@@ -33,3 +33,13 @@ export const listDemandaSchema = z.object({
 export type CreateDemandaInput = z.infer<typeof createDemandaSchema>;
 export type UpdateDemandaInput = z.infer<typeof updateDemandaSchema>;
 export type ListDemandaParams = z.infer<typeof listDemandaSchema>;
+
+export const filterMetricsSchema = z.object({
+  startDate: z.string().datetime().optional(),
+  endDate: z.string().datetime().optional(),
+  status: z.string().optional(),
+  prioridade: z.string().optional(),
+  organizacaoId: z.string().optional(),
+});
+
+export type FilterMetricsInput = z.infer<typeof filterMetricsSchema>;

@@ -1,94 +1,96 @@
 "use client";
 
-import { useSession, signOut } from "next-auth/react";
-import { Button } from "@/components/ui/button";
+import { useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
+import { MetricCard } from "@/components/dashboard/metric-card";
+import { StatusChart } from "@/components/dashboard/charts/status-chart";
+import { PrioridadeChart } from "@/components/dashboard/charts/prioridade-chart";
+import { TimelineChart } from "@/components/dashboard/charts/timeline-chart";
+import { TRFChart } from "@/components/dashboard/charts/trf-chart";
+import { UFChart } from "@/components/dashboard/charts/uf-chart";
+import { TopResponsaveisChart } from "@/components/dashboard/charts/top-responsaveis-chart";
+import { useMetrics } from "@/hooks/useMetrics";
+import { useDashboardFilters } from "@/hooks/useDashboardFilters";
+import { Button } from "@/components/ui/button";
+import { DollarSign, TrendingUp, Loader2 } from "lucide-react";
 
 export default function DashboardPage() {
-  const { data: session } = useSession();
+  const { filters, setDateRange, resetFilters, updateFilters } = useDashboardFilters();
+  const [dateRange, setLocalDateRange] = useState({});
+
+  const metricsFilters = {
+    startDate: filters.startDate ? new Date(filters.startDate) : undefined,
+    endDate: filters.endDate ? new Date(filters.endDate) : undefined,
+    status: filters.status,
+    prioridade: filters.prioridade,
+  };
+
+  const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
+  const hasActiveFilters = Object.values(filters).some((v) => v);
+
+  if (error) {
+    return (
+      <div className="space-y-8">
+        <PageHeader title="Dashboard" description="Análise e métricas" />
+        <div className="rounded-lg border border-destructive bg-destructive/10 p-6">
+          <p className="text-sm text-destructive">Erro ao carregar</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Dashboard"
-        description="Bem-vindo ao DJUD Painel — Etapa 3"
-      />
+      <PageHeader title="Dashboard" description="Análise de demandas judiciais" />
 
-      {/* User Info Card */}
-      <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">
-            Informações do Usuário
-          </h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Autenticado via Auth.js v5 + Google OAuth
-          </p>
+      {isLoading ? (
+        <div className="flex justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
+      ) : metrics ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <MetricCard label="Total de Demandas" value={metrics.totalDemandas} />
+            <MetricCard
+              label="Valor Total Estimado"
+              value={`R$ ${(metrics.totalValorEstimado / 1000).toFixed(1)}k`}
+              icon={<DollarSign className="h-5 w-5" />}
+            />
+            <MetricCard
+              label="Taxa de Resolução"
+              value={`${metrics.taxaResolucao.toFixed(1)}%`}
+              icon={<TrendingUp className="h-5 w-5" />}
+            />
+          </div>
 
-        <div className="space-y-2 text-sm">
-          <div>
-            <span className="text-muted-foreground">Nome:</span>{" "}
-            <span className="text-foreground font-medium">{session?.user?.name}</span>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="rounded-lg border border-border bg-card p-6">
+              <h3 className="text-lg font-semibold mb-4">Por Status</h3>
+              <StatusChart data={metrics.statusDistribution} />
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6">
+              <h3 className="text-lg font-semibold mb-4">Por Prioridade</h3>
+              <PrioridadeChart data={metrics.prioridadeDistribution} />
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6 lg:col-span-2">
+              <h3 className="text-lg font-semibold mb-4">Evolução</h3>
+              <TimelineChart data={metrics.demandasTimeline} />
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6">
+              <h3 className="text-lg font-semibold mb-4">Por TRF</h3>
+              <TRFChart data={metrics.trfRegiaoDistribution} />
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6">
+              <h3 className="text-lg font-semibold mb-4">Top 10 UFs</h3>
+              <UFChart data={metrics.ufResidenciaDistribution} />
+            </div>
+            <div className="rounded-lg border border-border bg-card p-6 lg:col-span-2">
+              <h3 className="text-lg font-semibold mb-4">Top Responsáveis</h3>
+              <TopResponsaveisChart data={metrics.topResponsaveis} />
+            </div>
           </div>
-          <div>
-            <span className="text-muted-foreground">Email:</span>{" "}
-            <span className="text-foreground font-medium">{session?.user?.email}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Role:</span>{" "}
-            <span className="inline-block mt-1 px-2 py-1 bg-primary/10 text-primary text-xs font-medium rounded">
-              {(session?.user as any)?.role || "OPERATOR"}
-            </span>
-          </div>
-        </div>
-
-        <div className="pt-4 border-t border-border">
-          <Button
-            onClick={() => signOut({ callbackUrl: "/login" })}
-            className="bg-destructive hover:bg-destructive/90"
-          >
-            Sair
-          </Button>
-        </div>
-      </div>
-
-      {/* Status Card */}
-      <div className="bg-card border border-border rounded-lg p-6 space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">
-            Status da Etapa 2
-          </h2>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">✅</span>
-            <span className="text-sm">Auth.js v5 + Google OAuth</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">✅</span>
-            <span className="text-sm">Middleware de proteção de rotas</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">✅</span>
-            <span className="text-sm">Controle de acesso por role</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">✅</span>
-            <span className="text-sm">Página de login customizada</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">✅</span>
-            <span className="text-sm">Audit logging + Email templates</span>
-          </div>
-        </div>
-
-        <div className="pt-4 border-t border-border text-sm text-muted-foreground">
-          <p>
-            Próximos passos: Etapa 3 — Layout base (Sidebar, Topbar, PageHeader)
-          </p>
-        </div>
-      </div>
+        </>
+      ) : null}
     </div>
   );
 }
