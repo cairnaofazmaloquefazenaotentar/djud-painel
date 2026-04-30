@@ -1,7 +1,6 @@
-import NextAuth from "next-auth";
+import NextAuth, { type NextAuthConfig } from "next-auth";
 import Google from "next-auth/providers/google";
 import Credentials from "next-auth/providers/credentials";
-import { PrismaAdapter } from "@auth/prisma-adapter";
 import bcrypt from "bcryptjs";
 import { db } from "./db";
 
@@ -10,8 +9,7 @@ const allowedDomains = (process.env.AUTH_ALLOWED_DOMAINS || "")
   .map((d) => d.trim())
   .filter(Boolean);
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: PrismaAdapter(db),
+const authConfig: NextAuthConfig = {
   providers: [
     Google({
       clientId: process.env.AUTH_GOOGLE_ID || "",
@@ -82,7 +80,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/login",
   },
   session: {
-    strategy: "database",
+    strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60,
   },
-});
+  trustHost: true,
+} as NextAuthConfig & { skipCSRFCheck?: boolean };
+
+export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);

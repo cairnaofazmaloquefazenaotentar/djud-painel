@@ -24,14 +24,12 @@ export default function LoginPage() {
       email,
       password,
       callbackUrl,
-      redirect: false,
+      redirect: true,
     });
 
-    if (result?.error) {
+    if (!result?.ok) {
       setError("Email ou senha inválidos.");
       setIsLoading(false);
-    } else if (result?.url) {
-      window.location.href = result.url;
     }
   };
 
