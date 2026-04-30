@@ -124,8 +124,8 @@ model Demanda {
   numero                       String            @unique
   titulo                       String
   descricao                    String            @db.Text
-  projeto                      String
-  ano                          Int
+  projeto                      String?
+  ano                          Int?
   origemDemanda                String?
   status                       String?
   prioridade                   String?
