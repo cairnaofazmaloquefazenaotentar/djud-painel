@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQueryState } from "nuqs";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/page-header";
 import {
   FilterBar,
@@ -55,19 +55,16 @@ const COLORS = [
 ];
 
 export default function DemandasPage() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "details">("overview");
 
-  // Filtros com nuqs
-  const [status, setStatus] = useQueryState("status", { defaultValue: "" });
-  const [prioridade, setPrioridade] = useQueryState("prioridade", {
-    defaultValue: "",
-  });
-  const [organizacao, setOrganizacao] = useQueryState("organizacao", {
-    defaultValue: "",
-  });
-  const [busca, setBusca] = useQueryState("busca", { defaultValue: "" });
+  // Filtros
+  const [status, setStatus] = useState(searchParams.get("status") || "");
+  const [prioridade, setPrioridade] = useState(searchParams.get("prioridade") || "");
+  const [organizacao, setOrganizacao] = useState(searchParams.get("organizacao") || "");
+  const [busca, setBusca] = useState(searchParams.get("busca") || "");
   const [dataInicio, setDataInicio] = useQueryState("dataInicio", {
     defaultValue: "",
   });
