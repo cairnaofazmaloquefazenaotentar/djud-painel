@@ -100,7 +100,7 @@ export async function PUT(
       userId: session.user.id,
       action: "UPDATE",
       entity: "Demanda",
-      entityId: params.id,
+      entityId: id,
       changes,
     });
 
@@ -121,9 +121,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
@@ -138,7 +139,7 @@ export async function DELETE(
     }
 
     const demanda = await db.demanda.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!demanda) {
@@ -149,14 +150,14 @@ export async function DELETE(
     }
 
     await db.demanda.delete({
-      where: { id: params.id },
+      where: { id },
     });
 
     await createAuditLog({
       userId: session.user.id,
       action: "DELETE",
       entity: "Demanda",
-      entityId: params.id,
+      entityId: id,
       changes: demanda,
     });
 

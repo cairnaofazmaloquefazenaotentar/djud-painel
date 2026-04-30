@@ -113,7 +113,7 @@ export async function PUT(
       userId: session.user.id,
       action: "UPDATE",
       entity: "User",
-      entityId: params.id,
+      entityId: id,
       changes,
     });
 
@@ -134,9 +134,10 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params;
     const session = await auth();
     if (!session?.user) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
@@ -150,7 +151,7 @@ export async function DELETE(
       );
     }
 
-    if (params.id === session.user.id) {
+    if (id === session.user.id) {
       return NextResponse.json(
         { error: "Você não pode deletar sua própria conta" },
         { status: 400 }
@@ -158,7 +159,7 @@ export async function DELETE(
     }
 
     const user = await db.user.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!user) {
@@ -169,14 +170,14 @@ export async function DELETE(
     }
 
     await db.user.delete({
-      where: { id: params.id },
+      where: { id },
     });
 
     await createAuditLog({
       userId: session.user.id,
       action: "DELETE",
       entity: "User",
-      entityId: params.id,
+      entityId: id,
       changes: { email: user.email, name: user.name },
     });
 
