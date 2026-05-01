@@ -12,8 +12,20 @@ interface UseMetricsOptions {
 }
 
 export function useMetrics(options: UseMetricsOptions = {}) {
+  // Create stable cache key from normalized options
+  const queryKey = [
+    "metrics",
+    {
+      startDate: options.startDate?.toISOString(),
+      endDate: options.endDate?.toISOString(),
+      status: options.status,
+      prioridade: options.prioridade,
+      organizacaoId: options.organizacaoId,
+    },
+  ];
+
   const query = useQuery<MetricsData>({
-    queryKey: ["metrics", options],
+    queryKey,
     queryFn: async () => {
       const params = new URLSearchParams();
 
