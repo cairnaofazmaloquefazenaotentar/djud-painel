@@ -4,9 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createAuditLog } from "@/lib/audit";
 import { hasPermission } from "@/lib/permissions";
+import { getStorageAdapter } from "@/lib/storage";
 import { NextRequest, NextResponse } from "next/server";
-import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
 import { randomUUID } from "crypto";
 
 // Allowed MIME types and extensions
@@ -125,17 +124,24 @@ export async function POST(
       );
     }
 
-    // Save file
-    const uploadDir = join(process.cwd(), "public", "uploads", "demandas", id);
-    await mkdir(uploadDir, { recursive: true });
-
+    // Upload file using storage adapter
     const fileExtension = file.name.split(".").pop() || "";
     const uniqueFileName = `${randomUUID()}.${fileExtension}`;
-    const filePath = join(uploadDir, uniqueFileName);
-    const storagePath = `/uploads/demandas/${id}/${uniqueFileName}`;
+    const storagePath = `demandas/${id}/${uniqueFileName}`;
 
     const buffer = await file.arrayBuffer();
-    await writeFile(filePath, Buffer.from(buffer));
+    const storage = getStorageAdapter();
+
+    let uploadResult;
+    try {
+      uploadResult = await storage.upload(Buffer.from(buffer), storagePath, file.type);
+    } catch (error) {
+      console.error("Storage upload error:", error);
+      return NextResponse.json(
+        { error: "Erro ao fazer upload do arquivo no storage" },
+        { status: 500 }
+      );
+    }
 
     // Save to database
     const attachment = await db.attachment.create({
@@ -144,7 +150,7 @@ export async function POST(
         fileName: file.name,
         mimeType: file.type,
         fileSize: file.size,
-        storagePath,
+        storagePath: uploadResult.path, // Use path from storage adapter
         uploadedById: session.user.id as string,
       },
       select: {

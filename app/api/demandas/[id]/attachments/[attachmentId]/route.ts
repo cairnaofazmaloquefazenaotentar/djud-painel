@@ -4,9 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createAuditLog } from "@/lib/audit";
 import { hasPermission } from "@/lib/permissions";
+import { getStorageAdapter } from "@/lib/storage";
 import { NextRequest, NextResponse } from "next/server";
-import { unlink } from "fs/promises";
-import { join } from "path";
 
 export async function DELETE(
   request: NextRequest,
@@ -55,13 +54,13 @@ export async function DELETE(
       );
     }
 
-    // Delete file from filesystem
+    // Delete file from storage
     try {
-      const filePath = join(process.cwd(), "public", attachment.storagePath.replace(/^\//, ""));
-      await unlink(filePath);
+      const storage = getStorageAdapter();
+      await storage.delete(attachment.storagePath);
     } catch (error) {
       // Log but don't fail if file doesn't exist
-      console.error("Error deleting physical file:", error);
+      console.error("Error deleting file from storage:", error);
     }
 
     // Delete from database
