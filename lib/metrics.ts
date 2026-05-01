@@ -9,6 +9,7 @@ export interface MetricsData {
   formaCumprimentoDistribution: Array<{ forma: string | null; count: number }>;
   areaTematicaDistribution: Array<{ area: string | null; count: number }>;
   areaFinalisticaDistribution: Array<{ area: string | null; count: number }>;
+  regiaoBrasilDistribution: Array<{ regiao: string | null; count: number }>;
   demandasTimeline: Array<{ date: Date; count: number }>;
   topResponsaveis: Array<{ id: string; name: string | null; count: number }>;
   totalValorEstimado: number;
@@ -52,9 +53,10 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     formaCumprimentoCounts,
     areaTematicaCounts,
     areaFinalisticaCounts,
+    regiaoBrasilCounts,
     responsaveisCounts,
   ] = await Promise.all([
-    // Get all demandas for timeline
+    // Get all demandas for timeline + totals (only needed fields)
     db.demanda.findMany({
       where,
       select: { criadoEm: true, valorEstimado: true, status: true },
@@ -64,6 +66,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       by: ["status"],
       where,
       _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
     }),
     // Prioridade distribution
     db.demanda.groupBy({
@@ -76,12 +79,15 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       by: ["trfRegiao"],
       where,
       _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
     }),
-    // UF Residência distribution
+    // UF Residência distribution (top 15)
     db.demanda.groupBy({
       by: ["ufResidencia"],
-      where,
+      where: { ...where, ufResidencia: { not: null } },
       _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      take: 15,
     }),
     // Forma de Cumprimento distribution
     db.demanda.groupBy({
@@ -89,17 +95,26 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       where,
       _count: { id: true },
     }),
-    // Área Temática distribution
+    // Área Temática (Sprint 8 — campo areaTematica do Excel Redmine)
     db.demanda.groupBy({
-      by: ["areaTematicaConsultor"],
-      where,
+      by: ["areaTematica"],
+      where: { ...where, areaTematica: { not: null } },
       _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      take: 10,
     }),
-    // Área Finálistica distribution
+    // Área Finálistica MS (campo legado)
     db.demanda.groupBy({
       by: ["areaFinalisticaMs"],
       where,
       _count: { id: true },
+    }),
+    // Região Brasil (Sprint 8)
+    db.demanda.groupBy({
+      by: ["regiaoBrasil"],
+      where: { ...where, regiaoBrasil: { not: null } },
+      _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
     }),
     // Top responsáveis
     db.demanda.groupBy({
@@ -142,7 +157,9 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     return sum + (d.valorEstimado?.toNumber() || 0);
   }, 0);
 
-  const fechadas = demandas.filter((d) => d.status === "Fechada").length;
+  // Considera "Concluída" (Redmine) e "Fechada" como resolvidas
+  const STATUS_RESOLVIDOS = new Set(["Fechada", "Concluída", "Encerrada", "Cancelada"]);
+  const fechadas = demandas.filter((d) => d.status && STATUS_RESOLVIDOS.has(d.status)).length;
   const taxaResolucao = demandas.length > 0 ? (fechadas / demandas.length) * 100 : 0;
 
   return {
@@ -167,11 +184,15 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       count: item._count.id,
     })),
     areaTematicaDistribution: areaTematicaCounts.map((item) => ({
-      area: item.areaTematicaConsultor,
+      area: item.areaTematica,
       count: item._count.id,
     })),
     areaFinalisticaDistribution: areaFinalisticaCounts.map((item) => ({
       area: item.areaFinalisticaMs,
+      count: item._count.id,
+    })),
+    regiaoBrasilDistribution: regiaoBrasilCounts.map((item) => ({
+      regiao: item.regiaoBrasil,
       count: item._count.id,
     })),
     demandasTimeline,
