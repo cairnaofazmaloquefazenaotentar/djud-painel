@@ -26,6 +26,13 @@ export async function GET(request: NextRequest) {
       ordem: searchParams.get("ordem"),
     });
 
+    // Novos filtros (Sprint 8)
+    const areaTematica = searchParams.get("areaTematica");
+    const trfRegiao = searchParams.get("trfRegiao");
+    const regiaoBrasil = searchParams.get("regiaoBrasil");
+    const dataEntradaDe = searchParams.get("dataEntradaDe");
+    const dataEntradaAte = searchParams.get("dataEntradaAte");
+
     const skip = (params.page - 1) * params.pageSize;
 
     const where: any = {};
@@ -33,12 +40,22 @@ export async function GET(request: NextRequest) {
     if (params.status) where.status = params.status;
     if (params.prioridade) where.prioridade = params.prioridade;
     if (params.organizacaoId) where.organizacaoId = params.organizacaoId;
+    if (areaTematica) where.areaTematica = { contains: areaTematica, mode: "insensitive" };
+    if (trfRegiao) where.trfRegiao = parseInt(trfRegiao);
+    if (regiaoBrasil) where.regiaoBrasil = regiaoBrasil;
+    if (dataEntradaDe || dataEntradaAte) {
+      where.dataEntradaDJUD = {};
+      if (dataEntradaDe) where.dataEntradaDJUD.gte = new Date(dataEntradaDe);
+      if (dataEntradaAte) where.dataEntradaDJUD.lte = new Date(dataEntradaAte);
+    }
 
     if (params.busca) {
       where.OR = [
         { numero: { contains: params.busca, mode: "insensitive" } },
         { titulo: { contains: params.busca, mode: "insensitive" } },
         { descricao: { contains: params.busca, mode: "insensitive" } },
+        { numeroProcesso: { contains: params.busca, mode: "insensitive" } },
+        { principioAtivo: { contains: params.busca, mode: "insensitive" } },
       ];
     }
 

@@ -27,6 +27,15 @@ const demandaFormSchema = z.object({
   projeto: z.string().optional(),
   ano: z.string().optional(),
   origemDemanda: z.string().optional(),
+  // Sprint 8 — dados judiciais
+  numeroProcesso: z.string().optional(),
+  areaTematica: z.string().optional(),
+  regiaoBrasil: z.string().optional(),
+  objetoAcao: z.string().optional(),
+  principioAtivo: z.string().optional(),
+  dataEntradaDJUD: z.string().optional(),
+  trfRegiao: z.string().optional(),
+  pontoControle: z.string().optional(),
 });
 
 type DemandaFormData = z.infer<typeof demandaFormSchema>;
@@ -59,6 +68,15 @@ interface Demanda {
   projeto?: string;
   ano?: number;
   origemDemanda?: string;
+  // Sprint 8
+  numeroProcesso?: string | null;
+  areaTematica?: string | null;
+  regiaoBrasil?: string | null;
+  objetoAcao?: string | null;
+  principioAtivo?: string | null;
+  dataEntradaDJUD?: string | null;
+  trfRegiao?: number | null;
+  pontoControle?: string | null;
   organizacao?: { id: string; name: string };
   responsavel?: { id: string; name: string };
   attachments?: Attachment[];
@@ -146,6 +164,17 @@ export default function EditDemandaPage() {
               projeto: demanda.projeto || "",
               ano: demanda.ano ? String(demanda.ano) : "",
               origemDemanda: demanda.origemDemanda || "",
+              // Sprint 8 — dados judiciais
+              numeroProcesso: demanda.numeroProcesso || "",
+              areaTematica: demanda.areaTematica || "",
+              regiaoBrasil: demanda.regiaoBrasil || "",
+              objetoAcao: demanda.objetoAcao || "",
+              principioAtivo: demanda.principioAtivo || "",
+              dataEntradaDJUD: demanda.dataEntradaDJUD
+                ? new Date(demanda.dataEntradaDJUD).toISOString().split("T")[0]
+                : "",
+              trfRegiao: demanda.trfRegiao ? String(demanda.trfRegiao) : "",
+              pontoControle: demanda.pontoControle || "",
             });
           }
 
@@ -182,6 +211,15 @@ export default function EditDemandaPage() {
         projeto: data.projeto || undefined,
         ano: data.ano ? Number(data.ano) : undefined,
         origemDemanda: data.origemDemanda || undefined,
+        // Sprint 8
+        numeroProcesso: data.numeroProcesso || undefined,
+        areaTematica: data.areaTematica || undefined,
+        regiaoBrasil: data.regiaoBrasil || undefined,
+        objetoAcao: data.objetoAcao || undefined,
+        principioAtivo: data.principioAtivo || undefined,
+        dataEntradaDJUD: data.dataEntradaDJUD || undefined,
+        trfRegiao: data.trfRegiao ? Number(data.trfRegiao) : undefined,
+        pontoControle: data.pontoControle || undefined,
       };
 
       const method = isNew ? "POST" : "PUT";
@@ -442,6 +480,142 @@ export default function EditDemandaPage() {
                   type="text"
                   placeholder="Ex: Ministerial, Judicial"
                   {...form.register("origemDemanda")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Seção: Dados Judiciais (Sprint 8) */}
+          <div className="border-t border-border pt-6">
+            <h3 className="text-lg font-semibold mb-1 text-foreground">
+              Dados Judiciais
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              Campos provenientes da base Redmine / processo judicial
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Número do Processo */}
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-sm font-medium text-foreground">
+                  Número do Processo
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: 5000904-02.2021.4.03.6006"
+                  {...form.register("numeroProcesso")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring font-mono text-sm"
+                />
+              </div>
+
+              {/* Data de Entrada DJUD */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Data de Entrada DJUD
+                </label>
+                <input
+                  type="date"
+                  {...form.register("dataEntradaDJUD")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              {/* Ponto de Controle */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Ponto de Controle
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Cessar Atos, Entrega Pendente"
+                  {...form.register("pontoControle")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              {/* Grupo Temático */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Grupo Temático
+                </label>
+                <select
+                  {...form.register("areaTematica")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Selecionar grupo temático...</option>
+                  <option value="Medicamentos Oncológicos/Oftalmológicos">
+                    Medicamentos Oncológicos/Oftalmológicos
+                  </option>
+                  <option value="Medicamentos Alto Impacto Financeiro">
+                    Medicamentos Alto Impacto Financeiro
+                  </option>
+                  <option value="Assistência Farmacêutica Básica">
+                    Assistência Farmacêutica Básica
+                  </option>
+                  <option value="Atenção à Saúde">Atenção à Saúde</option>
+                  <option value="Insumos e Equipamentos">Insumos e Equipamentos</option>
+                  <option value="Outros Medicamentos">Outros Medicamentos</option>
+                </select>
+              </div>
+
+              {/* TRF Região */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  TRF Região
+                </label>
+                <select
+                  {...form.register("trfRegiao")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Selecionar TRF...</option>
+                  {[1, 2, 3, 4, 5, 6].map((n) => (
+                    <option key={n} value={String(n)}>
+                      {n}ª Região
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Região Brasil */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Região Brasil
+                </label>
+                <select
+                  {...form.register("regiaoBrasil")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Selecionar região...</option>
+                  <option value="Norte">Norte</option>
+                  <option value="Nordeste">Nordeste</option>
+                  <option value="Centro-Oeste">Centro-Oeste</option>
+                  <option value="Sudeste">Sudeste</option>
+                  <option value="Sul">Sul</option>
+                </select>
+              </div>
+
+              {/* Objeto da Ação */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">
+                  Objeto da Ação
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Medicamento - Oncológico"
+                  {...form.register("objetoAcao")}
+                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              {/* Princípio Ativo */}
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-sm font-medium text-foreground">
+                  Princípio Ativo / Medicamento
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Bevacizumabe, Pembrolizumabe"
+                  {...form.register("principioAtivo")}
                   className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
