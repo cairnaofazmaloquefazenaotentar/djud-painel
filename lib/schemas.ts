@@ -15,6 +15,15 @@ export const createDemandaSchema = z.object({
   projeto: z.string().optional(),
   ano: z.coerce.number().int().optional(),
   origemDemanda: z.string().optional(),
+  // Campos Sprint 8 — dados judiciais Redmine
+  numeroProcesso: z.string().optional(),
+  areaTematica: z.string().optional(),
+  regiaoBrasil: z.string().optional(),
+  objetoAcao: z.string().optional(),
+  principioAtivo: z.string().optional(),
+  dataEntradaDJUD: z.coerce.date().optional(),
+  trfRegiao: z.coerce.number().int().optional(),
+  pontoControle: z.string().optional(),
 });
 
 export const updateDemandaSchema = createDemandaSchema.partial();
