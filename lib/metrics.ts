@@ -2,46 +2,63 @@ import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 
 export interface MetricsData {
-  statusDistribution: Array<{ status: string; count: number }>;
-  prioridadeDistribution: Array<{ prioridade: string; count: number }>;
-  trfRegiaoDistribution: Array<{ trf: number | null; count: number }>;
-  ufResidenciaDistribution: Array<{ uf: string | null; count: number }>;
-  formaCumprimentoDistribution: Array<{ forma: string | null; count: number }>;
-  areaTematicaDistribution: Array<{ area: string | null; count: number }>;
-  areaFinalisticaDistribution: Array<{ area: string | null; count: number }>;
-  regiaoBrasilDistribution: Array<{ regiao: string | null; count: number }>;
+  // ── Indicadores principais ──────────────────────────────────────────────────
+  totalDemandas:       number;
+  demandasAtivas:      number;   // passivo de processos ativos (não resolvidos)
+  demandasCriticas:    number;   // prioridade Alta + Crítica
+  taxaResolucao:       number;
+  totalValorEstimado:  number;
+
+  // ── Dimensionamento da demanda ───────────────────────────────────────────────
+  topMedicamentosDistribution:  Array<{ medicamento: string | null; count: number }>;
+  areaTematicaDistribution:     Array<{ area: string | null; count: number }>;
+  objetoAcaoDistribution:       Array<{ objeto: string | null; count: number }>;
+
+  // ── Tendência de judicialização ──────────────────────────────────────────────
   demandasTimeline: Array<{ date: Date; count: number }>;
-  topResponsaveis: Array<{ id: string; name: string | null; count: number }>;
-  totalValorEstimado: number;
-  taxaResolucao: number;
-  totalDemandas: number;
+
+  // ── Gestão de riscos ─────────────────────────────────────────────────────────
+  statusDistribution:      Array<{ status: string; count: number }>;
+  prioridadeDistribution:  Array<{ prioridade: string; count: number }>;
+
+  // ── Análise geográfica ───────────────────────────────────────────────────────
+  regiaoBrasilDistribution:  Array<{ regiao: string | null; count: number }>;
+  trfRegiaoDistribution:     Array<{ trf: number | null; count: number }>;
+  ufResidenciaDistribution:  Array<{ uf: string | null; count: number }>;
+
+  // ── Operacional ─────────────────────────────────────────────────────────────
+  topResponsaveis:              Array<{ id: string; name: string | null; count: number }>;
+  formaCumprimentoDistribution: Array<{ forma: string | null; count: number }>;
+  areaFinalisticaDistribution:  Array<{ area: string | null; count: number }>;
 }
 
 export interface MetricsFilterInput {
-  startDate?: Date;
-  endDate?: Date;
-  status?: string;
-  prioridade?: string;
-  organizacaoId?: string;
+  startDate?:      Date;
+  endDate?:        Date;
+  status?:         string;
+  prioridade?:     string;
+  organizacaoId?:  string;
 }
 
-// Status considerados "resolvidos" (inclui Redmine + legado)
-const STATUS_RESOLVIDOS = ["Fechada", "Concluída", "Encerrada", "Cancelada"];
+// Status considerados "resolvidos"
+const STATUS_RESOLVIDOS   = ["Fechada", "Concluída", "Encerrada", "Cancelada"];
+// Prioridades de risco elevado
+const PRIORIDADES_RISCO   = ["Alta", "Crítica"];
 
 export async function getMetricsData(filters: MetricsFilterInput): Promise<MetricsData> {
-  // WHERE clause para queries Prisma ORM
+  // WHERE clause Prisma ORM
   const where: Prisma.DemandaWhereInput = {};
 
   if (filters.startDate || filters.endDate) {
     where.criadoEm = {};
-    if (filters.startDate) (where.criadoEm as any).gte = filters.startDate;
-    if (filters.endDate)   (where.criadoEm as any).lte = filters.endDate;
+    if (filters.startDate) (where.criadoEm as Prisma.DateTimeFilter).gte = filters.startDate;
+    if (filters.endDate)   (where.criadoEm as Prisma.DateTimeFilter).lte = filters.endDate;
   }
   if (filters.status)        where.status        = filters.status;
   if (filters.prioridade)    where.prioridade    = filters.prioridade;
   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
 
-  // WHERE clause para raw SQL (timeline agrupada por mês no banco — evita carregar 51k registros)
+  // WHERE clause para raw SQL
   const sqlConditions: Prisma.Sql[] = [];
   if (filters.startDate)     sqlConditions.push(Prisma.sql`"criadoEm" >= ${filters.startDate}`);
   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
@@ -53,11 +70,12 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     ? Prisma.sql`WHERE ${Prisma.join(sqlConditions, " AND ")}`
     : Prisma.sql``;
 
-  // ── Executar todas as queries em paralelo ──────────────────────────────────
-  // NENHUM findMany com todos os 51k registros — apenas COUNT/AGGREGATE/GROUPBY
+  // ── Todas as queries em paralelo — ZERO findMany ────────────────────────────
   const [
     totalCount,
     resolvedCount,
+    ativasCount,
+    criticasCount,
     totalValueAgg,
     timelineRaw,
     statusCounts,
@@ -69,17 +87,25 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     areaFinalisticaCounts,
     regiaoBrasilCounts,
     responsaveisCounts,
+    topMedicamentosCounts,
+    objetoAcaoCounts,
   ] = await Promise.all([
-    // Contagem total
+    // Total de processos
     db.demanda.count({ where }),
 
-    // Contagem de resolvidas (Fechada | Concluída | Encerrada | Cancelada)
+    // Resolvidos
     db.demanda.count({ where: { ...where, status: { in: STATUS_RESOLVIDOS } } }),
 
-    // Soma de valor estimado
+    // Passivo ativo (não resolvidos)
+    db.demanda.count({ where: { ...where, status: { notIn: STATUS_RESOLVIDOS } } }),
+
+    // Demandas críticas (risco elevado)
+    db.demanda.count({ where: { ...where, prioridade: { in: PRIORIDADES_RISCO } } }),
+
+    // Valor estimado total
     db.demanda.aggregate({ where, _sum: { valorEstimado: true } }),
 
-    // Timeline mensal via raw SQL (DATE_TRUNC no banco — sem trazer registros)
+    // Série histórica mensal — raw SQL (DATE_TRUNC)
     db.$queryRaw<Array<{ month: Date; count: bigint }>>`
       SELECT DATE_TRUNC('month', "criadoEm") AS month, COUNT(*) AS count
       FROM "Demanda"
@@ -88,17 +114,17 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       ORDER BY month ASC
     `,
 
-    // Distribuição por status
+    // Distribuição por status (gargalos processuais)
     db.demanda.groupBy({
       by: ["status"], where,
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
     }),
 
-    // Distribuição por prioridade
+    // Distribuição por prioridade (perfil de risco)
     db.demanda.groupBy({ by: ["prioridade"], where, _count: { id: true } }),
 
-    // Distribuição por TRF Região
+    // TRF Região
     db.demanda.groupBy({
       by: ["trfRegiao"], where,
       _count: { id: true },
@@ -117,7 +143,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Forma de cumprimento
     db.demanda.groupBy({ by: ["formaCumprimento"], where, _count: { id: true } }),
 
-    // Top 10 Grupos Temáticos (campo Sprint 8 — Redmine Excel)
+    // Grupo Temático — top 10
     db.demanda.groupBy({
       by: ["areaTematica"],
       where: { ...where, areaTematica: { not: null } },
@@ -126,10 +152,10 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       take: 10,
     }),
 
-    // Área Finálistica MS (campo legado)
+    // Área Finálistica MS
     db.demanda.groupBy({ by: ["areaFinalisticaMs"], where, _count: { id: true } }),
 
-    // Região do Brasil (Sprint 8)
+    // Região do Brasil
     db.demanda.groupBy({
       by: ["regiaoBrasil"],
       where: { ...where, regiaoBrasil: { not: null } },
@@ -141,6 +167,25 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     db.demanda.groupBy({
       by: ["responsavelId"],
       where: { ...where, responsavelId: { not: null } },
+      _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      take: 10,
+    }),
+
+    // ── NOVO: Top 15 Princípios Ativos / Medicamentos ─────────────────────────
+    // Pilar de dimensionamento: quais medicamentos e em qual volume
+    db.demanda.groupBy({
+      by: ["principioAtivo"],
+      where: { ...where, principioAtivo: { not: null } },
+      _count: { id: true },
+      orderBy: { _count: { id: "desc" } },
+      take: 15,
+    }),
+
+    // ── NOVO: Objeto da Ação (tipo de medicamento) ────────────────────────────
+    db.demanda.groupBy({
+      by: ["objetoAcao"],
+      where: { ...where, objetoAcao: { not: null } },
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 10,
@@ -159,21 +204,52 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
 
   const responsaveisMap = new Map(responsaveisDetails.map((r) => [r.id, r.name]));
 
-  // Calcular métricas derivadas
-  const totalDemandas     = totalCount;
+  const totalDemandas      = totalCount;
   const totalValorEstimado = totalValueAgg._sum.valorEstimado?.toNumber() ?? 0;
-  const taxaResolucao      = totalDemandas > 0
-    ? (resolvedCount / totalDemandas) * 100
-    : 0;
+  const taxaResolucao      = totalDemandas > 0 ? (resolvedCount / totalDemandas) * 100 : 0;
 
   return {
+    // Indicadores principais
+    totalDemandas,
+    demandasAtivas:     ativasCount,
+    demandasCriticas:   criticasCount,
+    taxaResolucao:      Math.round(taxaResolucao * 100) / 100,
+    totalValorEstimado,
+
+    // Dimensionamento
+    topMedicamentosDistribution: topMedicamentosCounts.map((item) => ({
+      medicamento: item.principioAtivo,
+      count:       item._count.id,
+    })),
+    areaTematicaDistribution: areaTematicaCounts.map((item) => ({
+      area:  item.areaTematica,
+      count: item._count.id,
+    })),
+    objetoAcaoDistribution: objetoAcaoCounts.map((item) => ({
+      objeto: item.objetoAcao,
+      count:  item._count.id,
+    })),
+
+    // Tendência
+    demandasTimeline: timelineRaw.map((r) => ({
+      date:  r.month,
+      count: Number(r.count),
+    })),
+
+    // Gestão de riscos
     statusDistribution: statusCounts.map((item) => ({
       status: item.status || "Sem status",
       count:  item._count.id,
     })),
     prioridadeDistribution: prioridadeCounts.map((item) => ({
-      prioridade: item.prioridade || "Média",
+      prioridade: item.prioridade || "Normal",
       count:      item._count.id,
+    })),
+
+    // Geográfico
+    regiaoBrasilDistribution: regiaoBrasilCounts.map((item) => ({
+      regiao: item.regiaoBrasil,
+      count:  item._count.id,
     })),
     trfRegiaoDistribution: trfCounts.map((item) => ({
       trf:   item.trfRegiao,
@@ -183,33 +259,20 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       uf:    item.ufResidencia,
       count: item._count.id,
     })),
-    formaCumprimentoDistribution: formaCumprimentoCounts.map((item) => ({
-      forma: item.formaCumprimento,
+
+    // Operacional
+    topResponsaveis: responsaveisCounts.map((item) => ({
+      id:    item.responsavelId || "unknown",
+      name:  item.responsavelId ? (responsaveisMap.get(item.responsavelId) ?? null) : null,
       count: item._count.id,
     })),
-    areaTematicaDistribution: areaTematicaCounts.map((item) => ({
-      area:  item.areaTematica,
+    formaCumprimentoDistribution: formaCumprimentoCounts.map((item) => ({
+      forma: item.formaCumprimento,
       count: item._count.id,
     })),
     areaFinalisticaDistribution: areaFinalisticaCounts.map((item) => ({
       area:  item.areaFinalisticaMs,
       count: item._count.id,
     })),
-    regiaoBrasilDistribution: regiaoBrasilCounts.map((item) => ({
-      regiao: item.regiaoBrasil,
-      count:  item._count.id,
-    })),
-    demandasTimeline: timelineRaw.map((r) => ({
-      date:  r.month,
-      count: Number(r.count),
-    })),
-    topResponsaveis: responsaveisCounts.map((item) => ({
-      id:    item.responsavelId || "unknown",
-      name:  item.responsavelId ? (responsaveisMap.get(item.responsavelId) ?? null) : null,
-      count: item._count.id,
-    })),
-    totalValorEstimado,
-    taxaResolucao: Math.round(taxaResolucao * 100) / 100,
-    totalDemandas,
   };
 }

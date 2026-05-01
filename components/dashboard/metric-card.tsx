@@ -7,6 +7,7 @@ interface MetricCardProps {
   label: string;
   value: string | number;
   subtext?: string;
+  description?: string; // alias for subtext
   trend?: number; // percentage change
   icon?: React.ReactNode;
   className?: string;
@@ -16,10 +17,12 @@ export function MetricCard({
   label,
   value,
   subtext,
+  description,
   trend,
   icon,
   className,
 }: MetricCardProps) {
+  const subtitle = subtext ?? description;
   const isTrendPositive = trend && trend > 0;
   const trendIcon = isTrendPositive ? (
     <ArrowUp className="h-4 w-4" />
@@ -38,8 +41,8 @@ export function MetricCard({
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground">{label}</p>
           <p className="text-3xl font-bold text-foreground">{value}</p>
-          {subtext && (
-            <p className="text-xs text-muted-foreground">{subtext}</p>
+          {subtitle && (
+            <p className="text-xs text-muted-foreground">{subtitle}</p>
           )}
         </div>
         {icon && (
