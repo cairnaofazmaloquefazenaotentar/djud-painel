@@ -138,6 +138,16 @@ model Demanda {
   tipoRepresentacaoJudicial    String?
   areaTematicaConsultor        String?
   areaFinalisticaMs            String?
+
+  // Novos campos do Excel (Sprint 8)
+  numeroExterno                String?          // ID original Redmine
+  areaTematica                 String?          // Grupo Temático (Medicamentos Oncológicos, etc)
+  regiaoBrasil                 String?          // Região Brasil (Norte, Nordeste, Centro-Oeste, Sudeste, Sul)
+  objetoAcao                   String?          // Objeto da Ação (Medicamento - Oncológico, etc)
+  principioAtivo               String?          // Princípio_Ativo / Medicamento (nome do medicamento)
+  numeroProcesso               String?          // Ação Judicial Originário (ex: 5000904-02.2021.4.03.6006)
+  dataEntradaDJUD              DateTime?        // Data de Entrada no DJUD
+
   formaCumprimento             FormaCumprimento?
   valorEstimado                Decimal?
   dataInicio                   DateTime?
@@ -165,6 +175,10 @@ model Demanda {
   @@index([organizacaoId])
   @@index([responsavelId])
   @@index([criadoPorId])
+  @@index([areaTematica])
+  @@index([numeroProcesso])
+  @@index([numeroExterno])
+  @@index([regiaoBrasil])
 }
 
 model Attachment {
