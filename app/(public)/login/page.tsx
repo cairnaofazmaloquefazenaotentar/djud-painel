@@ -20,19 +20,30 @@ export default function LoginPage() {
     setIsLoading(true);
     setError("");
 
-    const result = await signIn("credentials", {
-      email,
-      password,
-      callbackUrl,
-      redirect: false, // Use redirect: false to get the result
-    });
+    try {
+      console.log("🔐 Tentando login com email:", email);
+      const result = await signIn("credentials", {
+        email,
+        password,
+        callbackUrl,
+        redirect: false, // Use redirect: false to get the result
+      });
 
-    if (!result?.ok) {
-      setError("Email ou senha inválidos.");
+      console.log("✅ Resultado do signIn:", result);
+
+      if (!result?.ok) {
+        console.error("❌ Login falhou:", result);
+        setError("Email ou senha inválidos.");
+        setIsLoading(false);
+      } else {
+        console.log("✅ Login bem-sucedido! Redirecionando para:", callbackUrl);
+        // If login is successful, redirect manually
+        window.location.href = callbackUrl;
+      }
+    } catch (error) {
+      console.error("❌ Erro durante login:", error);
+      setError("Erro ao fazer login. Tente novamente.");
       setIsLoading(false);
-    } else {
-      // If login is successful, redirect manually
-      window.location.href = callbackUrl;
     }
   };
 
