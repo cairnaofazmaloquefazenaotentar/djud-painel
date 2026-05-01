@@ -9,7 +9,8 @@ import { createDemandaSchema } from "@/lib/schemas";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { AttachmentsManager } from "@/components/attachments-manager";
-import { Loader2 } from "lucide-react";
+import { DemandaExportModal } from "@/components/demanda-export-modal";
+import { Loader2, Download } from "lucide-react";
 
 // Use a form-specific schema that matches HTML form inputs (strings)
 const demandaFormSchema = z.object({
@@ -71,6 +72,8 @@ export default function EditDemandaPage() {
 
   const [loading, setLoading] = useState(!isNew);
   const [submitting, setSubmitting] = useState(false);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [demandaNumero, setDemandaNumero] = useState("");
   const [organizations, setOrganizations] = useState<
     Array<{ id: string; name: string }>
   >([]);
@@ -124,6 +127,7 @@ export default function EditDemandaPage() {
 
           if (demandaRes.ok) {
             const demanda: Demanda = await demandaRes.json();
+            setDemandaNumero(demanda.numero);
             form.reset({
               numero: demanda.numero,
               titulo: demanda.titulo,
@@ -472,6 +476,19 @@ export default function EditDemandaPage() {
             >
               Cancelar
             </Button>
+
+            {!isNew && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsExportModalOpen(true)}
+                disabled={submitting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Exportar
+              </Button>
+            )}
+
             <Button type="submit" disabled={submitting}>
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {isNew ? "Criar Demanda" : "Salvar Alterações"}
@@ -479,6 +496,14 @@ export default function EditDemandaPage() {
           </div>
         </form>
       </div>
+
+      {/* Export Modal */}
+      <DemandaExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        demandaId={demandaId}
+        demandaNumero={demandaNumero}
+      />
     </div>
   );
 }

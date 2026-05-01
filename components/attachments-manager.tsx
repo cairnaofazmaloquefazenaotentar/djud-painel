@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Trash2, Download, AlertCircle } from "lucide-react";
+import { Trash2, Download, Eye, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FormFileInput } from "@/components/ui/form-file-input";
+import { FilePreviewModal } from "@/components/file-preview/file-preview-modal";
+import { useFilePreview } from "@/hooks/useFilePreview";
 import { cn } from "@/lib/utils";
 
 interface Attachment {
@@ -43,6 +45,7 @@ export function AttachmentsManager({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string>();
   const [deleteError, setDeleteError] = useState<string>();
+  const { isOpen, fileData, open, close } = useFilePreview();
 
   const handleFilesSelected = (files: File[]) => {
     setSelectedFiles((prev) => [...prev, ...files]);
@@ -131,6 +134,17 @@ export function AttachmentsManager({
     document.body.removeChild(link);
   };
 
+  const handlePreview = (attachment: Attachment) => {
+    open({
+      id: attachment.id,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      fileSize: attachment.fileSize,
+      uploadedAt: new Date(attachment.uploadedAt),
+      uploadedBy: attachment.uploadedBy,
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -201,6 +215,15 @@ export function AttachmentsManager({
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => handlePreview(attachment)}
+                    title="Visualizar arquivo"
+                    className="h-8 px-2"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => handleDownload(attachment)}
                     title="Baixar arquivo"
                     className="h-8 px-2"
@@ -229,6 +252,20 @@ export function AttachmentsManager({
             Nenhum anexo adicionado ainda
           </p>
         </div>
+      )}
+
+      {/* File Preview Modal */}
+      {fileData && (
+        <FilePreviewModal
+          isOpen={isOpen}
+          onClose={close}
+          attachmentId={fileData.id}
+          fileName={fileData.fileName}
+          mimeType={fileData.mimeType}
+          fileSize={fileData.fileSize}
+          uploadedAt={fileData.uploadedAt}
+          uploadedBy={fileData.uploadedBy}
+        />
       )}
     </div>
   );
