@@ -51,8 +51,8 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
 
   if (filters.startDate || filters.endDate) {
     where.criadoEm = {};
-    if (filters.startDate) (where.criadoEm as Prisma.DateTimeFilter).gte = filters.startDate;
-    if (filters.endDate)   (where.criadoEm as Prisma.DateTimeFilter).lte = filters.endDate;
+    if (filters.startDate) (where.criadoEm as any).gte = filters.startDate;
+    if (filters.endDate)   (where.criadoEm as any).lte = filters.endDate;
   }
   if (filters.status)        where.status        = filters.status;
   if (filters.prioridade)    where.prioridade    = filters.prioridade;

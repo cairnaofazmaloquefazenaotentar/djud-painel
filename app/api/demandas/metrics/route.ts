@@ -14,13 +14,13 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
 
-    // Parse and validate filters
+    // Parse and validate filters — usar ?? undefined para converter null em undefined (Zod não aceita null)
     const filters = filterMetricsSchema.parse({
-      startDate: searchParams.get("startDate"),
-      endDate: searchParams.get("endDate"),
-      status: searchParams.get("status"),
-      prioridade: searchParams.get("prioridade"),
-      organizacaoId: searchParams.get("organizacaoId"),
+      startDate:     searchParams.get("startDate")     ?? undefined,
+      endDate:       searchParams.get("endDate")       ?? undefined,
+      status:        searchParams.get("status")        ?? undefined,
+      prioridade:    searchParams.get("prioridade")    ?? undefined,
+      organizacaoId: searchParams.get("organizacaoId") ?? undefined,
     });
 
     // Convert date strings to Date objects
@@ -40,15 +40,8 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    if (error instanceof Error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 }
-      );
-    }
-    return NextResponse.json(
-      { error: "Erro ao obter métricas" },
-      { status: 500 }
-    );
+    console.error("[metrics] Erro:", error);
+    const message = error instanceof Error ? error.message : "Erro ao obter métricas";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

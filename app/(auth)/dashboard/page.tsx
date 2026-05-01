@@ -105,14 +105,20 @@ export default function DashboardPage() {
           title="Painel de Inteligência DJUD"
           description="Dimensionamento, tendência e gestão de riscos das demandas judiciais de medicamentos"
         />
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-6">
-          <div className="flex items-center gap-2 text-destructive mb-1">
+        <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-3">
+          <div className="flex items-center gap-2 text-destructive">
             <AlertTriangle className="h-4 w-4" />
             <span className="font-medium text-sm">Erro ao carregar métricas</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            Não foi possível consultar o banco de dados. Verifique a conexão e recarregue a página.
+            {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
           </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-xs text-primary underline"
+          >
+            Recarregar página
+          </button>
         </div>
       </div>
     );
