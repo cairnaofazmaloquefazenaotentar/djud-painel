@@ -3,7 +3,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* START GENERATED TOKENS */
+/* ── TEMA DJUD — aplicado em todos os componentes ─────────────────────────── */
 :root {
   --background: oklch(0.9842 0.0034 247.8575);
   --foreground: oklch(0.2795 0.0368 260.0310);
@@ -41,6 +41,12 @@
   --font-serif: Merriweather, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: 0.5rem;
+  --shadow-x: 0px;
+  --shadow-y: 4px;
+  --shadow-blur: 8px;
+  --shadow-spread: -1px;
+  --shadow-opacity: 0.1;
+  --shadow-color: hsl(0 0% 0%);
   --shadow-2xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
   --shadow-xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
   --shadow-sm: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 1px 2px -2px hsl(0 0% 0% / 0.10);
@@ -49,6 +55,8 @@
   --shadow-lg: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 4px 6px -2px hsl(0 0% 0% / 0.10);
   --shadow-xl: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 8px 10px -2px hsl(0 0% 0% / 0.10);
   --shadow-2xl: 0px 4px 8px -1px hsl(0 0% 0% / 0.25);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
 }
 
 .dark {
@@ -88,6 +96,12 @@
   --font-serif: Merriweather, serif;
   --font-mono: JetBrains Mono, monospace;
   --radius: 0.5rem;
+  --shadow-x: 0px;
+  --shadow-y: 4px;
+  --shadow-blur: 8px;
+  --shadow-spread: -1px;
+  --shadow-opacity: 0.1;
+  --shadow-color: hsl(0 0% 0%);
   --shadow-2xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
   --shadow-xs: 0px 4px 8px -1px hsl(0 0% 0% / 0.05);
   --shadow-sm: 0px 4px 8px -1px hsl(0 0% 0% / 0.10), 0px 1px 2px -2px hsl(0 0% 0% / 0.10);
@@ -149,8 +163,10 @@
   --shadow-lg: var(--shadow-lg);
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
+
+  --tracking-normal: var(--tracking-normal);
+  --spacing: var(--spacing);
 }
-/* END GENERATED TOKENS */
 
 @layer base {
   * {
@@ -158,5 +174,21 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    letter-spacing: var(--tracking-normal);
+  }
+
+  /* ── Inputs e selects padronizados com o tema ──────────────────────────── */
+  input, select, textarea {
+    font-family: var(--font-sans);
+  }
+
+  /* ── Cards padronizados ─────────────────────────────────────────────────── */
+  .card-theme {
+    background-color: var(--card);
+    color: var(--card-foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
   }
 }
