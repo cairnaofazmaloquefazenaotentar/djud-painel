@@ -293,7 +293,7 @@ export default function DemandasPage() {
       cell: ({ row }) =>
         row.original.areaTematica ? (
           <span
-            className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full whitespace-nowrap max-w-[160px] truncate block"
+            className="text-xs bg-accent text-accent-foreground px-2 py-0.5 rounded-full whitespace-nowrap max-w-[160px] truncate block border border-border"
             title={row.original.areaTematica}
           >
             {row.original.areaTematica}

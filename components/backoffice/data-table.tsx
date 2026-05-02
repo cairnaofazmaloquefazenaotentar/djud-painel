@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import {
   ColumnDef,
   flexRender,
@@ -11,6 +12,15 @@ import {
 } from "@tanstack/react-table";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { EmptyState } from "./empty-state";
 
 interface DataTableProps<TData> {
@@ -55,15 +65,15 @@ export function DataTable<TData>({
 
   return (
     <div className="space-y-4">
-      <div className="overflow-x-auto border border-border rounded-lg">
-        <table className="w-full">
-          <thead>
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <Table>
+          <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b border-border bg-muted/50">
+              <TableRow key={headerGroup.id} className="bg-muted/40 hover:bg-muted/40">
                 {headerGroup.headers.map((header) => (
-                  <th
+                  <TableHead
                     key={header.id}
-                    className="px-4 py-3 text-left text-sm font-medium text-foreground"
+                    className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-4"
                   >
                     {header.isPlaceholder
                       ? null
@@ -71,90 +81,94 @@ export function DataTable<TData>({
                           header.column.columnDef.header,
                           header.getContext()
                         )}
-                  </th>
+                  </TableHead>
                 ))}
-              </tr>
+              </TableRow>
             ))}
-          </thead>
-          <tbody>
+          </TableHeader>
+          <TableBody>
             {loading ? (
               Array.from({ length: pageSize }).map((_, i) => (
-                <tr key={i} className="border-b border-border hover:bg-muted/50">
+                <TableRow key={i}>
                   {columns.map((_, j) => (
-                    <td key={j} className="px-4 py-3">
-                      <div className="h-4 bg-muted rounded animate-pulse" />
-                    </td>
+                    <TableCell key={j} className="px-4 py-3">
+                      <Skeleton className="h-4 w-full" />
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               ))
             ) : isEmpty ? (
-              <tr>
-                <td colSpan={columns.length} className="px-4 py-12">
+              <TableRow>
+                <TableCell colSpan={columns.length} className="px-4 py-12 text-center">
                   {renderEmptyState ? (
                     renderEmptyState()
                   ) : (
                     <EmptyState title="Nenhum resultado encontrado" />
                   )}
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ) : (
               rows.map((row) => (
-                <tr
+                <TableRow
                   key={row.id}
-                  className={onRowClick ? "border-b border-border hover:bg-muted/50 cursor-pointer" : "border-b border-border hover:bg-muted/50"}
+                  className={onRowClick ? "cursor-pointer" : ""}
                   onClick={() => onRowClick?.(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-4 py-3 text-sm text-foreground">
+                    <TableCell key={cell.id} className="px-4 py-3 text-sm">
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
+                    </TableCell>
                   ))}
-                </tr>
+                </TableRow>
               ))
             )}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
 
       {/* Pagination */}
-      {!isEmpty && (
-        <div className="flex items-center justify-between px-2">
-          <div className="text-sm text-muted-foreground">
+      {!isEmpty && !loading && (
+        <div className="flex items-center justify-between px-1">
+          <div className="text-xs text-muted-foreground">
             Página {table.getState().pagination.pageIndex + 1} de{" "}
             {table.getPageCount()}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-1">
             <Button
               variant="outline"
               size="sm"
               onClick={() => table.setPageIndex(0)}
               disabled={!table.getCanPreviousPage()}
+              className="h-7 w-7 p-0"
             >
-              <ChevronsLeft className="h-4 w-4" />
+              <ChevronsLeft className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
+              className="h-7 w-7 p-0"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
+              className="h-7 w-7 p-0"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => table.setPageIndex(table.getPageCount() - 1)}
               disabled={!table.getCanNextPage()}
+              className="h-7 w-7 p-0"
             >
-              <ChevronsRight className="h-4 w-4" />
+              <ChevronsRight className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>
@@ -162,5 +176,3 @@ export function DataTable<TData>({
     </div>
   );
 }
-
-import React from "react";

@@ -3,7 +3,16 @@
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { ChevronRight, LogOut, User, Settings } from "lucide-react";
-import { useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 
 const breadcrumbLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -27,91 +36,98 @@ function generateBreadcrumbs(pathname: string) {
   }));
 }
 
+const roleLabels: Record<string, string> = {
+  ADMIN: "Administrador",
+  MANAGER: "Gestor",
+  OPERATOR: "Operador",
+};
+
+const roleVariants: Record<string, string> = {
+  ADMIN: "bg-primary/10 text-primary border-primary/20",
+  MANAGER: "bg-secondary text-secondary-foreground border-border",
+  OPERATOR: "bg-muted text-muted-foreground border-border",
+};
+
 export function Topbar() {
   const pathname = usePathname();
   const { data: session } = useSession();
-  const [showDropdown, setShowDropdown] = useState(false);
 
   const breadcrumbs = generateBreadcrumbs(pathname);
+  const role = (session?.user as any)?.role || "OPERATOR";
+  const initials =
+    session?.user?.name
+      ?.split(" ")
+      .map((n) => n[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase() || "U";
 
   return (
-    <div className="h-16 bg-background border-b border-border flex items-center justify-between px-6">
+    <div className="h-16 bg-background border-b border-border flex items-center justify-between px-6 shrink-0">
       {/* Breadcrumbs */}
       <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground font-medium">Dashboard</span>
+        <span className="text-muted-foreground font-medium">DJUD</span>
         {breadcrumbs.map((crumb) => (
           <div key={crumb.href} className="flex items-center gap-2">
-            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-            <span className="text-foreground">{crumb.label}</span>
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <span className="text-foreground font-medium">{crumb.label}</span>
           </div>
         ))}
       </div>
 
-      {/* Right side: Avatar + Dropdown */}
-      <div className="flex items-center gap-4">
-        {/* User Info */}
-        <div className="text-right hidden sm:block">
-          <p className="text-sm font-medium text-foreground">
-            {session?.user?.name}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {(session?.user as any)?.role || "OPERATOR"}
-          </p>
-        </div>
+      {/* Right side: Role badge + Avatar Dropdown */}
+      <div className="flex items-center gap-3">
+        {/* Role badge */}
+        <Badge
+          className={`hidden sm:inline-flex text-xs border ${roleVariants[role] ?? roleVariants.OPERATOR}`}
+          variant="outline"
+        >
+          {roleLabels[role] ?? role}
+        </Badge>
 
-        {/* Avatar Button */}
-        <div className="relative">
-          <button
-            onClick={() => setShowDropdown(!showDropdown)}
-            className="h-10 w-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-colors"
-          >
-            {session?.user?.name?.charAt(0).toUpperCase() || "U"}
-          </button>
-
-          {/* Dropdown Menu */}
-          {showDropdown && (
-            <div className="absolute right-0 mt-2 w-48 bg-card border border-border rounded-lg shadow-lg z-50">
-              {/* Header */}
-              <div className="px-4 py-3 border-b border-border">
-                <p className="text-sm font-medium text-foreground">
-                  {session?.user?.name}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {session?.user?.email}
-                </p>
-              </div>
-
-              {/* Menu Items */}
-              <div className="py-2">
-                <a
-                  href="/settings/profile"
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-accent/10 transition-colors"
-                >
-                  <User className="h-4 w-4" />
-                  Perfil
-                </a>
-                <a
-                  href="/settings/profile"
-                  className="flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-accent/10 transition-colors"
-                >
-                  <Settings className="h-4 w-4" />
-                  Configurações
-                </a>
-              </div>
-
-              {/* Logout */}
-              <div className="border-t border-border py-2">
-                <button
-                  onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-destructive hover:bg-destructive/10 transition-colors text-left"
-                >
-                  <LogOut className="h-4 w-4" />
-                  Sair
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        {/* Avatar + Dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full">
+              <Avatar className="h-9 w-9 cursor-pointer bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
+                <AvatarFallback className="bg-primary text-primary-foreground text-sm font-semibold">
+                  {initials}
+                </AvatarFallback>
+              </Avatar>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel className="flex flex-col gap-0.5">
+              <span className="text-sm font-semibold text-foreground">
+                {session?.user?.name}
+              </span>
+              <span className="text-xs font-normal text-muted-foreground truncate">
+                {session?.user?.email}
+              </span>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href="/settings/profile" className="cursor-pointer">
+                <User className="h-4 w-4 mr-2" />
+                Meu Perfil
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href="/settings/profile" className="cursor-pointer">
+                <Settings className="h-4 w-4 mr-2" />
+                Configurações
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={() => signOut({ callbackUrl: "/login" })}
+              className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sair
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

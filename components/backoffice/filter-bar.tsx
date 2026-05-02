@@ -3,6 +3,15 @@
 import { ReactNode } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
 interface FilterBarProps {
@@ -21,7 +30,7 @@ export function FilterBar({
   return (
     <div
       className={cn(
-        "bg-card border border-border rounded-lg p-4 space-y-4",
+        "bg-card border border-border rounded-lg p-4 space-y-4 shadow-sm",
         className
       )}
     >
@@ -32,15 +41,15 @@ export function FilterBar({
             variant="ghost"
             size="sm"
             onClick={onReset}
-            className="h-8 px-2 text-xs"
+            className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
           >
-            <X className="h-4 w-4 mr-1" />
+            <X className="h-3.5 w-3.5 mr-1" />
             Limpar filtros
           </Button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {children}
       </div>
     </div>
@@ -61,16 +70,16 @@ export function FilterInput({
   onChange,
 }: FilterInputProps) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-muted-foreground">
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium text-muted-foreground">
         {label}
-      </label>
-      <input
+      </Label>
+      <Input
         type="text"
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        className="h-8 text-sm"
       />
     </div>
   );
@@ -92,22 +101,23 @@ export function FilterSelect({
   placeholder = "Selecionar...",
 }: FilterSelectProps) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-muted-foreground">
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium text-muted-foreground">
         {label}
-      </label>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 text-sm border border-input rounded-md bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-      >
-        <option value="">{placeholder}</option>
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+      </Label>
+      <Select value={value || "__all__"} onValueChange={(v) => onChange(v === "__all__" ? "" : v)}>
+        <SelectTrigger className="h-8 text-sm w-full">
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">{placeholder}</SelectItem>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -128,22 +138,22 @@ export function FilterDateRange({
   onEndDateChange,
 }: FilterDateRangeProps) {
   return (
-    <div className="space-y-2">
-      <label className="text-xs font-medium text-muted-foreground">
+    <div className="space-y-1.5">
+      <Label className="text-xs font-medium text-muted-foreground">
         {label}
-      </label>
+      </Label>
       <div className="flex gap-2">
-        <input
+        <Input
           type="date"
           value={startDate}
           onChange={(e) => onStartDateChange(e.target.value)}
-          className="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-8 text-sm flex-1"
         />
-        <input
+        <Input
           type="date"
           value={endDate}
           onChange={(e) => onEndDateChange(e.target.value)}
-          className="flex-1 px-3 py-2 text-sm border border-input rounded-md bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+          className="h-8 text-sm flex-1"
         />
       </div>
     </div>
