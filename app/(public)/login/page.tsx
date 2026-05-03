@@ -19,7 +19,7 @@ import {
   BarChart3,
   CheckCircle2,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 // ── Variantes de animação ────────────────────────────────────────────────────
@@ -124,6 +124,80 @@ const gridCards = [
   },
 ];
 
+// ── Confetti Component (Easter Egg) ────────────────────────────────────────
+
+interface Particle {
+  id: number;
+  x: number;
+  y: number;
+  delay: number;
+}
+
+function Confetti() {
+  const particles: Particle[] = Array.from({ length: 30 }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    delay: Math.random() * 0.3,
+  }));
+
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden">
+      {particles.map((p) => (
+        <motion.div
+          key={p.id}
+          initial={{ x: `${p.x}vw`, y: `-10vh`, opacity: 1 }}
+          animate={{ y: `110vh`, opacity: 0 }}
+          transition={{ duration: 2.5, delay: p.delay, ease: "easeIn" }}
+          className="absolute w-2 h-2 rounded-full"
+          style={{
+            backgroundColor: [
+              "hsl(var(--primary))",
+              "hsl(var(--primary) / 0.8)",
+              "#f59e0b",
+              "#10b981",
+            ][p.id % 4],
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ── MagneticCard Hook ─────────────────────────────────────────────────────
+
+function useMagneticCard() {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [rotation, setRotation] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!cardRef.current) return;
+
+    const rect = cardRef.current.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const rotateX = (e.clientY - centerY) / 10;
+    const rotateY = (centerX - e.clientX) / 10;
+
+    setRotation({ x: rotateX, y: rotateY });
+    setScale(1.02);
+  };
+
+  const handleMouseLeave = () => {
+    setRotation({ x: 0, y: 0 });
+    setScale(1);
+  };
+
+  return {
+    ref: cardRef,
+    rotation,
+    scale,
+    handlers: { onMouseMove: handleMouseMove, onMouseLeave: handleMouseLeave },
+  };
+}
+
 // ── Componente principal ─────────────────────────────────────────────────────
 
 export default function LoginPage() {
@@ -136,6 +210,7 @@ export default function LoginPage() {
   const [password, setPassword]           = useState("");
   const [showPassword, setShowPassword]   = useState(false);
   const [error, setError]                 = useState(searchParams.get("error") || "");
+  const [showConfetti, setShowConfetti]   = useState(false);
 
   const handleCredentialsLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,7 +229,11 @@ export default function LoginPage() {
         setError("Email ou senha inválidos.");
         setIsLoading(false);
       } else {
-        window.location.href = callbackUrl;
+        // Easter egg: show confetti before redirect
+        setShowConfetti(true);
+        setTimeout(() => {
+          window.location.href = callbackUrl;
+        }, 1500);
       }
     } catch {
       setError("Erro ao fazer login. Tente novamente.");
@@ -178,6 +257,8 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-background flex overflow-hidden">
+      {/* ── Confetti Easter Egg ──────────────────────────────────────────────── */}
+      <AnimatePresence>{showConfetti && <Confetti />}</AnimatePresence>
 
       {/* ── Painel esquerdo — grid institucional 2×3 ──────────────────────────── */}
       <motion.div
@@ -230,8 +311,8 @@ export default function LoginPage() {
 
           {/* Cabeçalho — logo */}
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm border border-white/30">
-              <Scale className="h-5 w-5 text-white" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm border border-white/30 group hover:bg-white/30 transition-colors">
+              <Scale className="h-5 w-5 text-white group-hover:scale-110 transition-transform" />
             </div>
             <div>
               <p className="text-sm font-bold text-white leading-tight">DJUD Painel</p>
@@ -239,50 +320,76 @@ export default function LoginPage() {
             </div>
           </div>
 
-          {/* Grid 2×3 de cards */}
-          <div className="flex-1 grid grid-cols-2 gap-4 auto-rows-fr">
-            {gridCards.map((card, i) => (
-              <motion.div
-                key={card.id}
-                custom={i}
-                variants={cardVariants}
-                initial="hidden"
-                animate="visible"
-                className={`relative rounded-2xl overflow-hidden backdrop-blur-sm border border-white/20 transition-all hover:border-white/40 hover:shadow-lg ${card.bgClass}`}
-              >
-                {/* Fundo com overlay */}
-                <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/20" />
+          {/* Grid 2×3 de cards com magnetic effect */}
+          <div className="flex-1 grid grid-cols-2 gap-4 auto-rows-fr perspective">
+            {gridCards.map((card, i) => {
+              // eslint-disable-next-line react-hooks/rules-of-hooks
+              const { ref, rotation, scale, handlers } = useMagneticCard();
 
-                {/* Conteúdo */}
-                <div className="relative z-10 h-full flex flex-col justify-between p-4 xl:p-5">
-                  {card.type === "image" ? (
-                    <>
-                      <card.icon className="h-6 w-6 text-white/90" />
-                      <div>
-                        <p className="text-sm xl:text-base font-bold text-white leading-tight">
-                          {card.title}
-                        </p>
-                        <p className="text-xs text-white/70 mt-1 leading-tight">
-                          {card.description}
+              return (
+                <motion.div
+                  key={card.id}
+                  ref={ref}
+                  custom={i}
+                  variants={cardVariants}
+                  initial="hidden"
+                  animate="visible"
+                  className={`relative rounded-2xl overflow-hidden backdrop-blur-sm border border-white/20 transition-all hover:border-white/40 hover:shadow-2xl cursor-pointer ${card.bgClass}`}
+                  style={{
+                    transform: `perspective(1200px) rotateX(${rotation.x}deg) rotateY(${rotation.y}deg) scale(${scale})`,
+                    transformStyle: "preserve-3d",
+                  }}
+                  {...handlers}
+                >
+                  {/* Fundo com overlay */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/20" />
+
+                  {/* Shine effect on hover */}
+                  <motion.div
+                    className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none"
+                    animate={{ x: [-100, 100] }}
+                    transition={{ duration: 0.6, repeat: Infinity, repeatDelay: 3 }}
+                  />
+
+                  {/* Conteúdo */}
+                  <div className="relative z-10 h-full flex flex-col justify-between p-4 xl:p-5">
+                    {card.type === "image" ? (
+                      <>
+                        <card.icon className="h-6 w-6 text-white/90 group-hover:scale-110 transition-transform" />
+                        <div>
+                          <p className="text-sm xl:text-base font-bold text-white leading-tight">
+                            {card.title}
+                          </p>
+                          <p className="text-xs text-white/70 mt-1 leading-tight">
+                            {card.description}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center h-full gap-2">
+                        <motion.p
+                          className="text-2xl xl:text-3xl font-bold text-white leading-none"
+                          animate={{ scale: [1, 1.05, 1] }}
+                          transition={{ duration: 2, repeat: Infinity }}
+                        >
+                          {card.value}
+                        </motion.p>
+                        <p className="text-xs xl:text-sm text-white/80 text-center leading-tight">
+                          {card.label}
                         </p>
                       </div>
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-full gap-2">
-                      <p className="text-2xl xl:text-3xl font-bold text-white leading-none">
-                        {card.value}
-                      </p>
-                      <p className="text-xs xl:text-sm text-white/80 text-center leading-tight">
-                        {card.label}
-                      </p>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
 
-                {/* Indicador de ativo */}
-                <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-white/60" />
-              </motion.div>
-            ))}
+                  {/* Indicador de ativo */}
+                  <motion.div
+                    className="absolute top-2 right-2 h-2 w-2 rounded-full bg-white/60"
+                    animate={{ scale: [1, 1.3, 1], opacity: [0.6, 1, 0.6] }}
+                    transition={{ duration: 2, repeat: Infinity }}
+                  />
+                </motion.div>
+              );
+            })}
           </div>
 
           {/* Rodapé do painel */}
@@ -333,7 +440,7 @@ export default function LoginPage() {
           {/* Cabeçalho móvel (só em telas pequenas) */}
           <motion.div className="lg:hidden flex items-center gap-3" variants={itemVariants}>
             <div
-              className="flex h-10 w-10 items-center justify-center rounded-xl"
+              className="flex h-10 w-10 items-center justify-center rounded-xl group hover:scale-110 transition-transform"
               style={{ background: "hsl(var(--primary))" }}
             >
               <Scale className="h-5 w-5 text-primary-foreground" />
@@ -378,31 +485,40 @@ export default function LoginPage() {
             variants={itemVariants}
             noValidate
           >
-            {/* Email */}
+            {/* Email com focus glow */}
             <div className="space-y-2">
               <Label htmlFor="email" className="text-sm font-medium">
                 Email institucional
               </Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                aria-required="true"
-                aria-invalid={error === "CredentialsSignin" ? "true" : "false"}
-                placeholder="voce@saude.gov.br"
-                autoComplete="email"
-                className="h-11"
-              />
+              <div className="relative group">
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  aria-required="true"
+                  aria-invalid={error === "CredentialsSignin" ? "true" : "false"}
+                  placeholder="voce@saude.gov.br"
+                  autoComplete="email"
+                  className="h-11 focus:ring-2 focus:ring-primary/50 transition-all relative z-10"
+                />
+                {/* Glow effect on focus */}
+                <motion.div
+                  className="absolute inset-0 rounded-md bg-primary/10 blur-lg -z-10"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  whileFocus={{ opacity: 1, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                />
+              </div>
             </div>
 
-            {/* Senha com toggle show/hide */}
+            {/* Senha com toggle e focus glow */}
             <div className="space-y-2">
               <Label htmlFor="password" className="text-sm font-medium">
                 Senha
               </Label>
-              <div className="relative">
+              <div className="relative group">
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
@@ -413,12 +529,19 @@ export default function LoginPage() {
                   aria-invalid={error === "CredentialsSignin" ? "true" : "false"}
                   placeholder="••••••••"
                   autoComplete="current-password"
-                  className="h-11 pr-11"
+                  className="h-11 pr-11 focus:ring-2 focus:ring-primary/50 transition-all relative z-10"
+                />
+                {/* Glow effect on focus */}
+                <motion.div
+                  className="absolute inset-0 rounded-md bg-primary/10 blur-lg -z-10"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  whileFocus={{ opacity: 1, scale: 1 }}
+                  transition={{ type: "spring", stiffness: 300, damping: 20 }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm hover:scale-110 transition-transform"
                   aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
                   aria-pressed={showPassword}
                 >
@@ -426,10 +549,10 @@ export default function LoginPage() {
                     {showPassword ? (
                       <motion.span
                         key="hide"
-                        initial={{ opacity: 0, scale: 0.7 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.7 }}
-                        transition={{ duration: 0.15 }}
+                        initial={{ opacity: 0, scale: 0.7, rotate: -90 }}
+                        animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                        exit={{ opacity: 0, scale: 0.7, rotate: 90 }}
+                        transition={{ duration: 0.2 }}
                         aria-hidden="true"
                       >
                         <EyeOff className="h-4 w-4" />
@@ -437,10 +560,10 @@ export default function LoginPage() {
                     ) : (
                       <motion.span
                         key="show"
-                        initial={{ opacity: 0, scale: 0.7 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.7 }}
-                        transition={{ duration: 0.15 }}
+                        initial={{ opacity: 0, scale: 0.7, rotate: 90 }}
+                        animate={{ opacity: 1, scale: 1, rotate: 0 }}
+                        exit={{ opacity: 0, scale: 0.7, rotate: -90 }}
+                        transition={{ duration: 0.2 }}
                         aria-hidden="true"
                       >
                         <Eye className="h-4 w-4" />
@@ -451,7 +574,7 @@ export default function LoginPage() {
               </div>
             </div>
 
-            {/* Botão entrar */}
+            {/* Botão entrar com ripple effect */}
             <Button
               type="submit"
               disabled={isLoading || !email || !password}
@@ -466,6 +589,13 @@ export default function LoginPage() {
                   background:
                     "linear-gradient(90deg, transparent, color-mix(in oklch, var(--primary-foreground) 15%, transparent), transparent)",
                 }}
+              />
+              {/* Ripple effect */}
+              <motion.span
+                className="absolute inset-0 bg-white/20"
+                initial={{ scale: 0, opacity: 1 }}
+                whileTap={{ scale: 4, opacity: 0 }}
+                transition={{ duration: 0.6 }}
               />
               <span className="relative flex items-center justify-center gap-2">
                 {isLoading ? (
@@ -487,7 +617,7 @@ export default function LoginPage() {
             <Separator className="flex-1" />
           </motion.div>
 
-          {/* Botão Google */}
+          {/* Botão Google com ripple */}
           <motion.div variants={itemVariants}>
             <Button
               onClick={handleGoogleLogin}
@@ -499,6 +629,13 @@ export default function LoginPage() {
               <span
                 aria-hidden="true"
                 className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out bg-muted/40"
+              />
+              {/* Ripple effect */}
+              <motion.span
+                className="absolute inset-0 bg-primary/10"
+                initial={{ scale: 0, opacity: 1 }}
+                whileTap={{ scale: 4, opacity: 0 }}
+                transition={{ duration: 0.6 }}
               />
               <span className="relative flex items-center gap-2.5">
                 {isLoadingGoogle ? (
@@ -538,7 +675,7 @@ export default function LoginPage() {
             className="text-center text-xs text-muted-foreground pt-2"
             variants={itemVariants}
           >
-            Ministério da Saúde · Sistema DJUD · v0.2.0
+            Ministério da Saúde · Sistema DJUD · v0.3.0
           </motion.p>
         </motion.div>
       </motion.div>
