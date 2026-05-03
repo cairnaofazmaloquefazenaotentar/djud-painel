@@ -13,8 +13,11 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Plus, Trash2, Edit2, Lock, Building2, Users, FileText } from "lucide-react";
 import { rolePermissions } from "@/lib/permissions";
+import { toast } from "sonner";
 
 interface Organization {
   id: string;
@@ -102,12 +105,15 @@ export default function OrganizationsPage() {
       if (res.ok) {
         setShowForm(false);
         fetchOrganizations();
+        toast.success(editingOrg ? "Organização atualizada." : "Organização criada com sucesso.");
       } else {
         const err = await res.json();
         setFormError(err.error || "Erro ao salvar organização");
+        toast.error(err.error || "Erro ao salvar organização");
       }
     } catch {
       setFormError("Erro ao salvar organização");
+      toast.error("Não foi possível conectar ao servidor.");
     } finally {
       setSubmitting(false);
     }
@@ -115,11 +121,19 @@ export default function OrganizationsPage() {
 
   const handleDelete = async () => {
     if (!deleteDialog.orgId) return;
+    const orgName = deleteDialog.orgName;
     try {
-      await fetch(`/api/organizations/${deleteDialog.orgId}`, { method: "DELETE" });
+      const res = await fetch(`/api/organizations/${deleteDialog.orgId}`, { method: "DELETE" });
       setDeleteDialog({ open: false });
-      fetchOrganizations();
-    } catch (e) { console.error(e); }
+      if (res.ok) {
+        fetchOrganizations();
+        toast.success(`Organização "${orgName}" desativada.`);
+      } else {
+        toast.error("Erro ao desativar organização.");
+      }
+    } catch {
+      toast.error("Não foi possível conectar ao servidor.");
+    }
   };
 
   const columns: ColumnDef<Organization>[] = [
@@ -215,57 +229,94 @@ export default function OrganizationsPage() {
 
       {/* Formulário inline de criação/edição */}
       {showForm && (
-        <div className="bg-card border border-border rounded-lg p-6 max-w-lg">
-          <h3 className="text-base font-semibold mb-4">
+        <div className="bg-card border border-border rounded-xl p-6 max-w-lg shadow-sm">
+          <h3 className="text-base font-semibold mb-1">
             {editingOrg ? "Editar Organização" : "Nova Organização"}
           </h3>
+          <p className="text-sm text-muted-foreground mb-5">
+            {editingOrg
+              ? "Atualize os dados da organização."
+              : "Preencha os dados para criar uma nova unidade organizacional."}
+          </p>
+
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Nome */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Nome <span className="text-destructive">*</span></label>
-              <input
+              <Label htmlFor="org-name">
+                Nome <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="org-name"
                 type="text"
                 value={formData.name}
-                onChange={(e) => setFormData(prev => ({
-                  ...prev,
-                  name: e.target.value,
-                  slug: prev.slug || generateSlug(e.target.value),
-                }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    name: e.target.value,
+                    slug: prev.slug || generateSlug(e.target.value),
+                  }))
+                }
                 placeholder="Ex: COAJUD — Coordenação de Atenção Judiciária"
-                className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 required
               />
             </div>
+
+            {/* Slug */}
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Slug <span className="text-destructive">*</span></label>
-              <input
+              <Label htmlFor="org-slug">
+                Slug <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="org-slug"
                 type="text"
                 value={formData.slug}
-                onChange={(e) => setFormData(prev => ({ ...prev, slug: e.target.value }))}
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, slug: e.target.value }))
+                }
                 placeholder="Ex: coajud"
-                className="w-full px-3 py-2 border border-input rounded-md bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring"
+                className="font-mono"
                 required
               />
-              <p className="text-xs text-muted-foreground">Apenas letras minúsculas, números e hífens</p>
+              <p className="text-xs text-muted-foreground">
+                Apenas letras minúsculas, números e hífens
+              </p>
             </div>
-            <div className="flex items-center gap-2">
+
+            {/* Ativa */}
+            <div className="flex items-center gap-2.5 p-3 bg-muted/40 rounded-lg">
               <input
                 type="checkbox"
-                id="active"
+                id="org-active"
                 checked={formData.active}
-                onChange={(e) => setFormData(prev => ({ ...prev, active: e.target.checked }))}
-                className="h-4 w-4"
+                onChange={(e) =>
+                  setFormData((prev) => ({ ...prev, active: e.target.checked }))
+                }
+                className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
               />
-              <label htmlFor="active" className="text-sm font-medium">Organização ativa</label>
+              <Label htmlFor="org-active" className="cursor-pointer font-normal">
+                Organização ativa
+              </Label>
             </div>
+
+            {/* Erro */}
             {formError && (
-              <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">{formError}</p>
+              <p className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+                {formError}
+              </p>
             )}
-            <div className="flex gap-2 pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)} disabled={submitting}>
+
+            {/* Ações */}
+            <div className="flex gap-2 pt-2 border-t border-border">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowForm(false)}
+                disabled={submitting}
+              >
                 Cancelar
               </Button>
               <Button type="submit" disabled={submitting}>
-                {submitting ? "Salvando..." : editingOrg ? "Salvar" : "Criar"}
+                {submitting ? "Salvando..." : editingOrg ? "Salvar alterações" : "Criar organização"}
               </Button>
             </div>
           </form>

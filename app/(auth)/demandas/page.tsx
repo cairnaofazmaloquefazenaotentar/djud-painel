@@ -15,9 +15,10 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download, Lock } from "lucide-react";
+import { Plus, Trash2, Edit2, Download, Lock, Pencil } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
+import { toast } from "sonner";
 
 interface Demanda {
   id: string;
@@ -110,6 +111,16 @@ export default function DemandasPage() {
     demandaNumero?: string;
   }>({ open: false });
 
+  // Helper: sincroniza filtros com a URL
+  const updateUrl = (updates: Record<string, string>) => {
+    const params = new URLSearchParams(searchParams.toString());
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    });
+    router.replace(`/demandas?${params.toString()}`, { scroll: false });
+  };
+
   // Verificar permissões
   const userRole = (session?.user as any)?.role || "OPERATOR";
   const permissions = rolePermissions[userRole as keyof typeof rolePermissions] || [];
@@ -161,6 +172,7 @@ export default function DemandasPage() {
 
   const handleDelete = async () => {
     if (!deleteDialog.demandaId) return;
+    const numero = deleteDialog.demandaNumero;
 
     try {
       const res = await fetch(`/api/demandas/${deleteDialog.demandaId}`, {
@@ -170,9 +182,13 @@ export default function DemandasPage() {
       if (res.ok) {
         setDemandas(demandas.filter((d) => d.id !== deleteDialog.demandaId));
         setDeleteDialog({ open: false });
+        toast.success(`Demanda "${numero}" excluída com sucesso.`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Erro ao excluir demanda.");
       }
-    } catch (error) {
-      console.error("Erro ao deletar demanda:", error);
+    } catch {
+      toast.error("Não foi possível conectar ao servidor.");
     }
   };
 
@@ -244,6 +260,7 @@ export default function DemandasPage() {
     setTrfRegiao("");
     setRegiaoBrasil("");
     setPage("1");
+    router.replace("/demandas", { scroll: false });
   };
 
   const columns: ColumnDef<Demanda>[] = [
@@ -371,47 +388,31 @@ export default function DemandasPage() {
               variant="ghost"
               size="sm"
               onClick={() => router.push(`/demandas/${row.original.id}/edit`)}
-              className="h-8 px-2"
+              className="h-8 px-2 gap-1.5"
               title="Editar demanda"
             >
-              <Edit2 className="h-4 w-4" />
+              <Edit2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Editar</span>
             </Button>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled
-              className="h-8 px-2 opacity-50 cursor-not-allowed"
-              title="Sem permissão para editar"
-            >
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" disabled className="h-8 px-2 opacity-40" title="Sem permissão para editar">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
           {canDelete ? (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
-                setDeleteDialog({
-                  open: true,
-                  demandaId: row.original.id,
-                  demandaNumero: row.original.numero,
-                })
-              }
-              className="h-8 px-2 text-destructive hover:text-destructive/90"
-              title="Deletar demanda"
+              onClick={() => setDeleteDialog({ open: true, demandaId: row.original.id, demandaNumero: row.original.numero })}
+              className="h-8 px-2 gap-1.5 text-destructive hover:text-destructive/90 hover:bg-destructive/10"
+              title="Excluir demanda"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Excluir</span>
             </Button>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled
-              className="h-8 px-2 opacity-50 cursor-not-allowed"
-              title="Sem permissão para deletar"
-            >
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" disabled className="h-8 px-2 opacity-40" title="Sem permissão para excluir">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -457,12 +458,12 @@ export default function DemandasPage() {
           label="Buscar"
           placeholder="Número, título, processo, medicamento..."
           value={busca}
-          onChange={(v) => { setBusca(v); setPage("1"); }}
+          onChange={(v) => { setBusca(v); setPage("1"); updateUrl({ busca: v, page: "1" }); }}
         />
         <FilterSelect
           label="Status"
           value={status}
-          onChange={(v) => { setStatus(v); setPage("1"); }}
+          onChange={(v) => { setStatus(v); setPage("1"); updateUrl({ status: v, page: "1" }); }}
           options={[
             { value: "Em Análise", label: "Em Análise" },
             { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
@@ -480,30 +481,30 @@ export default function DemandasPage() {
         <FilterSelect
           label="Prioridade"
           value={prioridade}
-          onChange={(v) => { setPrioridade(v); setPage("1"); }}
+          onChange={(v) => { setPrioridade(v); setPage("1"); updateUrl({ prioridade: v, page: "1" }); }}
           options={[
             { value: "Baixa", label: "Baixa" },
-            { value: "Media", label: "Média" },
+            { value: "Média", label: "Média" },
             { value: "Alta", label: "Alta" },
-            { value: "Critica", label: "Crítica" },
+            { value: "Crítica", label: "Crítica" },
           ]}
         />
         <FilterSelect
           label="Grupo Temático"
           value={areaTematica}
-          onChange={(v) => { setAreaTematica(v); setPage("1"); }}
+          onChange={(v) => { setAreaTematica(v); setPage("1"); updateUrl({ areaTematica: v, page: "1" }); }}
           options={AREAS_TEMATICAS.map((a) => ({ value: a, label: a }))}
         />
         <FilterSelect
           label="TRF Região"
           value={trfRegiao}
-          onChange={(v) => { setTrfRegiao(v); setPage("1"); }}
+          onChange={(v) => { setTrfRegiao(v); setPage("1"); updateUrl({ trfRegiao: v, page: "1" }); }}
           options={TRF_REGIOES}
         />
         <FilterSelect
           label="Região Brasil"
           value={regiaoBrasil}
-          onChange={(v) => { setRegiaoBrasil(v); setPage("1"); }}
+          onChange={(v) => { setRegiaoBrasil(v); setPage("1"); updateUrl({ regiaoBrasil: v, page: "1" }); }}
           options={REGIOES_BRASIL.map((r) => ({ value: r, label: r }))}
         />
       </FilterBar>
@@ -567,9 +568,9 @@ export default function DemandasPage() {
       <ConfirmDialog
         open={deleteDialog.open}
         onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
-        title="Deletar demanda"
-        description={`Tem certeza que deseja deletar a demanda "${deleteDialog.demandaNumero}"? Esta ação não pode ser desfeita.`}
-        actionLabel="Deletar"
+        title="Excluir demanda"
+        description={`Tem certeza que deseja excluir a demanda "${deleteDialog.demandaNumero}"? Esta ação não pode ser desfeita.`}
+        actionLabel="Excluir"
         isDestructive
         onConfirm={handleDelete}
       />

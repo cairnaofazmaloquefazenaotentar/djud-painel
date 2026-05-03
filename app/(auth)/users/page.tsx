@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit2, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { rolePermissions } from "@/lib/permissions";
+import { toast } from "sonner";
 
 interface User {
   id: string;
@@ -94,6 +95,7 @@ export default function UsersPage() {
 
   const handleDelete = async () => {
     if (!deleteDialog.userId) return;
+    const userName = deleteDialog.userName;
 
     try {
       const res = await fetch(`/api/users/${deleteDialog.userId}`, {
@@ -103,9 +105,13 @@ export default function UsersPage() {
       if (res.ok) {
         setUsers(users.filter((u) => u.id !== deleteDialog.userId));
         setDeleteDialog({ open: false });
+        toast.success(`Usuário "${userName}" excluído com sucesso.`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Erro ao excluir usuário.");
       }
-    } catch (error) {
-      console.error("Erro ao deletar usuário:", error);
+    } catch {
+      toast.error("Não foi possível conectar ao servidor.");
     }
   };
 
@@ -151,55 +157,37 @@ export default function UsersPage() {
       id: "actions",
       header: "Ações",
       cell: ({ row }) => (
-        <div className="flex gap-2">
+        <div className="flex gap-1">
           {canEdit ? (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
-                router.push(`/users/${row.original.id}/edit`)
-              }
-              className="h-8 px-2"
+              onClick={() => router.push(`/users/${row.original.id}/edit`)}
+              className="h-8 px-2 gap-1.5"
               title="Editar usuário"
             >
-              <Edit2 className="h-4 w-4" />
+              <Edit2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Editar</span>
             </Button>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled
-              className="h-8 px-2 opacity-50 cursor-not-allowed"
-              title="Sem permissão para editar"
-            >
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" disabled className="h-8 px-2 opacity-40" title="Sem permissão para editar">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
           {canDelete ? (
             <Button
               variant="ghost"
               size="sm"
-              onClick={() =>
-                setDeleteDialog({
-                  open: true,
-                  userId: row.original.id,
-                  userName: row.original.name || "",
-                })
-              }
-              className="h-8 px-2 text-destructive hover:text-destructive/90"
-              title="Deletar usuário"
+              onClick={() => setDeleteDialog({ open: true, userId: row.original.id, userName: row.original.name || "" })}
+              className="h-8 px-2 gap-1.5 text-destructive hover:text-destructive/90 hover:bg-destructive/10"
+              title="Excluir usuário"
             >
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Excluir</span>
             </Button>
           ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled
-              className="h-8 px-2 opacity-50 cursor-not-allowed"
-              title="Sem permissão para deletar"
-            >
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" disabled className="h-8 px-2 opacity-40" title="Sem permissão para excluir">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -273,9 +261,9 @@ export default function UsersPage() {
       <ConfirmDialog
         open={deleteDialog.open}
         onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
-        title="Deletar usuário"
-        description={`Tem certeza que deseja deletar o usuário "${deleteDialog.userName}"? Esta ação não pode ser desfeita.`}
-        actionLabel="Deletar"
+        title="Excluir usuário"
+        description={`Tem certeza que deseja excluir o usuário "${deleteDialog.userName}"? Esta ação não pode ser desfeita.`}
+        actionLabel="Excluir"
         isDestructive
         onConfirm={handleDelete}
       />

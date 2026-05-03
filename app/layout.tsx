@@ -5,6 +5,7 @@ import { Inter, Merriweather, JetBrains_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { auth } from "@/lib/auth";
 import { QuerClientProvider } from "@/components/providers/query-client-provider";
+import { Toaster } from "sonner";
 import "./globals.css";
 
 const fontSans = Inter({
@@ -49,6 +50,7 @@ export default async function RootLayout({
       >
         <SessionProvider session={session}>
           <QuerClientProvider>{children}</QuerClientProvider>
+          <Toaster richColors position="top-right" />
         </SessionProvider>
       </body>
     </html>

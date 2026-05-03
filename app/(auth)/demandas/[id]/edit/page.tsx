@@ -5,14 +5,19 @@ import { useRouter, useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { createDemandaSchema } from "@/lib/schemas";
+import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import { AttachmentsManager } from "@/components/attachments-manager";
 import { DemandaExportModal } from "@/components/demanda-export-modal";
 import { Loader2, Download } from "lucide-react";
 
-// Use a form-specific schema that matches HTML form inputs (strings)
+// ── Schema ────────────────────────────────────────────────────────────────────
+
 const demandaFormSchema = z.object({
   numero: z.string().min(1, "Número é obrigatório"),
   titulo: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
@@ -27,7 +32,7 @@ const demandaFormSchema = z.object({
   projeto: z.string().optional(),
   ano: z.string().optional(),
   origemDemanda: z.string().optional(),
-  // Sprint 8 — dados judiciais
+  // Dados judiciais
   numeroProcesso: z.string().optional(),
   areaTematica: z.string().optional(),
   regiaoBrasil: z.string().optional(),
@@ -46,10 +51,7 @@ interface Attachment {
   fileSize: number;
   mimeType: string;
   uploadedAt: string;
-  uploadedBy: {
-    id: string;
-    name: string;
-  };
+  uploadedBy: { id: string; name: string };
   storagePath: string;
 }
 
@@ -68,7 +70,6 @@ interface Demanda {
   projeto?: string;
   ano?: number;
   origemDemanda?: string;
-  // Sprint 8
   numeroProcesso?: string | null;
   areaTematica?: string | null;
   regiaoBrasil?: string | null;
@@ -82,6 +83,12 @@ interface Demanda {
   attachments?: Attachment[];
 }
 
+// ── Classe padrão para <select> nativo (igual ao shadcn Input) ────────────────
+const selectCn =
+  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30";
+
+// ── Componente ────────────────────────────────────────────────────────────────
+
 export default function EditDemandaPage() {
   const router = useRouter();
   const params = useParams();
@@ -92,24 +99,16 @@ export default function EditDemandaPage() {
   const [submitting, setSubmitting] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [demandaNumero, setDemandaNumero] = useState("");
-  const [organizations, setOrganizations] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
-  const [responsaveis, setResponsaveis] = useState<
-    Array<{ id: string; name: string }>
-  >([]);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
+  const [responsaveis, setResponsaveis] = useState<Array<{ id: string; name: string }>>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const form = useForm<DemandaFormData>({
     resolver: zodResolver(demandaFormSchema),
-    defaultValues: {
-      status: "Aberta",
-      prioridade: "Média",
-      tags: [],
-    },
+    defaultValues: { status: "Aberta", prioridade: "Média", tags: [] },
   });
 
-  // Load organizations and responsaveis
+  // ── Carregar dados ──────────────────────────────────────────────────────────
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -117,24 +116,14 @@ export default function EditDemandaPage() {
           fetch("/api/organizations"),
           fetch("/api/users?pageSize=100"),
         ]);
-
-        if (orgRes.ok) {
-          const data = await orgRes.json();
-          setOrganizations(data.data || []);
-        }
-
-        if (userRes.ok) {
-          const data = await userRes.json();
-          setResponsaveis(data.data || []);
-        }
-      } catch (error) {
-        console.error("Erro ao carregar dados:", error);
+        if (orgRes.ok) setOrganizations((await orgRes.json()).data || []);
+        if (userRes.ok) setResponsaveis((await userRes.json()).data || []);
+      } catch {
+        toast.error("Erro ao carregar listas de organizações e responsáveis.");
       }
     };
-
     loadData();
 
-    // Load demanda if editing
     if (!isNew) {
       const loadDemanda = async () => {
         try {
@@ -142,109 +131,97 @@ export default function EditDemandaPage() {
             fetch(`/api/demandas/${demandaId}`),
             fetch(`/api/demandas/${demandaId}/attachments`),
           ]);
-
           if (demandaRes.ok) {
-            const demanda: Demanda = await demandaRes.json();
-            setDemandaNumero(demanda.numero);
+            const d: Demanda = await demandaRes.json();
+            setDemandaNumero(d.numero);
             form.reset({
-              numero: demanda.numero,
-              titulo: demanda.titulo,
-              descricao: demanda.descricao,
-              status: demanda.status || "Aberta",
-              prioridade: demanda.prioridade || "Média",
-              organizacaoId: demanda.organizacao?.id || "",
-              responsavelId: demanda.responsavel?.id || "",
-              dataInicio: demanda.dataInicio
-                ? new Date(demanda.dataInicio).toISOString().split("T")[0]
+              numero: d.numero,
+              titulo: d.titulo,
+              descricao: d.descricao,
+              status: d.status || "Aberta",
+              prioridade: d.prioridade || "Média",
+              organizacaoId: d.organizacao?.id || "",
+              responsavelId: d.responsavel?.id || "",
+              dataInicio: d.dataInicio ? new Date(d.dataInicio).toISOString().split("T")[0] : "",
+              dataVencimento: d.dataVencimento ? new Date(d.dataVencimento).toISOString().split("T")[0] : "",
+              tags: d.tags || [],
+              projeto: d.projeto || "",
+              ano: d.ano ? String(d.ano) : "",
+              origemDemanda: d.origemDemanda || "",
+              numeroProcesso: d.numeroProcesso || "",
+              areaTematica: d.areaTematica || "",
+              regiaoBrasil: d.regiaoBrasil || "",
+              objetoAcao: d.objetoAcao || "",
+              principioAtivo: d.principioAtivo || "",
+              dataEntradaDJUD: d.dataEntradaDJUD
+                ? new Date(d.dataEntradaDJUD).toISOString().split("T")[0]
                 : "",
-              dataVencimento: demanda.dataVencimento
-                ? new Date(demanda.dataVencimento).toISOString().split("T")[0]
-                : "",
-              tags: demanda.tags || [],
-              projeto: demanda.projeto || "",
-              ano: demanda.ano ? String(demanda.ano) : "",
-              origemDemanda: demanda.origemDemanda || "",
-              // Sprint 8 — dados judiciais
-              numeroProcesso: demanda.numeroProcesso || "",
-              areaTematica: demanda.areaTematica || "",
-              regiaoBrasil: demanda.regiaoBrasil || "",
-              objetoAcao: demanda.objetoAcao || "",
-              principioAtivo: demanda.principioAtivo || "",
-              dataEntradaDJUD: demanda.dataEntradaDJUD
-                ? new Date(demanda.dataEntradaDJUD).toISOString().split("T")[0]
-                : "",
-              trfRegiao: demanda.trfRegiao ? String(demanda.trfRegiao) : "",
-              pontoControle: demanda.pontoControle || "",
+              trfRegiao: d.trfRegiao ? String(d.trfRegiao) : "",
+              pontoControle: d.pontoControle || "",
             });
           }
-
-          if (attachmentsRes.ok) {
-            const data = await attachmentsRes.json();
-            setAttachments(data.data || []);
-          }
-        } catch (error) {
-          console.error("Erro ao carregar demanda:", error);
+          if (attachmentsRes.ok) setAttachments((await attachmentsRes.json()).data || []);
+        } catch {
+          toast.error("Erro ao carregar os dados da demanda.");
         } finally {
           setLoading(false);
         }
       };
-
       loadDemanda();
     }
   }, [demandaId, isNew, form]);
 
+  // ── Submit ──────────────────────────────────────────────────────────────────
   const onSubmit = async (data: DemandaFormData) => {
     setSubmitting(true);
     try {
-      // Convert form data to API format
       const apiData = {
-        numero: data.numero,
-        titulo: data.titulo,
-        descricao: data.descricao,
-        status: data.status || undefined,
-        prioridade: data.prioridade || undefined,
+        ...data,
+        ano: data.ano ? Number(data.ano) : undefined,
+        trfRegiao: data.trfRegiao ? Number(data.trfRegiao) : undefined,
         organizacaoId: data.organizacaoId || undefined,
         responsavelId: data.responsavelId || undefined,
-        dataInicio: data.dataInicio || undefined,
-        dataVencimento: data.dataVencimento || undefined,
-        tags: data.tags || [],
-        projeto: data.projeto || undefined,
-        ano: data.ano ? Number(data.ano) : undefined,
         origemDemanda: data.origemDemanda || undefined,
-        // Sprint 8
         numeroProcesso: data.numeroProcesso || undefined,
         areaTematica: data.areaTematica || undefined,
         regiaoBrasil: data.regiaoBrasil || undefined,
         objetoAcao: data.objetoAcao || undefined,
         principioAtivo: data.principioAtivo || undefined,
         dataEntradaDJUD: data.dataEntradaDJUD || undefined,
-        trfRegiao: data.trfRegiao ? Number(data.trfRegiao) : undefined,
         pontoControle: data.pontoControle || undefined,
       };
 
-      const method = isNew ? "POST" : "PUT";
-      const url = isNew ? "/api/demandas" : `/api/demandas/${demandaId}`;
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(apiData),
-      });
+      const res = await fetch(
+        isNew ? "/api/demandas" : `/api/demandas/${demandaId}`,
+        {
+          method: isNew ? "POST" : "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(apiData),
+        }
+      );
 
       if (res.ok) {
+        toast.success(isNew ? "Demanda criada com sucesso!" : "Demanda atualizada com sucesso!");
         router.push("/demandas");
         router.refresh();
       } else {
         const error = await res.json();
-        form.setError("root", { message: error.error || "Erro ao salvar demanda" });
+        if (error.error?.includes("número")) {
+          form.setError("numero", { message: error.error });
+        } else {
+          form.setError("root", { message: error.error || "Erro ao salvar demanda" });
+          toast.error(error.error || "Erro ao salvar demanda.");
+        }
       }
-    } catch (error) {
-      form.setError("root", { message: "Erro ao salvar demanda" });
+    } catch {
+      toast.error("Não foi possível conectar ao servidor.");
+      form.setError("root", { message: "Erro de conexão com o servidor" });
     } finally {
       setSubmitting(false);
     }
   };
 
+  // ── Loading ─────────────────────────────────────────────────────────────────
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -253,6 +230,7 @@ export default function EditDemandaPage() {
     );
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-8">
       <PageHeader
@@ -264,86 +242,66 @@ export default function EditDemandaPage() {
         }
       />
 
-      <div className="bg-card border border-border rounded-lg p-6 max-w-4xl">
-        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-          {/* Seção: Informações Básicas */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4 text-foreground">
-              Informações Básicas
-            </h3>
-            <div className="space-y-4">
-              {/* Número */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Número <span className="text-destructive">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: 2024/001"
-                  disabled={!isNew}
-                  {...form.register("numero")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-                />
-                {form.formState.errors.numero && (
-                  <p className="text-sm text-destructive">
-                    {form.formState.errors.numero.message}
-                  </p>
-                )}
-              </div>
+      <div className="bg-card border border-border rounded-xl p-6 max-w-4xl shadow-sm">
+        <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
 
-              {/* Título */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Título <span className="text-destructive">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="Título da demanda"
-                  {...form.register("titulo")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                {form.formState.errors.titulo && (
-                  <p className="text-sm text-destructive">
-                    {form.formState.errors.titulo.message}
-                  </p>
-                )}
-              </div>
+          {/* ── Informações Básicas ──────────────────────────────────────── */}
+          <section className="space-y-4">
+            <SectionTitle>Informações Básicas</SectionTitle>
 
-              {/* Descrição */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Descrição <span className="text-destructive">*</span>
-                </label>
-                <textarea
-                  placeholder="Descrição detalhada da demanda"
-                  rows={4}
-                  {...form.register("descricao")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                {form.formState.errors.descricao && (
-                  <p className="text-sm text-destructive">
-                    {form.formState.errors.descricao.message}
-                  </p>
-                )}
-              </div>
+            {/* Número */}
+            <div className="space-y-1.5">
+              <Label htmlFor="f-numero">
+                Número <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="f-numero"
+                placeholder="Ex: 2024/001"
+                disabled={!isNew}
+                {...form.register("numero")}
+              />
+              <FieldError message={form.formState.errors.numero?.message} />
             </div>
-          </div>
 
-          {/* Seção: Classificação */}
-          <div className="border-t border-border pt-6">
-            <h3 className="text-lg font-semibold mb-4 text-foreground">
-              Classificação
-            </h3>
+            {/* Título */}
+            <div className="space-y-1.5">
+              <Label htmlFor="f-titulo">
+                Título <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="f-titulo"
+                placeholder="Título da demanda"
+                {...form.register("titulo")}
+              />
+              <FieldError message={form.formState.errors.titulo?.message} />
+            </div>
+
+            {/* Descrição */}
+            <div className="space-y-1.5">
+              <Label htmlFor="f-descricao">
+                Descrição <span className="text-destructive">*</span>
+              </Label>
+              <Textarea
+                id="f-descricao"
+                placeholder="Descrição detalhada da demanda"
+                rows={4}
+                {...form.register("descricao")}
+              />
+              <FieldError message={form.formState.errors.descricao?.message} />
+            </div>
+          </section>
+
+          <Separator />
+
+          {/* ── Classificação ────────────────────────────────────────────── */}
+          <section className="space-y-4">
+            <SectionTitle>Classificação</SectionTitle>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
               {/* Status */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Status
-                </label>
-                <select
-                  {...form.register("status")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-status">Status</Label>
+                <select id="f-status" {...form.register("status")} className={selectCn}>
                   <option value="">Selecionar status...</option>
                   <option value="Aberta">Aberta</option>
                   <option value="Fechada">Fechada</option>
@@ -353,14 +311,9 @@ export default function EditDemandaPage() {
               </div>
 
               {/* Prioridade */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Prioridade
-                </label>
-                <select
-                  {...form.register("prioridade")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-prioridade">Prioridade</Label>
+                <select id="f-prioridade" {...form.register("prioridade")} className={selectCn}>
                   <option value="">Selecionar prioridade...</option>
                   <option value="Baixa">Baixa</option>
                   <option value="Média">Média</option>
@@ -370,48 +323,35 @@ export default function EditDemandaPage() {
               </div>
 
               {/* Projeto */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Projeto
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: PNCP"
-                  {...form.register("projeto")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="f-projeto">Projeto</Label>
+                <Input id="f-projeto" placeholder="Ex: PNCP" {...form.register("projeto")} />
               </div>
 
               {/* Ano */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Ano
-                </label>
-                <input
+              <div className="space-y-1.5">
+                <Label htmlFor="f-ano">Ano</Label>
+                <Input
+                  id="f-ano"
                   type="number"
                   placeholder="Ex: 2024"
-                  {...form.register("ano", { valueAsNumber: true })}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  {...form.register("ano")}
                 />
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Seção: Organização e Responsável */}
-          <div className="border-t border-border pt-6">
-            <h3 className="text-lg font-semibold mb-4 text-foreground">
-              Responsabilidades
-            </h3>
+          <Separator />
+
+          {/* ── Responsabilidades ────────────────────────────────────────── */}
+          <section className="space-y-4">
+            <SectionTitle>Responsabilidades</SectionTitle>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
               {/* Organização */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Organização
-                </label>
-                <select
-                  {...form.register("organizacaoId")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-org">Organização</Label>
+                <select id="f-org" {...form.register("organizacaoId")} className={selectCn}>
                   <option value="">Selecionar organização...</option>
                   {organizations.map((org) => (
                     <option key={org.id} value={org.id}>
@@ -422,14 +362,9 @@ export default function EditDemandaPage() {
               </div>
 
               {/* Responsável */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Responsável
-                </label>
-                <select
-                  {...form.register("responsavelId")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-resp">Responsável</Label>
+                <select id="f-resp" {...form.register("responsavelId")} className={selectCn}>
                   <option value="">Selecionar responsável...</option>
                   {responsaveis.map((user) => (
                     <option key={user.id} value={user.id}>
@@ -439,112 +374,86 @@ export default function EditDemandaPage() {
                 </select>
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Seção: Datas e Metadados */}
-          <div className="border-t border-border pt-6">
-            <h3 className="text-lg font-semibold mb-4 text-foreground">
-              Datas e Informações Adicionais
-            </h3>
+          <Separator />
+
+          {/* ── Datas e Informações Adicionais ───────────────────────────── */}
+          <section className="space-y-4">
+            <SectionTitle>Datas e Informações Adicionais</SectionTitle>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Data Início */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Data Início
-                </label>
-                <input
-                  type="date"
-                  {...form.register("dataInicio")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="f-data-inicio">Data Início</Label>
+                <Input id="f-data-inicio" type="date" {...form.register("dataInicio")} />
               </div>
-
-              {/* Data Vencimento */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Data Vencimento
-                </label>
-                <input
-                  type="date"
-                  {...form.register("dataVencimento")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="f-data-venc">Data Vencimento</Label>
+                <Input id="f-data-venc" type="date" {...form.register("dataVencimento")} />
               </div>
-
-              {/* Origem Demanda */}
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium text-foreground">
-                  Origem da Demanda
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-1.5 md:col-span-2">
+                <Label htmlFor="f-origem">Origem da Demanda</Label>
+                <Input
+                  id="f-origem"
                   placeholder="Ex: Ministerial, Judicial"
                   {...form.register("origemDemanda")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Seção: Dados Judiciais (Sprint 8) */}
-          <div className="border-t border-border pt-6">
-            <h3 className="text-lg font-semibold mb-1 text-foreground">
-              Dados Judiciais
-            </h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Campos provenientes da base Redmine / processo judicial
-            </p>
+          <Separator />
+
+          {/* ── Dados Judiciais ──────────────────────────────────────────── */}
+          <section className="space-y-4">
+            <div>
+              <SectionTitle>Dados Judiciais</SectionTitle>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Campos provenientes da base Redmine / processo judicial
+              </p>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
               {/* Número do Processo */}
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium text-foreground">
-                  Número do Processo
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-1.5 md:col-span-2">
+                <Label htmlFor="f-numproc">Número do Processo</Label>
+                <Input
+                  id="f-numproc"
                   placeholder="Ex: 5000904-02.2021.4.03.6006"
+                  className="font-mono"
                   {...form.register("numeroProcesso")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring font-mono text-sm"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Número CNJ do processo judicial originário
+                </p>
               </div>
 
               {/* Data de Entrada DJUD */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Data de Entrada DJUD
-                </label>
-                <input
-                  type="date"
-                  {...form.register("dataEntradaDJUD")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
+              <div className="space-y-1.5">
+                <Label htmlFor="f-data-djud">Data de Entrada DJUD</Label>
+                <Input id="f-data-djud" type="date" {...form.register("dataEntradaDJUD")} />
+                <p className="text-xs text-muted-foreground">
+                  Quando o processo foi registrado no DJUD
+                </p>
               </div>
 
               {/* Ponto de Controle */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Ponto de Controle
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-1.5">
+                <Label htmlFor="f-pontoctrl">Ponto de Controle</Label>
+                <Input
+                  id="f-pontoctrl"
                   placeholder="Ex: Cessar Atos, Entrega Pendente"
                   {...form.register("pontoControle")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
 
               {/* Grupo Temático */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Grupo Temático
-                </label>
-                <select
-                  {...form.register("areaTematica")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-area">Grupo Temático</Label>
+                <select id="f-area" {...form.register("areaTematica")} className={selectCn}>
                   <option value="">Selecionar grupo temático...</option>
                   <option value="Medicamentos Oncológicos/Oftalmológicos">
-                    Medicamentos Oncológicos/Oftalmológicos
+                    Medicamentos Oncológicos / Oftalmológicos
                   </option>
                   <option value="Medicamentos Alto Impacto Financeiro">
                     Medicamentos Alto Impacto Financeiro
@@ -559,14 +468,11 @@ export default function EditDemandaPage() {
               </div>
 
               {/* TRF Região */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
+              <div className="space-y-1.5">
+                <Label htmlFor="f-trf">
                   TRF Região
-                </label>
-                <select
-                  {...form.register("trfRegiao")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+                </Label>
+                <select id="f-trf" {...form.register("trfRegiao")} className={selectCn}>
                   <option value="">Selecionar TRF...</option>
                   {[1, 2, 3, 4, 5, 6].map((n) => (
                     <option key={n} value={String(n)}>
@@ -574,74 +480,68 @@ export default function EditDemandaPage() {
                     </option>
                   ))}
                 </select>
+                <p className="text-xs text-muted-foreground">
+                  Tribunal Regional Federal responsável pelo processo
+                </p>
               </div>
 
               {/* Região Brasil */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Região Brasil
-                </label>
-                <select
-                  {...form.register("regiaoBrasil")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                >
+              <div className="space-y-1.5">
+                <Label htmlFor="f-regiao">Região Brasil</Label>
+                <select id="f-regiao" {...form.register("regiaoBrasil")} className={selectCn}>
                   <option value="">Selecionar região...</option>
-                  <option value="Norte">Norte</option>
-                  <option value="Nordeste">Nordeste</option>
-                  <option value="Centro-Oeste">Centro-Oeste</option>
-                  <option value="Sudeste">Sudeste</option>
-                  <option value="Sul">Sul</option>
+                  {["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"].map((r) => (
+                    <option key={r} value={r}>{r}</option>
+                  ))}
                 </select>
               </div>
 
               {/* Objeto da Ação */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-foreground">
-                  Objeto da Ação
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-1.5">
+                <Label htmlFor="f-objeto">Objeto da Ação</Label>
+                <Input
+                  id="f-objeto"
                   placeholder="Ex: Medicamento - Oncológico"
                   {...form.register("objetoAcao")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
 
               {/* Princípio Ativo */}
-              <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-medium text-foreground">
-                  Princípio Ativo / Medicamento
-                </label>
-                <input
-                  type="text"
+              <div className="space-y-1.5 md:col-span-2">
+                <Label htmlFor="f-principio">Princípio Ativo / Medicamento</Label>
+                <Input
+                  id="f-principio"
                   placeholder="Ex: Bevacizumabe, Pembrolizumabe"
                   {...form.register("principioAtivo")}
-                  className="w-full px-3 py-2 border border-input rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Nome genérico (DCI) do medicamento ou insumo pleiteado judicialmente
+                </p>
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Seção: Anexos - apenas em edit */}
+          {/* ── Anexos ──────────────────────────────────────────────────── */}
           {!isNew && (
-            <div className="border-t border-border pt-6">
+            <>
+              <Separator />
               <AttachmentsManager
                 demandaId={demandaId}
                 existingAttachments={attachments}
                 onAttachmentsChange={setAttachments}
               />
-            </div>
+            </>
           )}
 
-          {/* Error Message */}
+          {/* ── Erro global ─────────────────────────────────────────────── */}
           {form.formState.errors.root && (
-            <div className="p-3 bg-destructive/10 border border-destructive/50 rounded-md text-sm text-destructive">
+            <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg text-sm text-destructive">
               {form.formState.errors.root.message}
             </div>
           )}
 
-          {/* Buttons */}
-          <div className="flex gap-3 justify-end pt-6 border-t border-border">
+          {/* ── Botões ──────────────────────────────────────────────────── */}
+          <div className="flex gap-3 justify-end pt-4 border-t border-border">
             <Button
               type="button"
               variant="outline"
@@ -671,7 +571,6 @@ export default function EditDemandaPage() {
         </form>
       </div>
 
-      {/* Export Modal */}
       <DemandaExportModal
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
@@ -680,4 +579,19 @@ export default function EditDemandaPage() {
       />
     </div>
   );
+}
+
+// ── Sub-componentes ───────────────────────────────────────────────────────────
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h3>
+  );
+}
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null;
+  return <p className="text-xs text-destructive">{message}</p>;
 }

@@ -15,6 +15,9 @@ import { TopMedicamentosChart } from "@/components/dashboard/charts/top-medicame
 import { ObjetoAcaoChart } from "@/components/dashboard/charts/objeto-acao-chart";
 import { useMetrics } from "@/hooks/useMetrics";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity,
   AlertTriangle,
@@ -28,6 +31,9 @@ import {
   BarChart2,
   ShieldAlert,
 } from "lucide-react";
+
+const selectCn =
+  "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
 // ─── Seção com título padronizado ───────────────────────────────────────────
 function Section({
@@ -132,33 +138,33 @@ export default function DashboardPage() {
       />
 
       {/* ── Filtros ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-3 items-end bg-card border border-border rounded-lg p-4">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Data início</label>
-          <input
+      <div className="flex flex-wrap gap-4 items-end bg-card border border-border rounded-xl p-4 shadow-sm">
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Data início</Label>
+          <Input
             type="date"
             value={startDate}
             onChange={(e) => setStartDate(e.target.value)}
-            className="px-3 py-1.5 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-36"
           />
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Data fim</label>
-          <input
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Data fim</Label>
+          <Input
             type="date"
             value={endDate}
             onChange={(e) => setEndDate(e.target.value)}
-            className="px-3 py-1.5 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className="w-36"
           />
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Status</label>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Status</Label>
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-3 py-1.5 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className={selectCn}
           >
-            <option value="">Todos</option>
+            <option value="">Todos os status</option>
             <option value="Em Análise COAJUD">Em Análise COAJUD</option>
             <option value="Entrega Pendente">Entrega Pendente</option>
             <option value="Cessar Atos">Cessar Atos</option>
@@ -167,14 +173,14 @@ export default function DashboardPage() {
             <option value="Suspensa">Suspensa</option>
           </select>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Prioridade</label>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Prioridade</Label>
           <select
             value={filterPrioridade}
             onChange={(e) => setFilterPrioridade(e.target.value)}
-            className="px-3 py-1.5 border border-input rounded-md bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            className={selectCn}
           >
-            <option value="">Todas</option>
+            <option value="">Todas as prioridades</option>
             <option value="Crítica">Crítica</option>
             <option value="Alta">Alta</option>
             <option value="Normal">Normal</option>
@@ -182,9 +188,9 @@ export default function DashboardPage() {
           </select>
         </div>
         {hasActiveFilters && (
-          <Button variant="outline" size="sm" onClick={handleReset}>
+          <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-            Limpar filtros
+            Limpar
           </Button>
         )}
       </div>
@@ -196,73 +202,84 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Conteúdo ─────────────────────────────────────────────────────────── */}
+      {/* ── Conteúdo com Tabs ────────────────────────────────────────────────── */}
       {!isLoading && metrics && (
-        <>
-          {/* ═══ BLOCO 1: Indicadores principais ══════════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Indicadores Gerais
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <MetricCard
-                label="Total de Processos"
-                value={metrics.totalDemandas.toLocaleString("pt-BR")}
-                icon={<FileText className="h-5 w-5" />}
-              />
-              <MetricCard
-                label="Passivo Ativo"
-                value={metrics.demandasAtivas.toLocaleString("pt-BR")}
-                icon={<Activity className="h-5 w-5" />}
-                description="Processos não concluídos"
-              />
-              <MetricCard
-                label="Demandas Críticas"
-                value={metrics.demandasCriticas.toLocaleString("pt-BR")}
-                icon={<AlertTriangle className="h-5 w-5" />}
-                description="Prioridade Alta ou Crítica"
-              />
-              <MetricCard
-                label="Taxa de Resolução"
-                value={`${metrics.taxaResolucao.toFixed(1)}%`}
-                icon={<TrendingUp className="h-5 w-5" />}
-                description="Processos finalizados"
-              />
-            </div>
+        <div className="space-y-6">
+
+          {/* Indicadores sempre visíveis no topo */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <MetricCard
+              label="Total de Processos"
+              value={metrics.totalDemandas.toLocaleString("pt-BR")}
+              icon={<FileText className="h-5 w-5" />}
+            />
+            <MetricCard
+              label="Passivo Ativo"
+              value={metrics.demandasAtivas.toLocaleString("pt-BR")}
+              icon={<Activity className="h-5 w-5" />}
+              description="Processos não concluídos"
+            />
+            <MetricCard
+              label="Demandas Críticas"
+              value={metrics.demandasCriticas.toLocaleString("pt-BR")}
+              icon={<AlertTriangle className="h-5 w-5" />}
+              description="Prioridade Alta ou Crítica"
+            />
+            <MetricCard
+              label="Taxa de Resolução"
+              value={`${metrics.taxaResolucao.toFixed(1)}%`}
+              icon={<TrendingUp className="h-5 w-5" />}
+              description="Processos finalizados"
+            />
           </div>
 
-          {/* ═══ BLOCO 2: Tendência de Judicialização ═════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Tendência de Judicialização
-            </p>
-            <Section
-              icon={<TrendingUp className="h-4 w-4" />}
-              title="Série Histórica de Demandas"
-              subtitle="Evolução mensal dos processos registrados — base para análise de tendência e previsibilidade da demanda"
-              full
-            >
-              <TimelineChart data={metrics.demandasTimeline} />
-            </Section>
-          </div>
+          {/* Tabs analíticas */}
+          <Tabs defaultValue="tendencia">
+            <TabsList className="mb-2">
+              <TabsTrigger value="tendencia">
+                <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
+                Tendência
+              </TabsTrigger>
+              <TabsTrigger value="dimensionamento">
+                <Pill className="h-3.5 w-3.5 mr-1.5" />
+                Dimensionamento
+              </TabsTrigger>
+              <TabsTrigger value="riscos">
+                <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
+                Riscos
+              </TabsTrigger>
+              <TabsTrigger value="geografia">
+                <MapPin className="h-3.5 w-3.5 mr-1.5" />
+                Geografia
+              </TabsTrigger>
+              <TabsTrigger value="operacional">
+                <BarChart2 className="h-3.5 w-3.5 mr-1.5" />
+                Operacional
+              </TabsTrigger>
+            </TabsList>
 
-          {/* ═══ BLOCO 3: Dimensionamento da Demanda ══════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Dimensionamento da Demanda
-            </p>
-            <div className="space-y-6">
-              {/* Top Medicamentos — full width, mais importante */}
+            {/* ── Tendência ─────────────────────────────────────────────── */}
+            <TabsContent value="tendencia" className="space-y-6 mt-4">
+              <Section
+                icon={<TrendingUp className="h-4 w-4" />}
+                title="Série Histórica de Demandas"
+                subtitle="Evolução mensal dos processos registrados — base para análise de tendência e previsibilidade da demanda"
+                full
+              >
+                <TimelineChart data={metrics.demandasTimeline} />
+              </Section>
+            </TabsContent>
+
+            {/* ── Dimensionamento ───────────────────────────────────────── */}
+            <TabsContent value="dimensionamento" className="space-y-6 mt-4">
               <Section
                 icon={<Pill className="h-4 w-4" />}
                 title="Top 15 Princípios Ativos Mais Demandados"
-                subtitle="Ranking dos medicamentos por volume de processos judiciais — subsidia o cálculo do quantitativo para Atas de Registro de Preços (ARP)"
+                subtitle="Ranking por volume de processos judiciais — subsidia o quantitativo para Atas de Registro de Preços (ARP)"
                 full
               >
                 <TopMedicamentosChart data={metrics.topMedicamentosDistribution} />
               </Section>
-
-              {/* Grupo Temático + Objeto da Ação */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Section
                   icon={<BarChart2 className="h-4 w-4" />}
@@ -279,156 +296,119 @@ export default function DashboardPage() {
                   <ObjetoAcaoChart data={metrics.objetoAcaoDistribution} />
                 </Section>
               </div>
-            </div>
-          </div>
+            </TabsContent>
 
-          {/* ═══ BLOCO 4: Gestão de Riscos Processuais ════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Gestão de Riscos Processuais
-            </p>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Gargalos por Status */}
-              <Section
-                icon={<ShieldAlert className="h-4 w-4" />}
-                title="Gargalos por Status"
-                subtitle="Identificação de etapas com maior volume de processos parados"
-              >
-                <StatusChart data={metrics.statusDistribution} />
-              </Section>
-
-              {/* Perfil de Risco por Prioridade */}
-              <Section
-                icon={<AlertTriangle className="h-4 w-4" />}
-                title="Perfil de Risco"
-                subtitle="Distribuição por nível de prioridade"
-              >
-                <PrioridadeChart data={metrics.prioridadeDistribution} />
-              </Section>
-
-              {/* Indicadores de risco numéricos */}
-              <Section
-                icon={<Activity className="h-4 w-4" />}
-                title="Indicadores de Risco"
-                subtitle="Passivo ativo por categoria de prioridade"
-              >
-                <div className="space-y-4 mt-2">
-                  {(() => {
-                    const total = metrics.totalDemandas || 1;
-                    const riskItems = [
-                      {
-                        label: "Crítica",
-                        value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Crítica")?.count || 0,
-                        color: "#dc2626",
-                      },
-                      {
-                        label: "Alta",
-                        value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Alta")?.count || 0,
-                        color: "#ea580c",
-                      },
-                      {
-                        label: "Normal",
-                        value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Normal" || p.prioridade === "Média")?.count || 0,
-                        color: "#2563eb",
-                      },
-                      {
-                        label: "Baixa",
-                        value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Baixa")?.count || 0,
-                        color: "#16a34a",
-                      },
-                    ];
-                    return riskItems.map((item) => (
-                      <RiskBadge
-                        key={item.label}
-                        label={item.label}
-                        value={item.value}
-                        max={total}
-                        color={item.color}
-                      />
-                    ));
-                  })()}
-                  <div className="pt-3 border-t border-border">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-muted-foreground">Passivo ativo total</span>
-                      <span className="font-bold text-foreground">{metrics.demandasAtivas.toLocaleString("pt-BR")}</span>
-                    </div>
-                    <div className="flex justify-between text-xs mt-1">
-                      <span className="text-muted-foreground">Criticidade (Alta+Crítica)</span>
-                      <span className="font-bold text-destructive">{metrics.demandasCriticas.toLocaleString("pt-BR")}</span>
-                    </div>
-                  </div>
-                </div>
-              </Section>
-            </div>
-          </div>
-
-          {/* ═══ BLOCO 5: Análise Geográfica ══════════════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Análise Geográfica
-            </p>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <Section
-                icon={<MapPin className="h-4 w-4" />}
-                title="Por Região do Brasil"
-                subtitle="Volume de judicializações por macrorregião"
-              >
-                <RegiaoBrasilChart data={metrics.regiaoBrasilDistribution} />
-              </Section>
-              <Section
-                icon={<Scale className="h-4 w-4" />}
-                title="Por TRF Região"
-                subtitle="Tribunal Regional Federal de origem do processo"
-              >
-                <TRFChart data={metrics.trfRegiaoDistribution} />
-              </Section>
-              <Section
-                icon={<MapPin className="h-4 w-4" />}
-                title="Top 15 UFs de Residência"
-                subtitle="Unidade federativa do paciente autor da ação"
-              >
-                <UFChart data={metrics.ufResidenciaDistribution} />
-              </Section>
-            </div>
-          </div>
-
-          {/* ═══ BLOCO 6: Operacional ════════════════════════════════════════ */}
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Visão Operacional
-            </p>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Section
-                icon={<BarChart2 className="h-4 w-4" />}
-                title="Top 10 Responsáveis"
-                subtitle="Servidores com maior volume de processos sob responsabilidade"
-              >
-                <TopResponsaveisChart data={metrics.topResponsaveis} />
-              </Section>
-              {metrics.totalValorEstimado > 0 && (
+            {/* ── Riscos ────────────────────────────────────────────────── */}
+            <TabsContent value="riscos" className="mt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <Section
-                  icon={<FileText className="h-4 w-4" />}
-                  title="Valor Estimado dos Processos"
-                  subtitle="Referência para dimensionamento orçamentário das aquisições"
+                  icon={<ShieldAlert className="h-4 w-4" />}
+                  title="Gargalos por Status"
+                  subtitle="Etapas com maior volume de processos parados"
                 >
-                  <div className="flex items-center justify-center h-32">
-                    <div className="text-center">
-                      <p className="text-4xl font-bold text-primary tabular-nums">
-                        R$&nbsp;{(metrics.totalValorEstimado / 1_000_000).toFixed(1)}M
-                      </p>
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Valor total estimado com base nos {metrics.totalDemandas.toLocaleString("pt-BR")} processos
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Média de R$&nbsp;{(metrics.totalValorEstimado / Math.max(metrics.totalDemandas, 1)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} por processo
-                      </p>
+                  <StatusChart data={metrics.statusDistribution} />
+                </Section>
+                <Section
+                  icon={<AlertTriangle className="h-4 w-4" />}
+                  title="Perfil de Risco"
+                  subtitle="Distribuição por nível de prioridade"
+                >
+                  <PrioridadeChart data={metrics.prioridadeDistribution} />
+                </Section>
+                <Section
+                  icon={<Activity className="h-4 w-4" />}
+                  title="Indicadores de Risco"
+                  subtitle="Passivo ativo por categoria de prioridade"
+                >
+                  <div className="space-y-4 mt-2">
+                    {(() => {
+                      const total = metrics.totalDemandas || 1;
+                      return [
+                        { label: "Crítica", color: "#dc2626", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Crítica")?.count || 0 },
+                        { label: "Alta",    color: "#ea580c", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Alta")?.count || 0 },
+                        { label: "Normal",  color: "#2563eb", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Normal" || p.prioridade === "Média")?.count || 0 },
+                        { label: "Baixa",   color: "#16a34a", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Baixa")?.count || 0 },
+                      ].map((item) => (
+                        <RiskBadge key={item.label} label={item.label} value={item.value} max={total} color={item.color} />
+                      ));
+                    })()}
+                    <div className="pt-3 border-t border-border space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Passivo ativo total</span>
+                        <span className="font-bold">{metrics.demandasAtivas.toLocaleString("pt-BR")}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-muted-foreground">Criticidade (Alta + Crítica)</span>
+                        <span className="font-bold text-destructive">{metrics.demandasCriticas.toLocaleString("pt-BR")}</span>
+                      </div>
                     </div>
                   </div>
                 </Section>
-              )}
-            </div>
-          </div>
-        </>
+              </div>
+            </TabsContent>
+
+            {/* ── Geografia ─────────────────────────────────────────────── */}
+            <TabsContent value="geografia" className="mt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <Section
+                  icon={<MapPin className="h-4 w-4" />}
+                  title="Por Região do Brasil"
+                  subtitle="Volume de judicializações por macrorregião"
+                >
+                  <RegiaoBrasilChart data={metrics.regiaoBrasilDistribution} />
+                </Section>
+                <Section
+                  icon={<Scale className="h-4 w-4" />}
+                  title="Por TRF Região"
+                  subtitle="Tribunal Regional Federal de origem do processo"
+                >
+                  <TRFChart data={metrics.trfRegiaoDistribution} />
+                </Section>
+                <Section
+                  icon={<MapPin className="h-4 w-4" />}
+                  title="Top 15 UFs de Residência"
+                  subtitle="Unidade federativa do paciente autor da ação"
+                >
+                  <UFChart data={metrics.ufResidenciaDistribution} />
+                </Section>
+              </div>
+            </TabsContent>
+
+            {/* ── Operacional ───────────────────────────────────────────── */}
+            <TabsContent value="operacional" className="mt-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Section
+                  icon={<BarChart2 className="h-4 w-4" />}
+                  title="Top 10 Responsáveis"
+                  subtitle="Servidores com maior volume de processos sob responsabilidade"
+                >
+                  <TopResponsaveisChart data={metrics.topResponsaveis} />
+                </Section>
+                {metrics.totalValorEstimado > 0 && (
+                  <Section
+                    icon={<FileText className="h-4 w-4" />}
+                    title="Valor Estimado dos Processos"
+                    subtitle="Referência para dimensionamento orçamentário das aquisições"
+                  >
+                    <div className="flex items-center justify-center h-32">
+                      <div className="text-center">
+                        <p className="text-4xl font-bold text-primary tabular-nums">
+                          R$&nbsp;{(metrics.totalValorEstimado / 1_000_000).toFixed(1)}M
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Valor total estimado com base nos {metrics.totalDemandas.toLocaleString("pt-BR")} processos
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Média de R$&nbsp;{(metrics.totalValorEstimado / Math.max(metrics.totalDemandas, 1)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} por processo
+                        </p>
+                      </div>
+                    </div>
+                  </Section>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
       )}
     </div>
   );
