@@ -353,9 +353,9 @@ export default function LoginPage() {
 
                   {/* Conteúdo */}
                   <div className="relative z-10 h-full flex flex-col justify-between p-4 xl:p-5">
-                    {card.type === "image" ? (
+                    {card.type === "image" && "icon" in card ? (
                       <>
-                        <card.icon className="h-6 w-6 text-white/90 group-hover:scale-110 transition-transform" />
+                        {card.icon && <card.icon className="h-6 w-6 text-white/90 group-hover:scale-110 transition-transform" />}
                         <div>
                           <p className="text-sm xl:text-base font-bold text-white leading-tight">
                             {card.title}
