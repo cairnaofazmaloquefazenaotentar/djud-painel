@@ -336,23 +336,23 @@ export function Sidebar() {
                 {/* User account dropdown */}
                 <DropdownMenu modal={false}>
                   <DropdownMenuTrigger asChild>
-                    <button className="flex h-8 w-full flex-row items-center gap-2 rounded-md px-2 py-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground focus:outline-none">
-                      <Avatar className="size-5 shrink-0">
-                        <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-[10px] font-bold">
+                    <button className="flex h-8 w-full flex-row items-center rounded-md px-2 py-1.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground focus:outline-none">
+                      <Avatar className="h-4 w-4 shrink-0">
+                        <AvatarFallback className="bg-sidebar-primary text-sidebar-primary-foreground text-[8px] font-bold flex items-center justify-center">
                           {initials}
                         </AvatarFallback>
                       </Avatar>
                       <motion.li
                         variants={labelVariants}
-                        className="flex w-full min-w-0 items-center gap-1"
+                        className="list-none"
                       >
                         {!isCollapsed && (
-                          <>
-                            <p className="truncate text-sm font-medium">
+                          <div className="flex items-center gap-2 ml-2">
+                            <span className="text-sm font-medium truncate">
                               {userName}
-                            </p>
-                            <ChevronsUpDown className="ml-auto h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40" />
-                          </>
+                            </span>
+                            <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-sidebar-foreground/40" />
+                          </div>
                         )}
                       </motion.li>
                     </button>
@@ -360,7 +360,7 @@ export function Sidebar() {
                   <DropdownMenuContent side="top" align="start" sideOffset={5} className="w-56">
                     {/* User info header */}
                     <div className="flex flex-row items-center gap-2 px-2 py-2">
-                      <Avatar className="size-7 shrink-0">
+                      <Avatar className="h-8 w-8 shrink-0">
                         <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
                           {initials}
                         </AvatarFallback>

@@ -1,19 +1,9 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useSession, signOut } from "next-auth/react";
-import { ChevronRight, LogOut, User, Settings } from "lucide-react";
-import Link from "next/link";
+import { useSession } from "next-auth/react";
+import { ChevronRight } from "lucide-react";
 import { MobileNav } from "@/components/layout/mobile-nav";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 const breadcrumbLabels: Record<string, string> = {
@@ -59,13 +49,6 @@ export function Topbar() {
 
   const breadcrumbs = generateBreadcrumbs(pathname);
   const role = (session?.user as any)?.role || "OPERATOR";
-  const initials =
-    session?.user?.name
-      ?.split(" ")
-      .map((n) => n[0])
-      .slice(0, 2)
-      .join("")
-      .toUpperCase() || "U";
 
   return (
     <div className="h-16 bg-background border-b border-border flex items-center justify-between px-4 md:px-6 shrink-0">
@@ -81,7 +64,7 @@ export function Topbar() {
         ))}
       </div>
 
-      {/* Right side: Role badge + Avatar Dropdown */}
+      {/* Right side: Role badge only */}
       <div className="flex items-center gap-3">
         {/* Role badge */}
         <Badge
@@ -90,50 +73,6 @@ export function Topbar() {
         >
           {roleLabels[role] ?? role}
         </Badge>
-
-        {/* Avatar + Dropdown */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-full">
-              <Avatar className="h-9 w-9 cursor-pointer bg-primary text-primary-foreground hover:opacity-90 transition-opacity">
-                <AvatarFallback className="bg-primary text-primary-foreground text-sm font-semibold">
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-52">
-            <DropdownMenuLabel className="flex flex-col gap-0.5">
-              <span className="text-sm font-semibold text-foreground">
-                {session?.user?.name}
-              </span>
-              <span className="text-xs font-normal text-muted-foreground truncate">
-                {session?.user?.email}
-              </span>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem asChild>
-              <Link href="/settings/profile" className="cursor-pointer">
-                <User className="h-4 w-4 mr-2" />
-                Meu Perfil
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/settings/profile" className="cursor-pointer">
-                <Settings className="h-4 w-4 mr-2" />
-                Configurações
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={() => signOut({ callbackUrl: "/login" })}
-              className="text-destructive focus:text-destructive focus:bg-destructive/10 cursor-pointer"
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Sair
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
     </div>
   );
