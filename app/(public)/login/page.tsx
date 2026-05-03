@@ -12,10 +12,12 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
-  ShieldCheck,
   FileText,
-  Users,
   TrendingUp,
+  Building2,
+  Users,
+  BarChart3,
+  CheckCircle2,
 } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -57,28 +59,68 @@ const rightPanelVariants = {
   },
 };
 
-// ── Dados dos cards de estatística ──────────────────────────────────────────
+const cardVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: (i: number) => ({
+    opacity: 1,
+    y: 0,
+    transition: { delay: 0.15 + i * 0.08, type: "spring" as const, stiffness: 300, damping: 25 },
+  }),
+};
 
-const stats = [
+// ── Dados dos cards do grid ────────────────────────────────────────────────
+
+const gridCards = [
   {
+    id: 1,
+    type: "image",
     icon: FileText,
+    title: "Demandas Judiciais",
+    description: "Gestão centralizada de processos",
+    bgClass: "bg-blue-600",
+    order: "order-1",
+  },
+  {
+    id: 2,
+    type: "stat",
     value: "51.501",
-    label: "Demandas Judiciais",
+    label: "Demandas Registradas",
+    bgClass: "bg-amber-500",
+    order: "order-2",
   },
   {
+    id: 3,
+    type: "image",
+    icon: Building2,
+    title: "28 Regiões TRF",
+    description: "Cobertura nacional",
+    bgClass: "bg-emerald-600",
+    order: "order-3",
+  },
+  {
+    id: 4,
+    type: "stat",
+    value: "98%",
+    label: "Taxa de Integração Redmine",
+    bgClass: "bg-red-600",
+    order: "order-4",
+  },
+  {
+    id: 5,
+    type: "image",
     icon: Users,
-    value: "28",
-    label: "Regiões TRF",
+    title: "Análise Especializada",
+    description: "Equipes multidisciplinares",
+    bgClass: "bg-indigo-600",
+    order: "order-5",
   },
   {
-    icon: TrendingUp,
-    value: "100%",
-    label: "Dados Redmine",
-  },
-  {
-    icon: ShieldCheck,
+    id: 6,
+    type: "stat",
     value: "RBAC",
-    label: "Controle de Acesso",
+    label: "Controle de Acesso Seguro",
+    bgClass: "bg-teal-600",
+    order: "order-6",
   },
 ];
 
@@ -137,15 +179,15 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-background flex overflow-hidden">
 
-      {/* ── Painel esquerdo — visual institucional ─────────────────────────── */}
+      {/* ── Painel esquerdo — grid institucional 2×3 ──────────────────────────── */}
       <motion.div
-        className="hidden lg:flex lg:w-1/2 xl:w-[55%] relative flex-col overflow-hidden"
+        className="hidden lg:flex lg:w-1/2 xl:w-[55%] relative flex-col overflow-hidden p-8 xl:p-12"
         variants={leftPanelVariants}
         initial="hidden"
         animate="visible"
         style={{
           background:
-            "linear-gradient(135deg, hsl(var(--primary)) 0%, color-mix(in oklch, var(--primary) 80%, black) 100%)",
+            "linear-gradient(135deg, hsl(var(--primary)) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%)",
         }}
       >
         {/* Grade decorativa */}
@@ -154,8 +196,8 @@ export default function LoginPage() {
           className="pointer-events-none absolute inset-0"
           style={{
             backgroundImage:
-              "radial-gradient(circle, color-mix(in oklch, white 8%, transparent) 1px, transparent 1px)",
-            backgroundSize: "32px 32px",
+              "radial-gradient(circle, color-mix(in oklch, white 5%, transparent) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
           }}
         />
 
@@ -165,7 +207,7 @@ export default function LoginPage() {
           className="absolute -top-40 -right-40 h-[600px] w-[600px] rounded-full pointer-events-none"
           style={{
             background:
-              "radial-gradient(circle, color-mix(in oklch, white 10%, transparent) 0%, transparent 65%)",
+              "radial-gradient(circle, color-mix(in oklch, white 8%, transparent) 0%, transparent 65%)",
             filter: "blur(70px)",
           }}
           animate={{ scale: [1, 1.06, 1], rotate: [0, 5, 0] }}
@@ -176,7 +218,7 @@ export default function LoginPage() {
           className="absolute bottom-0 -left-20 h-[400px] w-[400px] rounded-full pointer-events-none"
           style={{
             background:
-              "radial-gradient(circle, color-mix(in oklch, white 6%, transparent) 0%, transparent 65%)",
+              "radial-gradient(circle, color-mix(in oklch, white 4%, transparent) 0%, transparent 65%)",
             filter: "blur(60px)",
           }}
           animate={{ scale: [1, 1.08, 1] }}
@@ -184,7 +226,7 @@ export default function LoginPage() {
         />
 
         {/* Conteúdo do painel */}
-        <div className="relative z-10 flex flex-col h-full p-10 xl:p-14">
+        <div className="relative z-10 flex flex-col h-full gap-8">
 
           {/* Cabeçalho — logo */}
           <div className="flex items-center gap-3">
@@ -193,54 +235,59 @@ export default function LoginPage() {
             </div>
             <div>
               <p className="text-sm font-bold text-white leading-tight">DJUD Painel</p>
-              <p className="text-[10px] text-white/60 leading-tight">Ministério da Saúde</p>
+              <p className="text-[10px] text-white/70 leading-tight">Ministério da Saúde</p>
             </div>
           </div>
 
-          {/* Título central */}
-          <div className="flex-1 flex flex-col justify-center gap-6">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3, duration: 0.6 }}
-            >
-              <h2 className="text-3xl xl:text-4xl font-bold text-white leading-tight tracking-tight">
-                Gestão de Demandas
-                <br />
-                <span className="text-white/80">Judiciais em Saúde</span>
-              </h2>
-              <p className="mt-4 text-sm xl:text-base text-white/70 max-w-sm leading-relaxed">
-                Plataforma centralizada para acompanhamento, análise e gestão de processos judiciais
-                relacionados à saúde pública.
-              </p>
-            </motion.div>
+          {/* Grid 2×3 de cards */}
+          <div className="flex-1 grid grid-cols-2 gap-4 auto-rows-fr">
+            {gridCards.map((card, i) => (
+              <motion.div
+                key={card.id}
+                custom={i}
+                variants={cardVariants}
+                initial="hidden"
+                animate="visible"
+                className={`relative rounded-2xl overflow-hidden backdrop-blur-sm border border-white/20 transition-all hover:border-white/40 hover:shadow-lg ${card.bgClass}`}
+              >
+                {/* Fundo com overlay */}
+                <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-black/20" />
 
-            {/* Grid de estatísticas */}
-            <motion.div
-              className="grid grid-cols-2 gap-3"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5, staggerChildren: 0.1 }}
-            >
-              {stats.map((stat, i) => (
-                <motion.div
-                  key={stat.label}
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5 + i * 0.1, type: "spring", stiffness: 300, damping: 25 }}
-                  className="rounded-xl border border-white/20 bg-white/10 backdrop-blur-sm p-4 flex flex-col gap-2"
-                >
-                  <stat.icon className="h-4 w-4 text-white/70" />
-                  <p className="text-xl font-bold text-white leading-none">{stat.value}</p>
-                  <p className="text-xs text-white/60 leading-tight">{stat.label}</p>
-                </motion.div>
-              ))}
-            </motion.div>
+                {/* Conteúdo */}
+                <div className="relative z-10 h-full flex flex-col justify-between p-4 xl:p-5">
+                  {card.type === "image" ? (
+                    <>
+                      <card.icon className="h-6 w-6 text-white/90" />
+                      <div>
+                        <p className="text-sm xl:text-base font-bold text-white leading-tight">
+                          {card.title}
+                        </p>
+                        <p className="text-xs text-white/70 mt-1 leading-tight">
+                          {card.description}
+                        </p>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center h-full gap-2">
+                      <p className="text-2xl xl:text-3xl font-bold text-white leading-none">
+                        {card.value}
+                      </p>
+                      <p className="text-xs xl:text-sm text-white/80 text-center leading-tight">
+                        {card.label}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Indicador de ativo */}
+                <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-white/60" />
+              </motion.div>
+            ))}
           </div>
 
           {/* Rodapé do painel */}
-          <p className="text-xs text-white/40 mt-6">
-            © {new Date().getFullYear()} · Departamento de Judicialização · DJUD / COAJUD
+          <p className="text-xs text-white/50 mt-auto">
+            © {new Date().getFullYear()} · Departamento de Judicialização · DJUD
           </p>
         </div>
       </motion.div>
@@ -315,9 +362,11 @@ export default function LoginPage() {
                 animate={{ opacity: 1, y: 0, height: "auto" }}
                 exit={{ opacity: 0, y: -10, height: 0 }}
                 className="flex items-center gap-2.5 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3.5 py-3"
+                role="alert"
+                aria-live="polite"
               >
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {errorMessage}
+                <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{errorMessage}</span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -327,6 +376,7 @@ export default function LoginPage() {
             onSubmit={handleCredentialsLogin}
             className="space-y-5"
             variants={itemVariants}
+            noValidate
           >
             {/* Email */}
             <div className="space-y-2">
@@ -339,6 +389,8 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                aria-required="true"
+                aria-invalid={error === "CredentialsSignin" ? "true" : "false"}
                 placeholder="voce@saude.gov.br"
                 autoComplete="email"
                 className="h-11"
@@ -357,6 +409,8 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  aria-required="true"
+                  aria-invalid={error === "CredentialsSignin" ? "true" : "false"}
                   placeholder="••••••••"
                   autoComplete="current-password"
                   className="h-11 pr-11"
@@ -366,6 +420,7 @@ export default function LoginPage() {
                   onClick={() => setShowPassword((v) => !v)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
                   aria-label={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  aria-pressed={showPassword}
                 >
                   <AnimatePresence mode="wait" initial={false}>
                     {showPassword ? (
@@ -375,6 +430,7 @@ export default function LoginPage() {
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.7 }}
                         transition={{ duration: 0.15 }}
+                        aria-hidden="true"
                       >
                         <EyeOff className="h-4 w-4" />
                       </motion.span>
@@ -385,6 +441,7 @@ export default function LoginPage() {
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.7 }}
                         transition={{ duration: 0.15 }}
+                        aria-hidden="true"
                       >
                         <Eye className="h-4 w-4" />
                       </motion.span>
@@ -397,12 +454,13 @@ export default function LoginPage() {
             {/* Botão entrar */}
             <Button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || !email || !password}
               className="w-full h-11 relative overflow-hidden group"
+              aria-busy={isLoading}
             >
               {/* Shimmer sweep */}
               <span
-                aria-hidden
+                aria-hidden="true"
                 className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out"
                 style={{
                   background:
@@ -412,8 +470,8 @@ export default function LoginPage() {
               <span className="relative flex items-center justify-center gap-2">
                 {isLoading ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Entrando...
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span>Entrando...</span>
                   </>
                 ) : (
                   "Entrar"
@@ -436,20 +494,21 @@ export default function LoginPage() {
               disabled={isLoadingGoogle}
               variant="outline"
               className="w-full h-11 relative overflow-hidden group"
+              aria-busy={isLoadingGoogle}
             >
               <span
-                aria-hidden
+                aria-hidden="true"
                 className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 ease-in-out bg-muted/40"
               />
               <span className="relative flex items-center gap-2.5">
                 {isLoadingGoogle ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Conectando...
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    <span>Conectando...</span>
                   </>
                 ) : (
                   <>
-                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24">
+                    <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
                       <path
                         d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
                         fill="#4285F4"
@@ -467,7 +526,7 @@ export default function LoginPage() {
                         fill="#EA4335"
                       />
                     </svg>
-                    Entrar com Google
+                    <span>Entrar com Google</span>
                   </>
                 )}
               </span>
@@ -479,7 +538,7 @@ export default function LoginPage() {
             className="text-center text-xs text-muted-foreground pt-2"
             variants={itemVariants}
           >
-            Ministério da Saúde · Sistema DJUD · v0.1.0
+            Ministério da Saúde · Sistema DJUD · v0.2.0
           </motion.p>
         </motion.div>
       </motion.div>
