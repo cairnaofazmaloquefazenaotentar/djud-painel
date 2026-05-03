@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
@@ -111,6 +112,54 @@ const tertiaryNav = [
   },
 ];
 
+// ── Spell: NavItem com active indicator animado (layoutId) ───────────────────
+
+function NavItem({
+  href,
+  icon: Icon,
+  label,
+  badge,
+  isCollapsed,
+  isActive: active,
+}: {
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  badge?: React.ReactNode;
+  isCollapsed: boolean;
+  isActive: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "relative flex h-8 w-full flex-row items-center rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground overflow-hidden",
+        active
+          ? "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground"
+          : ""
+      )}
+    >
+      {/* Spell: indicador esquerdo com layoutId — desliza de item em item */}
+      {active && (
+        <motion.span
+          layoutId="sidebar-active-bar"
+          className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-sidebar-primary-foreground/70"
+          transition={{ type: "spring" as const, stiffness: 500, damping: 35 }}
+        />
+      )}
+      <Icon className="h-4 w-4 shrink-0" />
+      <motion.li variants={labelVariants} className="list-none">
+        {!isCollapsed && (
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-sm font-medium">{label}</span>
+            {badge}
+          </div>
+        )}
+      </motion.li>
+    </Link>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
@@ -211,93 +260,54 @@ export function Sidebar() {
                   <div className="flex w-full flex-col gap-0.5">
 
                     {/* Primary nav */}
-                    {primaryNav.map((item) => {
-                      const Icon = item.icon;
-                      const active = isActive(item.href);
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className={cn(
-                            "flex h-8 w-full flex-row items-center rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground",
-                            active && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground"
-                          )}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <motion.li variants={labelVariants}>
-                            {!isCollapsed && (
-                              <p className="ml-2 text-sm font-medium">
-                                {item.label}
-                              </p>
-                            )}
-                          </motion.li>
-                        </Link>
-                      );
-                    })}
+                    {primaryNav.map((item) => (
+                      <NavItem
+                        key={item.href}
+                        href={item.href}
+                        icon={item.icon}
+                        label={item.label}
+                        isCollapsed={isCollapsed}
+                        isActive={isActive(item.href)}
+                      />
+                    ))}
 
                     <Separator className="my-1 bg-sidebar-border" />
 
                     {/* Secondary nav */}
-                    {secondaryNav.map((item) => {
-                      const Icon = item.icon;
-                      const active = isActive(item.href);
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className={cn(
-                            "flex h-8 w-full flex-row items-center rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground",
-                            active && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground"
-                          )}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <motion.li variants={labelVariants}>
-                            {!isCollapsed && (
-                              <p className="ml-2 text-sm font-medium">
-                                {item.label}
-                              </p>
-                            )}
-                          </motion.li>
-                        </Link>
-                      );
-                    })}
+                    {secondaryNav.map((item) => (
+                      <NavItem
+                        key={item.href}
+                        href={item.href}
+                        icon={item.icon}
+                        label={item.label}
+                        isCollapsed={isCollapsed}
+                        isActive={isActive(item.href)}
+                      />
+                    ))}
 
                     <Separator className="my-1 bg-sidebar-border" />
 
                     {/* Tertiary nav */}
-                    {tertiaryNav.map((item) => {
-                      const Icon = item.icon;
-                      const active = isActive(item.href);
-                      return (
-                        <Link
-                          key={item.href}
-                          href={item.href}
-                          className={cn(
-                            "flex h-8 w-full flex-row items-center rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/15 hover:text-sidebar-foreground",
-                            active && "bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary hover:text-sidebar-primary-foreground"
-                          )}
-                        >
-                          <Icon className="h-4 w-4 shrink-0" />
-                          <motion.li variants={labelVariants}>
-                            {!isCollapsed && (
-                              <div className="flex items-center gap-2">
-                                <p className="ml-2 text-sm font-medium">
-                                  {item.label}
-                                </p>
-                                {item.badge && (
-                                  <Badge
-                                    className="flex h-fit w-fit items-center gap-1.5 rounded border-none bg-primary/10 px-1.5 text-primary"
-                                    variant="outline"
-                                  >
-                                    {item.badge}
-                                  </Badge>
-                                )}
-                              </div>
-                            )}
-                          </motion.li>
-                        </Link>
-                      );
-                    })}
+                    {tertiaryNav.map((item) => (
+                      <NavItem
+                        key={item.href}
+                        href={item.href}
+                        icon={item.icon}
+                        label={item.label}
+                        isCollapsed={isCollapsed}
+                        isActive={isActive(item.href)}
+                        badge={
+                          item.badge ? (
+                            <Badge
+                              className="flex h-fit w-fit items-center gap-1.5 rounded border-none bg-primary/10 px-1.5 text-primary"
+                              variant="outline"
+                            >
+                              {item.badge}
+                            </Badge>
+                          ) : undefined
+                        }
+                      />
+                    ))}
 
                   </div>
                 </ScrollArea>
