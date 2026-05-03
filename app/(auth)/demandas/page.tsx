@@ -15,7 +15,7 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { toast } from "sonner";
@@ -105,6 +105,8 @@ export default function DemandasPage() {
   const [demandas, setDemandas] = useState<Demanda[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [erro, setErro] = useState<string | null>(null);
+  const PAGE_SIZE = 100; // 100 itens por página
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean;
     demandaId?: string;
@@ -142,10 +144,11 @@ export default function DemandasPage() {
   useEffect(() => {
     const fetchDemandas = async () => {
       setLoading(true);
+      setErro(null);
       try {
         const params = new URLSearchParams();
         params.append("page", page);
-        params.append("pageSize", "10");
+        params.append("pageSize", PAGE_SIZE.toString());
         if (busca) params.append("busca", busca);
         if (status) params.append("status", status);
         if (prioridade) params.append("prioridade", prioridade);
@@ -153,15 +156,27 @@ export default function DemandasPage() {
         if (trfRegiao) params.append("trfRegiao", trfRegiao);
         if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
 
+        console.log("🔄 Buscando demandas...", params.toString());
         const res = await fetch(`/api/demandas?${params.toString()}`);
+
         if (res.ok) {
           const data = await res.json();
+          console.log("✅ Demandas carregadas:", data.data.length, "de", data.pagination.total);
           setDemandas(data.data);
           setTotal(data.pagination.total);
           setTotalPages(data.pagination.totalPages);
+        } else {
+          const errorData = await res.json();
+          const errorMsg = errorData.error || `Erro ${res.status}`;
+          console.error("❌ Erro ao carregar:", errorMsg);
+          setErro(errorMsg);
+          setDemandas([]);
         }
-      } catch (error) {
-        console.error("Erro ao carregar demandas:", error);
+      } catch (error: any) {
+        const msg = error.message || "Erro ao carregar demandas";
+        console.error("❌ Erro de rede:", msg);
+        setErro(msg);
+        setDemandas([]);
       } finally {
         setLoading(false);
       }
@@ -509,35 +524,55 @@ export default function DemandasPage() {
         />
       </FilterBar>
 
-      <DataTable<Demanda>
-        columns={columns}
-        data={demandas}
-        loading={loading}
-        pageSize={10}
-        onRowClick={(row) => router.push(`/demandas/${row.id}`)}
-        renderEmptyState={() => (
-          <EmptyState
-            title="Nenhuma demanda encontrada"
-            description={
-              isFiltered
-                ? "Nenhuma demanda corresponde aos filtros aplicados. Tente redefinir os filtros."
-                : "Comece criando uma nova demanda ou importe dados do Excel."
-            }
-            action={
-              isFiltered ? (
-                <Button variant="outline" onClick={handleReset}>
-                  Limpar filtros
-                </Button>
-              ) : (
-                <Button onClick={() => router.push("/demandas/new")}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Nova Demanda
-                </Button>
-              )
-            }
-          />
-        )}
-      />
+      {/* Exibir erro se houver */}
+      {erro && (
+        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+          <AlertCircle className="h-4 w-4 inline mr-2" />
+          {erro}
+        </div>
+      )}
+
+      {/* Skeleton de carregamento */}
+      {loading && (
+        <div className="space-y-2">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className="h-12 bg-muted animate-pulse rounded-md" />
+          ))}
+        </div>
+      )}
+
+      {/* DataTable — 100 itens por página */}
+      {!loading && !erro && (
+        <DataTable<Demanda>
+          columns={columns}
+          data={demandas}
+          loading={false}
+          pageSize={PAGE_SIZE}
+          onRowClick={(row) => router.push(`/demandas/${row.id}`)}
+          renderEmptyState={() => (
+            <EmptyState
+              title="Nenhuma demanda encontrada"
+              description={
+                isFiltered
+                  ? "Nenhuma demanda corresponde aos filtros aplicados. Tente redefinir os filtros."
+                  : "Comece criando uma nova demanda ou importe dados do Excel."
+              }
+              action={
+                isFiltered ? (
+                  <Button variant="outline" onClick={handleReset}>
+                    Limpar filtros
+                  </Button>
+                ) : (
+                  <Button onClick={() => router.push("/demandas/new")}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Nova Demanda
+                  </Button>
+                )
+              }
+            />
+          )}
+        />
+      )}
 
       {/* Paginação — ícones, padrão DataTable */}
       {totalPages > 1 && (
