@@ -15,7 +15,7 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download, Lock, Pencil } from "lucide-react";
+import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { toast } from "sonner";
@@ -514,6 +514,7 @@ export default function DemandasPage() {
         data={demandas}
         loading={loading}
         pageSize={10}
+        onRowClick={(row) => router.push(`/demandas/${row.id}`)}
         renderEmptyState={() => (
           <EmptyState
             title="Nenhuma demanda encontrada"
@@ -538,28 +539,35 @@ export default function DemandasPage() {
         )}
       />
 
-      {/* Paginação simples */}
+      {/* Paginação — ícones, padrão DataTable */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Página {page} de {totalPages.toLocaleString("pt-BR")}
+        <div className="flex items-center justify-between px-1">
+          <p className="text-xs text-muted-foreground">
+            Página{" "}
+            <span className="font-semibold text-foreground">{page}</span>{" "}
+            de{" "}
+            <span className="font-semibold text-foreground">
+              {totalPages.toLocaleString("pt-BR")}
+            </span>
           </p>
-          <div className="flex gap-2">
+          <div className="flex gap-1">
             <Button
               variant="outline"
               size="sm"
+              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
               disabled={page === "1"}
-              onClick={() => setPage(String(Math.max(1, parseInt(page) - 1)))}
+              onClick={() => { const p = String(Math.max(1, parseInt(page) - 1)); setPage(p); updateUrl({ page: p }); }}
             >
-              Anterior
+              <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="outline"
               size="sm"
+              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
               disabled={parseInt(page) >= totalPages}
-              onClick={() => setPage(String(Math.min(totalPages, parseInt(page) + 1)))}
+              onClick={() => { const p = String(Math.min(totalPages, parseInt(page) + 1)); setPage(p); updateUrl({ page: p }); }}
             >
-              Próxima
+              <ChevronRight className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>

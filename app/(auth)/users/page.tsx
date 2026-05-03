@@ -38,7 +38,7 @@ const roleColors: Record<string, "active" | "warning" | "error"> = {
 
 const roleLabels: Record<string, string> = {
   ADMIN: "Administrador",
-  MANAGER: "Gerenciador",
+  MANAGER: "Gestor",
   OPERATOR: "Operador",
 };
 

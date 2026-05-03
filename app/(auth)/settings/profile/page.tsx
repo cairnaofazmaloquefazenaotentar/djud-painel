@@ -16,6 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   User,
   Mail,
@@ -32,13 +33,13 @@ import {
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: "Administrador",
-  MANAGER: "Gerenciador",
+  MANAGER: "Gestor",
   OPERATOR: "Operador",
 };
 
 const ROLE_DESCRIPTIONS: Record<string, string> = {
   ADMIN: "Acesso total ao sistema — criar, editar, excluir e exportar dados.",
-  MANAGER: "Gerenciar demandas e usuários — criar e editar, sem permissão de exclusão.",
+  MANAGER: "Gestão de demandas e usuários — criar e editar, sem permissão de exclusão.",
   OPERATOR: "Visualizar e acompanhar demandas — acesso somente leitura.",
 };
 
@@ -144,9 +145,11 @@ export default function ProfilePage() {
         <CardContent className="pt-6 space-y-6">
           {/* Avatar + identidade */}
           <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xl font-bold shrink-0 select-none">
-              {initials}
-            </div>
+            <Avatar className="h-14 w-14 shrink-0">
+              <AvatarFallback className="bg-primary text-primary-foreground text-xl font-bold select-none">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
             <div className="min-w-0">
               <p className="font-semibold text-base truncate">
                 {user.name || "Sem nome"}

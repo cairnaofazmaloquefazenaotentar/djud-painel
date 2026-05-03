@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 import { Scale } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -22,8 +24,8 @@ export default function NotFound() {
         </div>
 
         <div className="flex gap-3 justify-center">
-          <Button variant="outline" asChild>
-            <Link href="javascript:history.back()">Voltar</Link>
+          <Button variant="outline" onClick={() => window.history.back()}>
+            Voltar
           </Button>
           <Button asChild>
             <Link href="/dashboard">Ir para o painel</Link>

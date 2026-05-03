@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Plus, Trash2, Edit2, Lock, Building2, Users, FileText } from "lucide-react";
+import { Plus, Trash2, Edit2, Lock, Building2, Users, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 import { rolePermissions } from "@/lib/permissions";
 import { toast } from "sonner";
 
@@ -187,24 +187,26 @@ export default function OrganizationsPage() {
       cell: ({ row }) => (
         <div className="flex gap-1">
           {canWrite ? (
-            <Button variant="ghost" size="sm" className="h-8 px-2"
+            <Button variant="ghost" size="sm" className="h-8 px-2 gap-1.5"
               onClick={() => openEdit(row.original)}>
-              <Edit2 className="h-4 w-4" />
+              <Edit2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Editar</span>
             </Button>
           ) : (
-            <Button variant="ghost" size="sm" className="h-8 px-2 opacity-50" disabled>
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" className="h-8 px-2 opacity-40" disabled title="Sem permissão para editar">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
           {canDelete ? (
             <Button variant="ghost" size="sm"
-              className="h-8 px-2 text-destructive hover:text-destructive/90"
+              className="h-8 px-2 gap-1.5 text-destructive hover:text-destructive/90 hover:bg-destructive/10"
               onClick={() => setDeleteDialog({ open: true, orgId: row.original.id, orgName: row.original.name })}>
-              <Trash2 className="h-4 w-4" />
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="text-xs hidden sm:inline">Desativar</span>
             </Button>
           ) : (
-            <Button variant="ghost" size="sm" className="h-8 px-2 opacity-50" disabled>
-              <Lock className="h-4 w-4" />
+            <Button variant="ghost" size="sm" className="h-8 px-2 opacity-40" disabled title="Sem permissão para desativar">
+              <Lock className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
@@ -357,18 +359,31 @@ export default function OrganizationsPage() {
       />
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Página {page} de {totalPages}
+        <div className="flex items-center justify-between px-1">
+          <p className="text-xs text-muted-foreground">
+            Página{" "}
+            <span className="font-semibold text-foreground">{page}</span>{" "}
+            de{" "}
+            <span className="font-semibold text-foreground">{totalPages}</span>
           </p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={page === "1"}
-              onClick={() => setPage(String(Math.max(1, parseInt(page) - 1)))}>
-              Anterior
+          <div className="flex gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
+              disabled={page === "1"}
+              onClick={() => setPage(String(Math.max(1, parseInt(page) - 1)))}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="outline" size="sm" disabled={parseInt(page) >= totalPages}
-              onClick={() => setPage(String(Math.min(totalPages, parseInt(page) + 1)))}>
-              Próxima
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
+              disabled={parseInt(page) >= totalPages}
+              onClick={() => setPage(String(Math.min(totalPages, parseInt(page) + 1)))}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
             </Button>
           </div>
         </div>

@@ -205,7 +205,7 @@ export function Sidebar() {
           <div className="flex grow flex-col items-center">
 
             {/* ── Header / Branding ─────────────────────────────────────── */}
-            <div className="flex h-[54px] w-full shrink-0 items-center border-b border-sidebar-border px-2">
+            <div className="flex h-16 w-full shrink-0 items-center border-b border-sidebar-border px-2">
               <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button

@@ -3,6 +3,8 @@
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { ChevronRight, LogOut, User, Settings } from "lucide-react";
+import Link from "next/link";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,12 +24,15 @@ const breadcrumbLabels: Record<string, string> = {
   logs: "Logs",
   settings: "Configurações",
   profile: "Perfil",
+  new: "Novo",
+  edit: "Editar",
 };
 
 function generateBreadcrumbs(pathname: string) {
+  // Preserva "dashboard" na lista para que o breadcrumb seja exibido
   const segments = pathname
     .split("/")
-    .filter((s) => s && s !== "dashboard")
+    .filter(Boolean)
     .slice(0, 2);
 
   return segments.map((segment, idx) => ({
@@ -63,13 +68,14 @@ export function Topbar() {
       .toUpperCase() || "U";
 
   return (
-    <div className="h-16 bg-background border-b border-border flex items-center justify-between px-6 shrink-0">
-      {/* Breadcrumbs */}
+    <div className="h-16 bg-background border-b border-border flex items-center justify-between px-4 md:px-6 shrink-0">
+      {/* Hamburguer (mobile) + Breadcrumbs */}
       <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground font-medium">DJUD</span>
+        <MobileNav />
+        <span className="text-muted-foreground font-medium hidden sm:inline">DJUD</span>
         {breadcrumbs.map((crumb) => (
           <div key={crumb.href} className="flex items-center gap-2">
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50 hidden sm:block" />
             <span className="text-foreground font-medium">{crumb.label}</span>
           </div>
         ))}
@@ -107,16 +113,16 @@ export function Topbar() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <a href="/settings/profile" className="cursor-pointer">
+              <Link href="/settings/profile" className="cursor-pointer">
                 <User className="h-4 w-4 mr-2" />
                 Meu Perfil
-              </a>
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuItem asChild>
-              <a href="/settings/profile" className="cursor-pointer">
+              <Link href="/settings/profile" className="cursor-pointer">
                 <Settings className="h-4 w-4 mr-2" />
                 Configurações
-              </a>
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

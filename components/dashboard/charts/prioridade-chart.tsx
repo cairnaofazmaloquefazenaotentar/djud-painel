@@ -1,47 +1,61 @@
 "use client";
 
 import { PieChart, Pie, Cell, Legend, Tooltip, ResponsiveContainer } from "recharts";
+import { tooltipStyle, PRIORIDADE_COLORS } from "./chart-utils";
 
 interface PrioridadeChartProps {
   data: Array<{ prioridade: string; count: number }>;
 }
 
-const prioridadeColors: Record<string, string> = {
-  Baixa: "hsl(142, 71%, 45%)",
-  Média: "hsl(38, 92%, 50%)",
-  Alta: "hsl(25, 95%, 53%)",
-  Crítica: "hsl(0, 84%, 60%)",
+const RADIAN = Math.PI / 180;
+const renderLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+  if (percent < 0.04) return null;
+  const r = innerRadius + (outerRadius - innerRadius) * 0.55;
+  const x = cx + r * Math.cos(-midAngle * RADIAN);
+  const y = cy + r * Math.sin(-midAngle * RADIAN);
+  return (
+    <text x={x} y={y} fill="white" textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={600}>
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  );
 };
 
 export function PrioridadeChart({ data }: PrioridadeChartProps) {
+  if (!data?.length) {
+    return (
+      <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
+        Sem dados de prioridade
+      </div>
+    );
+  }
+
+  const chartData = data.map((item) => ({
+    name: item.prioridade || "Normal",
+    value: item.count,
+    fill: PRIORIDADE_COLORS[item.prioridade] ?? "#94a3b8",
+  }));
+
   return (
     <ResponsiveContainer width="100%" height={300}>
       <PieChart>
         <Pie
-          data={data}
+          data={chartData}
           cx="50%"
           cy="50%"
+          outerRadius={100}
+          dataKey="value"
           labelLine={false}
-          label={({ prioridade, count }) => `${prioridade}: ${count}`}
-          outerRadius={80}
-          fill="#8884d8"
-          dataKey="count"
+          label={renderLabel}
         >
-          {data.map((entry, index) => (
-            <Cell
-              key={`cell-${index}`}
-              fill={prioridadeColors[entry.prioridade] || "hsl(240, 4%, 46%)"}
-            />
+          {chartData.map((entry, idx) => (
+            <Cell key={idx} fill={entry.fill} />
           ))}
         </Pie>
         <Tooltip
-          contentStyle={{
-            backgroundColor: "hsl(0, 0%, 100%)",
-            border: "1px solid hsl(240, 4%, 85%)",
-            borderRadius: "0.5rem",
-          }}
+          contentStyle={tooltipStyle}
+          formatter={(v: number) => [v.toLocaleString("pt-BR"), "Demandas"]}
         />
-        <Legend />
+        <Legend formatter={(value) => <span className="text-xs">{value}</span>} />
       </PieChart>
     </ResponsiveContainer>
   );

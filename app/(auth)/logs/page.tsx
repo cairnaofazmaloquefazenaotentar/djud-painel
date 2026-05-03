@@ -178,16 +178,18 @@ export default function LogsPage() {
       header: "Detalhes",
       cell: ({ row }) =>
         row.original.changes ? (
-          <button
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0 text-xs font-normal text-primary underline-offset-2"
             onClick={() =>
               setExpandedId(
                 expandedId === row.original.id ? null : row.original.id
               )
             }
-            className="text-xs text-primary underline underline-offset-2"
           >
             {expandedId === row.original.id ? "Fechar" : "Ver mudanças"}
-          </button>
+          </Button>
         ) : (
           <span className="text-muted-foreground text-xs">—</span>
         ),
