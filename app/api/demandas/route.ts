@@ -15,15 +15,19 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
+
+    // Helper: converter null → undefined para Zod .optional()
+    const getString = (key: string) => searchParams.get(key) || undefined;
+
     const params = listDemandaSchema.parse({
-      page: searchParams.get("page"),
-      pageSize: searchParams.get("pageSize"),
-      status: searchParams.get("status"),
-      prioridade: searchParams.get("prioridade"),
-      organizacaoId: searchParams.get("organizacaoId"),
-      busca: searchParams.get("busca"),
-      ordenarPor: searchParams.get("ordenarPor"),
-      ordem: searchParams.get("ordem"),
+      page: getString("page"),
+      pageSize: getString("pageSize"),
+      status: getString("status"),
+      prioridade: getString("prioridade"),
+      organizacaoId: getString("organizacaoId"),
+      busca: getString("busca"),
+      ordenarPor: getString("ordenarPor"),
+      ordem: getString("ordem"),
     });
 
     // Novos filtros (Sprint 8)
