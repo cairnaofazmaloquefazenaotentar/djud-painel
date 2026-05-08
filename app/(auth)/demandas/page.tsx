@@ -209,7 +209,8 @@ export default function DemandasPage() {
 
   const handleExport = async () => {
     const params = new URLSearchParams();
-    params.append("pageSize", "5000");
+    // pageSize = 10000 para garantir exportação completa sem ultrapassar o limite do schema
+    params.append("pageSize", "10000");
     if (busca) params.append("busca", busca);
     if (status) params.append("status", status);
     if (prioridade) params.append("prioridade", prioridade);
@@ -218,7 +219,11 @@ export default function DemandasPage() {
     if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
 
     const res = await fetch(`/api/demandas?${params.toString()}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      toast.error(err.error || "Erro ao exportar demandas.");
+      return;
+    }
     const data = await res.json();
 
     const csv = [

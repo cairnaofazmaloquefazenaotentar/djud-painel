@@ -64,6 +64,8 @@ const authConfig: NextAuthConfig = {
       if (session.user && token) {
         session.user.id = token.id as string;
         session.user.role = (token.role as string) || "OPERATOR";
+        session.user.organizacaoId = token.organizacaoId ?? null;
+        session.user.organizacaoName = token.organizacaoName ?? null;
       }
       return session;
     },
@@ -71,13 +73,19 @@ const authConfig: NextAuthConfig = {
       if (user) {
         token.id = user.id;
 
-        // Buscar role do banco de dados
+        // Buscar role e organização do banco de dados
         const dbUser = await db.user.findUnique({
           where: { id: user.id },
-          select: { role: true },
+          select: {
+            role: true,
+            organizationId: true,
+            organization: { select: { name: true } },
+          },
         });
 
         token.role = dbUser?.role || "OPERATOR";
+        token.organizacaoId = dbUser?.organizationId ?? null;
+        token.organizacaoName = dbUser?.organization?.name ?? null;
       }
       return token;
     },

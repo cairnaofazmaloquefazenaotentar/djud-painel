@@ -30,13 +30,18 @@ export const updateDemandaSchema = createDemandaSchema.partial();
 
 export const listDemandaSchema = z.object({
   page: z.coerce.number().int().positive().default(1),
-  pageSize: z.coerce.number().int().positive().max(100).default(10),
+  // Max 10000 para suportar exportação CSV completa (ex.: pageSize=5000)
+  pageSize: z.coerce.number().int().positive().max(10000).default(10),
   status: z.string().optional(),
   prioridade: z.string().optional(),
   organizacaoId: z.string().optional(),
   busca: z.string().optional(),
   ordenarPor: z.enum(["criado", "atualizado", "vencimento", "prioridade"]).default("criado"),
   ordem: z.enum(["asc", "desc"]).default("desc"),
+  // Sprint 8 — filtros campos judiciais Redmine
+  areaTematica: z.string().optional(),
+  trfRegiao: z.coerce.number().int().optional(),
+  regiaoBrasil: z.string().optional(),
 });
 
 export type CreateDemandaInput = z.infer<typeof createDemandaSchema>;

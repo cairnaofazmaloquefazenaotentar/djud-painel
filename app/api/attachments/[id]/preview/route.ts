@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { hasPermission } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -50,22 +51,16 @@ export async function GET(
       );
     }
 
-    // Validação de permissão: user pode acessar demanda?
-    // Admin sempre pode, outros só se tiverem acesso à demanda
+    // Validação de permissão: qualquer usuário autenticado com permissão
+    // demandas:read pode visualizar/baixar anexos de uma demanda.
+    // Admin, Manager e Operator com essa permissão têm acesso.
     const user = session.user as { id: string; role?: string };
-    const isAdmin = user.role === "ADMIN";
-
-    if (!isAdmin) {
-      // Verificar se user tem acesso à demanda
-      // TODO: Implementar lógica de permissão (MANAGER/OPERATOR access)
-      // Por enquanto, só o responsável ou admin pode acessar
-      if (attachment.demanda.criadoPorId !== user.id &&
-          user.role !== "MANAGER") {
-        return NextResponse.json(
-          { error: "Forbidden" },
-          { status: 403 }
-        );
-      }
+    const canRead = hasPermission(user as any, "demandas:read");
+    if (!canRead) {
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403 }
+      );
     }
 
     // Buscar arquivo do filesystem (MVP com local storage)

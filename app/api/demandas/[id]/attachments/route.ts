@@ -9,7 +9,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 
 // Allowed MIME types and extensions
-const ALLOWED_TYPES = ["application/pdf", "image/jpeg", "image/png", "application/msword"];
+const ALLOWED_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "application/msword",
+  // .docx (Office 2007+)
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export async function GET(
@@ -44,6 +51,7 @@ export async function GET(
         fileName: true,
         fileSize: true,
         mimeType: true,
+        storagePath: true,
         uploadedAt: true,
         uploadedBy: {
           select: {

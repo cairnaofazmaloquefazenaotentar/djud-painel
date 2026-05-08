@@ -93,8 +93,8 @@ export default function ProfilePage() {
     }
     setPwLoading(true);
     try {
-      const res = await fetch(`/api/users/${user?.id}`, {
-        method: "PUT",
+      const res = await fetch(`/api/users/${user?.id}/change-password`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           currentPassword: pwForm.current,
@@ -177,9 +177,9 @@ export default function ProfilePage() {
             <InfoTile icon={<Shield className="h-4 w-4" />} label="Função">
               {ROLE_LABELS[role] ?? role}
             </InfoTile>
-            {user.organizationId && (
+            {(user.organizacaoName || user.organizacaoId) && (
               <InfoTile icon={<Building2 className="h-4 w-4" />} label="Organização">
-                {user.organizationId}
+                {user.organizacaoName || user.organizacaoId}
               </InfoTile>
             )}
           </div>

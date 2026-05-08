@@ -63,6 +63,7 @@ export function AttachmentsManager({
     setUploadError(undefined);
 
     try {
+      const uploaded: Attachment[] = [];
       for (const file of selectedFiles) {
         const formData = new FormData();
         formData.append("file", file);
@@ -81,11 +82,16 @@ export function AttachmentsManager({
         }
 
         const newAttachment = await response.json();
-        setAttachments((prev) => [newAttachment, ...prev]);
+        uploaded.push(newAttachment);
       }
 
+      setAttachments((prev) => {
+        const updated = [...uploaded, ...prev];
+        // Invocar callback com a lista final correta (sem stale closure)
+        onAttachmentsChange?.(updated);
+        return updated;
+      });
       setSelectedFiles([]);
-      onAttachmentsChange?.(attachments);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erro ao fazer upload";
@@ -113,10 +119,12 @@ export function AttachmentsManager({
         throw new Error(data.error || "Erro ao deletar anexo");
       }
 
-      setAttachments((prev) =>
-        prev.filter((att) => att.id !== attachmentId)
-      );
-      onAttachmentsChange?.(attachments.filter((att) => att.id !== attachmentId));
+      setAttachments((prev) => {
+        const updated = prev.filter((att) => att.id !== attachmentId);
+        // Invocar callback com a lista final correta (sem stale closure)
+        onAttachmentsChange?.(updated);
+        return updated;
+      });
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Erro ao deletar anexo";
@@ -125,9 +133,10 @@ export function AttachmentsManager({
   };
 
   const handleDownload = (attachment: Attachment) => {
-    // Create a link and trigger download
+    // Usar o endpoint de preview como URL de download (storagePath é um caminho de
+    // filesystem, não uma URL acessível pelo browser)
     const link = document.createElement("a");
-    link.href = attachment.storagePath;
+    link.href = `/api/attachments/${attachment.id}/preview`;
     link.download = attachment.fileName;
     document.body.appendChild(link);
     link.click();
