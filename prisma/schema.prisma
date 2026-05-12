@@ -164,6 +164,8 @@ model Demanda {
   metadados                    Json?
   criadoEm                     DateTime          @default(now())
   atualizadoEm                 DateTime          @updatedAt
+  // Soft delete — demandas ficam 30 dias em "lixeira" antes de serem purgadas
+  deletedAt                    DateTime?
   attachments                  Attachment[]
 
   @@index([ano])
@@ -179,6 +181,7 @@ model Demanda {
   @@index([numeroProcesso])
   @@index([numeroExterno])
   @@index([regiaoBrasil])
+  @@index([deletedAt])
 }
 
 model Attachment {

@@ -39,7 +39,10 @@ export async function GET(request: NextRequest) {
 
     const skip = (params.page - 1) * params.pageSize;
 
-    const where: any = {};
+    const where: any = {
+      // Excluir demandas em soft delete por padrão
+      deletedAt: null,
+    };
 
     if (params.status) where.status = params.status;
     if (params.prioridade) where.prioridade = params.prioridade;

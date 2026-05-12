@@ -19,7 +19,7 @@ export async function GET(
     }
 
     const demanda = await db.demanda.findUnique({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         organizacao: { select: { id: true, name: true } },
         responsavel: { select: { id: true, name: true, email: true } },
@@ -151,8 +151,10 @@ export async function DELETE(
       );
     }
 
-    await db.demanda.delete({
+    // Soft delete — mantém registro por 30 dias na lixeira
+    await db.demanda.update({
       where: { id },
+      data: { deletedAt: new Date() },
     });
 
     await createAuditLog({
@@ -160,10 +162,11 @@ export async function DELETE(
       action: "DELETE",
       entity: "Demanda",
       entityId: id,
-      changes: demanda,
+      changes: { numero: (demanda as any).numero, titulo: (demanda as any).titulo },
+      metadata: { softDelete: true, deletedAt: new Date().toISOString() },
     });
 
-    return NextResponse.json({ message: "Demanda deletada com sucesso" });
+    return NextResponse.json({ message: "Demanda movida para a lixeira com sucesso" });
   } catch (error) {
     return NextResponse.json(
       { error: "Erro ao deletar demanda" },

@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
+import { useBeforeUnload } from "@/hooks/useBeforeUnload";
+import { useFormDraft } from "@/hooks/useFormDraft";
+import { HelpTooltip } from "@/components/ui/help-tooltip";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -108,6 +111,24 @@ export default function EditDemandaPage() {
     defaultValues: { status: "Aberta", prioridade: "Média", tags: [] },
   });
 
+  const isDirty = form.formState.isDirty && !submitting;
+  const { safeNavigate } = useBeforeUnload(isDirty);
+
+  // Auto-save de rascunho (apenas formulários novos)
+  const getFormValues = useCallback(() => form.getValues() as Record<string, unknown>, [form]);
+  const { clearDraft, hasDraft } = useFormDraft(
+    isNew ? "demanda-new" : `demanda-${demandaId}`,
+    getFormValues,
+    (data) => {
+      if (isNew && hasDraft()) {
+        if (window.confirm("Encontramos um rascunho salvo. Deseja restaurá-lo?")) {
+          form.reset(data as DemandaFormData);
+        }
+      }
+    },
+    true
+  );
+
   // ── Carregar dados ──────────────────────────────────────────────────────────
   useEffect(() => {
     const loadData = async () => {
@@ -201,6 +222,7 @@ export default function EditDemandaPage() {
       );
 
       if (res.ok) {
+        clearDraft(); // Limpar rascunho após salvar com sucesso
         toast.success(isNew ? "Demanda criada com sucesso!" : "Demanda atualizada com sucesso!");
         router.push("/demandas");
         router.refresh();
@@ -449,7 +471,10 @@ export default function EditDemandaPage() {
 
               {/* Grupo Temático */}
               <div className="space-y-1.5">
-                <Label htmlFor="f-area">Grupo Temático</Label>
+                <Label htmlFor="f-area" className="flex items-center gap-1.5">
+                  Grupo Temático
+                  <HelpTooltip content="Categoria da demanda judicial: Medicamentos Oncológicos, Alto Impacto Financeiro, Assistência Farmacêutica Básica, Atenção à Saúde ou Insumos/Equipamentos." />
+                </Label>
                 <select id="f-area" {...form.register("areaTematica")} className={selectCn}>
                   <option value="">Selecionar grupo temático...</option>
                   <option value="Medicamentos Oncológicos/Oftalmológicos">
@@ -469,8 +494,9 @@ export default function EditDemandaPage() {
 
               {/* TRF Região */}
               <div className="space-y-1.5">
-                <Label htmlFor="f-trf">
+                <Label htmlFor="f-trf" className="flex items-center gap-1.5">
                   TRF Região
+                  <HelpTooltip content="Tribunal Regional Federal responsável pelo processo. Divide-se em 6 regiões cobrindo diferentes estados do Brasil." />
                 </Label>
                 <select id="f-trf" {...form.register("trfRegiao")} className={selectCn}>
                   <option value="">Selecionar TRF...</option>
@@ -508,7 +534,10 @@ export default function EditDemandaPage() {
 
               {/* Princípio Ativo */}
               <div className="space-y-1.5 md:col-span-2">
-                <Label htmlFor="f-principio">Princípio Ativo / Medicamento</Label>
+                <Label htmlFor="f-principio" className="flex items-center gap-1.5">
+                  Princípio Ativo / Medicamento
+                  <HelpTooltip content="Nome genérico do medicamento conforme a RENAME (Relação Nacional de Medicamentos Essenciais). Não usar o nome comercial." />
+                </Label>
                 <Input
                   id="f-principio"
                   placeholder="Ex: Bevacizumabe, Pembrolizumabe"

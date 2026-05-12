@@ -17,6 +17,7 @@ import {
   History,
   FileText,
   UserCircle,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -103,6 +104,13 @@ const secondaryNav = [
 ];
 
 const tertiaryNav = [
+  {
+    label: "Lixeira",
+    href: "/demandas/lixeira",
+    icon: Trash2,
+    description: "Demandas excluídas",
+    badge: null,
+  },
   {
     label: "Logs",
     href: "/logs",

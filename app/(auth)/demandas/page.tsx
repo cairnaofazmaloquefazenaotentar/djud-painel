@@ -15,7 +15,7 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle, CheckSquare, Square, FileSpreadsheet, Columns3, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { toast } from "sonner";
@@ -112,6 +112,35 @@ export default function DemandasPage() {
     demandaId?: string;
     demandaNumero?: string;
   }>({ open: false });
+
+  // Batch operations
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+
+  // Column visibility (chaves = accessorKey ou id da coluna)
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set(["regiaoBrasil", "dataEntradaDJUD"]));
+  const [showColPicker, setShowColPicker] = useState(false);
+
+  const toggleCol = (col: string) =>
+    setHiddenCols((prev) => {
+      const next = new Set(prev);
+      if (next.has(col)) next.delete(col);
+      else next.add(col);
+      return next;
+    });
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleSelectAll = () =>
+    setSelectedIds((prev) =>
+      prev.size === demandas.length ? new Set() : new Set(demandas.map((d) => d.id))
+    );
 
   // Helper: sincroniza filtros com a URL
   const updateUrl = (updates: Record<string, string>) => {
@@ -280,10 +309,117 @@ export default function DemandasPage() {
     setTrfRegiao("");
     setRegiaoBrasil("");
     setPage("1");
+    setSelectedIds(new Set());
     router.replace("/demandas", { scroll: false });
   };
 
+  // Exportação XLSX (usa dados já carregados; para exportação completa faz novo fetch)
+  const handleExportXlsx = async () => {
+    toast.loading("Gerando XLSX...", { id: "xlsx-export" });
+    try {
+      const params = new URLSearchParams();
+      params.append("pageSize", "10000");
+      if (busca) params.append("busca", busca);
+      if (status) params.append("status", status);
+      if (prioridade) params.append("prioridade", prioridade);
+      if (areaTematica) params.append("areaTematica", areaTematica);
+      if (trfRegiao) params.append("trfRegiao", trfRegiao);
+      if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
+
+      const res = await fetch(`/api/demandas?${params.toString()}`);
+      if (!res.ok) { toast.error("Erro ao buscar dados.", { id: "xlsx-export" }); return; }
+      const { data } = await res.json();
+
+      const rows = data.map((d: Demanda) => ({
+        "Número DJUD": d.numero,
+        "Número Processo": d.numeroProcesso || "",
+        "Título": d.titulo,
+        "Status": d.status || "",
+        "Prioridade": d.prioridade || "",
+        "Grupo Temático": d.areaTematica || "",
+        "TRF Região": d.trfRegiao ? `${d.trfRegiao}ª Região` : "",
+        "Região Brasil": d.regiaoBrasil || "",
+        "Objeto da Ação": d.objetoAcao || "",
+        "Princípio Ativo": d.principioAtivo || "",
+        "Data Entrada DJUD": d.dataEntradaDJUD ? new Date(d.dataEntradaDJUD).toLocaleDateString("pt-BR") : "",
+        "Responsável": d.responsavel?.name || "",
+        "Criado em": new Date(d.criadoEm).toLocaleDateString("pt-BR"),
+      }));
+
+      // Importar xlsx dinamicamente para não aumentar o bundle inicial
+      const XLSX = await import("xlsx");
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Demandas");
+      XLSX.writeFile(wb, `demandas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success(`XLSX gerado com ${rows.length} demandas.`, { id: "xlsx-export" });
+    } catch {
+      toast.error("Erro ao gerar XLSX.", { id: "xlsx-export" });
+    }
+  };
+
+  // Batch delete — move para lixeira
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Mover ${selectedIds.size} demanda(s) para a lixeira?`)) return;
+
+    setBatchDeleting(true);
+    let success = 0;
+    let failed = 0;
+
+    for (const id of selectedIds) {
+      const res = await fetch(`/api/demandas/${id}`, { method: "DELETE" });
+      if (res.ok) success++;
+      else failed++;
+    }
+
+    setDemandas((prev) => prev.filter((d) => !selectedIds.has(d.id)));
+    setSelectedIds(new Set());
+    setBatchDeleting(false);
+
+    if (failed === 0) toast.success(`${success} demanda(s) movida(s) para a lixeira.`);
+    else toast.warning(`${success} excluída(s), ${failed} com erro.`);
+  };
+
+  const ALL_COLUMNS = [
+    "numero", "numeroProcesso", "titulo", "areaTematica",
+    "status", "prioridade", "trfRegiao", "regiaoBrasil",
+    "dataEntradaDJUD", "responsavel",
+  ];
+
+  const COL_LABELS: Record<string, string> = {
+    numero: "Nº DJUD", numeroProcesso: "Nº Processo", titulo: "Título",
+    areaTematica: "Grupo Temático", status: "Status", prioridade: "Prioridade",
+    trfRegiao: "TRF", regiaoBrasil: "Região Brasil", dataEntradaDJUD: "Entrada DJUD",
+    responsavel: "Responsável",
+  };
+
+  const allSelected = demandas.length > 0 && selectedIds.size === demandas.length;
+
   const columns: ColumnDef<Demanda>[] = [
+    // Coluna de seleção para batch ops
+    {
+      id: "select",
+      header: () => (
+        <button
+          onClick={toggleSelectAll}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title={allSelected ? "Desselecionar todos" : "Selecionar todos"}
+        >
+          {allSelected ? <CheckSquare className="h-4 w-4" /> : <Square className="h-4 w-4" />}
+        </button>
+      ),
+      cell: ({ row }) => (
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleSelect(row.original.id); }}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {selectedIds.has(row.original.id)
+            ? <CheckSquare className="h-4 w-4 text-primary" />
+            : <Square className="h-4 w-4" />}
+        </button>
+      ),
+    },
     {
       accessorKey: "numero",
       header: "Nº DJUD",
@@ -442,18 +578,64 @@ export default function DemandasPage() {
 
   const isFiltered = !!(busca || status || prioridade || areaTematica || trfRegiao || regiaoBrasil);
 
+  // Filtrar colunas ocultas (preserva select + actions sempre)
+  const visibleColumns = columns.filter(
+    (col) => !col.id || col.id === "select" || col.id === "actions" || !hiddenCols.has((col as any).accessorKey || col.id)
+  ).filter(
+    (col) => {
+      const key = (col as any).accessorKey as string | undefined;
+      return !key || !hiddenCols.has(key);
+    }
+  );
+
   return (
     <div className="space-y-8">
       <PageHeader
         title="Demandas"
         description={`${total.toLocaleString("pt-BR")} demanda${total !== 1 ? "s" : ""} encontrada${total !== 1 ? "s" : ""}`}
         actions={
-          <div className="flex gap-2">
-            {canExport && (
-              <Button variant="outline" onClick={handleExport}>
-                <Download className="h-4 w-4 mr-2" />
-                Exportar CSV
+          <div className="flex flex-wrap gap-2">
+            {/* Lixeira */}
+            <Button variant="ghost" size="sm" onClick={() => router.push("/demandas/lixeira")} className="gap-1.5 text-muted-foreground hover:text-foreground">
+              <Trash2 className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Lixeira</span>
+            </Button>
+
+            {/* Visibilidade de colunas */}
+            <div className="relative">
+              <Button variant="outline" size="sm" onClick={() => setShowColPicker((v) => !v)} className="gap-1.5">
+                <Columns3 className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Colunas</span>
               </Button>
+              {showColPicker && (
+                <div className="absolute right-0 top-full mt-1 z-20 bg-card border border-border rounded-lg shadow-lg p-3 w-48 space-y-1">
+                  {ALL_COLUMNS.map((col) => (
+                    <button
+                      key={col}
+                      onClick={() => toggleCol(col)}
+                      className="flex items-center gap-2 w-full text-left text-sm px-2 py-1 rounded hover:bg-muted transition-colors"
+                    >
+                      {hiddenCols.has(col)
+                        ? <EyeOff className="h-3.5 w-3.5 text-muted-foreground" />
+                        : <Eye className="h-3.5 w-3.5 text-primary" />}
+                      {COL_LABELS[col] || col}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {canExport && (
+              <div className="flex gap-1">
+                <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
+                  <Download className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">CSV</span>
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportXlsx} className="gap-1.5">
+                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">XLSX</span>
+                </Button>
+              </div>
             )}
             {canCreate ? (
               <Button onClick={() => router.push("/demandas/new")}>
@@ -546,10 +728,48 @@ export default function DemandasPage() {
         </div>
       )}
 
+      {/* Batch toolbar — aparece quando há itens selecionados */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-lg">
+          <span className="text-sm font-medium text-primary">{selectedIds.size} demanda(s) selecionada(s)</span>
+          <div className="flex gap-2 ml-auto">
+            <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())} className="gap-1.5">
+              <RotateCcw className="h-3.5 w-3.5" />
+              Limpar
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => {
+              const ids = [...selectedIds];
+              const params = new URLSearchParams();
+              params.append("pageSize", "10000");
+              ids.forEach((id) => {
+                const d = demandas.find((x) => x.id === id);
+                if (d) params.append("ids", d.id);
+              });
+              handleExport();
+            }} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />
+              Exportar seleção
+            </Button>
+            {canDelete && (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={batchDeleting}
+                onClick={handleBatchDelete}
+                className="gap-1.5"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                {batchDeleting ? "Excluindo..." : `Excluir ${selectedIds.size}`}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* DataTable — 100 itens por página */}
       {!loading && !erro && (
         <DataTable<Demanda>
-          columns={columns}
+          columns={visibleColumns}
           data={demandas}
           loading={false}
           pageSize={PAGE_SIZE}
@@ -617,7 +837,7 @@ export default function DemandasPage() {
         open={deleteDialog.open}
         onOpenChange={(open) => setDeleteDialog({ ...deleteDialog, open })}
         title="Excluir demanda"
-        description={`Tem certeza que deseja excluir a demanda "${deleteDialog.demandaNumero}"? Esta ação não pode ser desfeita.`}
+        description={`A demanda "${deleteDialog.demandaNumero}" será movida para a lixeira. Você pode restaurá-la em até 30 dias.`}
         actionLabel="Excluir"
         isDestructive
         onConfirm={handleDelete}
