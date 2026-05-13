@@ -14,6 +14,7 @@ import { RegiaoBrasilChart } from "@/components/dashboard/charts/regiao-brasil-c
 import { TopMedicamentosChart } from "@/components/dashboard/charts/top-medicamentos-chart";
 import { ObjetoAcaoChart } from "@/components/dashboard/charts/objeto-acao-chart";
 import { useMetrics } from "@/hooks/useMetrics";
+import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -157,36 +158,33 @@ export default function DashboardPage() {
             className="w-36"
           />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">Status</Label>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className={selectCn}
-          >
-            <option value="">Todos os status</option>
-            <option value="Em Análise COAJUD">Em Análise COAJUD</option>
-            <option value="Entrega Pendente">Entrega Pendente</option>
-            <option value="Cessar Atos">Cessar Atos</option>
-            <option value="Concluída">Concluída</option>
-            <option value="Cancelada">Cancelada</option>
-            <option value="Suspensa">Suspensa</option>
-          </select>
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">Prioridade</Label>
-          <select
-            value={filterPrioridade}
-            onChange={(e) => setFilterPrioridade(e.target.value)}
-            className={selectCn}
-          >
-            <option value="">Todas as prioridades</option>
-            <option value="Crítica">Crítica</option>
-            <option value="Alta">Alta</option>
-            <option value="Normal">Normal</option>
-            <option value="Baixa">Baixa</option>
-          </select>
-        </div>
+        <FilterSelect
+          label="Status"
+          value={filterStatus}
+          onChange={setFilterStatus}
+          placeholder="Todos os status"
+          options={[
+            { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
+            { value: "Entrega Pendente", label: "Entrega Pendente" },
+            { value: "Cessar Atos", label: "Cessar Atos" },
+            { value: "Concluída", label: "Concluída" },
+            { value: "Cancelada", label: "Cancelada" },
+            { value: "Suspensa", label: "Suspensa" },
+          ]}
+        />
+        <FilterSelect
+          label="Prioridade"
+          value={filterPrioridade}
+          onChange={setFilterPrioridade}
+          placeholder="Todas as prioridades"
+          options={[
+            { value: "Crítica", label: "Crítica" },
+            { value: "Alta", label: "Alta" },
+            { value: "Média", label: "Média" },
+            { value: "Normal", label: "Normal" },
+            { value: "Baixa", label: "Baixa" },
+          ]}
+        />
         {hasActiveFilters && (
           <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />

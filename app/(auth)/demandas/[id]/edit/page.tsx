@@ -21,30 +21,48 @@ import { Loader2, Download } from "lucide-react";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
-const demandaFormSchema = z.object({
-  numero: z.string().min(1, "Número é obrigatório"),
-  titulo: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
-  descricao: z.string().min(10, "Descrição deve ter no mínimo 10 caracteres"),
-  status: z.string().optional(),
-  prioridade: z.string().optional(),
-  organizacaoId: z.string().optional(),
-  responsavelId: z.string().optional(),
-  dataInicio: z.string().optional(),
-  dataVencimento: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  projeto: z.string().optional(),
-  ano: z.string().optional(),
-  origemDemanda: z.string().optional(),
-  // Dados judiciais
-  numeroProcesso: z.string().optional(),
-  areaTematica: z.string().optional(),
-  regiaoBrasil: z.string().optional(),
-  objetoAcao: z.string().optional(),
-  principioAtivo: z.string().optional(),
-  dataEntradaDJUD: z.string().optional(),
-  trfRegiao: z.string().optional(),
-  pontoControle: z.string().optional(),
-});
+const demandaFormSchema = z
+  .object({
+    numero: z.string().min(1, "Número é obrigatório"),
+    titulo: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
+    descricao: z.string().min(10, "Descrição deve ter no mínimo 10 caracteres"),
+    status: z.string().optional(),
+    prioridade: z.string().optional(),
+    organizacaoId: z.string().optional(),
+    responsavelId: z.string().optional(),
+    dataInicio: z.string().optional(),
+    dataVencimento: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    projeto: z.string().optional(),
+    ano: z.string().optional(),
+    origemDemanda: z.string().optional(),
+    // Dados judiciais
+    numeroProcesso: z.string().optional(),
+    areaTematica: z.string().optional(),
+    regiaoBrasil: z.string().optional(),
+    objetoAcao: z.string().optional(),
+    principioAtivo: z.string().optional(),
+    dataEntradaDJUD: z.string().optional(),
+    trfRegiao: z.string().optional(),
+    pontoControle: z.string().optional(),
+  })
+  .refine(
+    (data) =>
+      !data.dataInicio ||
+      !data.dataVencimento ||
+      data.dataVencimento >= data.dataInicio,
+    {
+      message: "Data de vencimento deve ser igual ou posterior à data de início",
+      path: ["dataVencimento"],
+    }
+  )
+  .refine(
+    (data) => !data.dataEntradaDJUD || new Date(data.dataEntradaDJUD) <= new Date(),
+    {
+      message: "Data de entrada no DJUD não pode ser no futuro",
+      path: ["dataEntradaDJUD"],
+    }
+  );
 
 type DemandaFormData = z.infer<typeof demandaFormSchema>;
 
@@ -100,6 +118,7 @@ export default function EditDemandaPage() {
 
   const [loading, setLoading] = useState(!isNew);
   const [submitting, setSubmitting] = useState(false);
+  const [criouComSucesso, setCriouComSucesso] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [demandaNumero, setDemandaNumero] = useState("");
   const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
@@ -224,8 +243,15 @@ export default function EditDemandaPage() {
       if (res.ok) {
         clearDraft(); // Limpar rascunho após salvar com sucesso
         toast.success(isNew ? "Demanda criada com sucesso!" : "Demanda atualizada com sucesso!");
-        router.push("/demandas");
-        router.refresh();
+        if (!isNew) {
+          router.push("/demandas");
+          router.refresh();
+        }
+        // Para criação, não redireciona — mostra opções abaixo (criarOutra state)
+        if (isNew) {
+          setCriouComSucesso(true);
+          return; // evita o finally resetar submitting prematuramente
+        }
       } else {
         const error = await res.json();
         if (error.error?.includes("número")) {
@@ -569,34 +595,64 @@ export default function EditDemandaPage() {
             </div>
           )}
 
-          {/* ── Botões ──────────────────────────────────────────────────── */}
-          <div className="flex gap-3 justify-end pt-4 border-t border-border">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => router.back()}
-              disabled={submitting}
-            >
-              Cancelar
-            </Button>
+          {/* ── Pós-criação: opções de próximo passo ────────────────────── */}
+          {criouComSucesso && isNew && (
+            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg space-y-3">
+              <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                ✓ Demanda criada com sucesso!
+              </p>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => router.push("/demandas")}
+                >
+                  Ver lista de demandas
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    form.reset({ status: "Aberta", prioridade: "Média", tags: [] });
+                    setCriouComSucesso(false);
+                  }}
+                >
+                  Criar outra demanda
+                </Button>
+              </div>
+            </div>
+          )}
 
-            {!isNew && (
+          {/* ── Botões ──────────────────────────────────────────────────── */}
+          {!criouComSucesso && (
+            <div className="flex gap-3 justify-end pt-4 border-t border-border">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setIsExportModalOpen(true)}
+                onClick={() => router.back()}
                 disabled={submitting}
               >
-                <Download className="h-4 w-4 mr-2" />
-                Exportar
+                Cancelar
               </Button>
-            )}
 
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              {isNew ? "Criar Demanda" : "Salvar Alterações"}
-            </Button>
-          </div>
+              {!isNew && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsExportModalOpen(true)}
+                  disabled={submitting}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar
+                </Button>
+              )}
+
+              <Button type="submit" disabled={submitting}>
+                {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                {isNew ? "Criar Demanda" : "Salvar Alterações"}
+              </Button>
+            </div>
+          )}
         </form>
       </div>
 

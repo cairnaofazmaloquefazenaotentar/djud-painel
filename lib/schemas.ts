@@ -1,6 +1,9 @@
 import { z } from "zod";
+// Aplica mensagens de erro em português para todos os schemas
+import "@/lib/zod-pt";
 
-export const createDemandaSchema = z.object({
+// Objeto base sem refine — permite .partial() para updateDemandaSchema
+const demandaBaseObject = z.object({
   numero: z.string().min(1, "Número é obrigatório"),
   titulo: z.string().min(3, "Título deve ter no mínimo 3 caracteres"),
   descricao: z.string().min(10, "Descrição deve ter no mínimo 10 caracteres"),
@@ -26,7 +29,28 @@ export const createDemandaSchema = z.object({
   pontoControle: z.string().optional(),
 });
 
-export const updateDemandaSchema = createDemandaSchema.partial();
+// createDemandaSchema — com refine de datas coerentes (H5)
+export const createDemandaSchema = demandaBaseObject
+  .refine(
+    (data) =>
+      !data.dataInicio ||
+      !data.dataVencimento ||
+      data.dataVencimento >= data.dataInicio,
+    {
+      message: "Data de vencimento deve ser igual ou posterior à data de início",
+      path: ["dataVencimento"],
+    }
+  )
+  .refine(
+    (data) => !data.dataEntradaDJUD || data.dataEntradaDJUD <= new Date(),
+    {
+      message: "Data de entrada no DJUD não pode ser no futuro",
+      path: ["dataEntradaDJUD"],
+    }
+  );
+
+// updateDemandaSchema — a partir do objeto base (sem refine) para permitir .partial()
+export const updateDemandaSchema = demandaBaseObject.partial();
 
 export const listDemandaSchema = z.object({
   page: z.coerce.number().int().positive().default(1),

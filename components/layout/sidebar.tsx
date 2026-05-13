@@ -18,6 +18,7 @@ import {
   FileText,
   UserCircle,
   Trash2,
+  HelpCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -116,6 +117,13 @@ const tertiaryNav = [
     href: "/logs",
     icon: History,
     description: "Auditoria",
+    badge: null,
+  },
+  {
+    label: "Ajuda",
+    href: "/help",
+    icon: HelpCircle,
+    description: "Central de ajuda",
     badge: null,
   },
 ];

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { FormInput } from "@/components/ui/form-input";
 import { FormSelect } from "@/components/ui/form-select";
 import { Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 interface UserFormData {
   name?: string;
@@ -88,14 +89,19 @@ export default function EditUserPage() {
       });
 
       if (res.ok) {
+        toast.success(isNew ? "Usuário criado com sucesso!" : "Usuário atualizado com sucesso!");
         router.push("/users");
         router.refresh();
       } else {
         const error = await res.json();
-        form.setError("root", { message: error.error || "Erro ao salvar usuário" });
+        const msg = error.error || "Erro ao salvar usuário";
+        form.setError("root", { message: msg });
+        toast.error(msg);
       }
     } catch (error) {
-      form.setError("root", { message: "Erro ao salvar usuário" });
+      const msg = "Não foi possível conectar ao servidor.";
+      form.setError("root", { message: msg });
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }

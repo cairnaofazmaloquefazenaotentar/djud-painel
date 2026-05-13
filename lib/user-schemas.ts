@@ -1,4 +1,5 @@
 import { z } from "zod";
+import "@/lib/zod-pt";
 
 export const createUserSchema = z.object({
   email: z.string().email("Email inválido"),

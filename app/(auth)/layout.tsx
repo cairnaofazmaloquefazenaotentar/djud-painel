@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { KeyboardShortcutsProvider } from "@/components/keyboard-shortcuts-provider";
+import { HelpFab } from "@/components/ui/help-fab";
 
 export default async function AuthLayout({
   children,
@@ -35,6 +36,7 @@ export default async function AuthLayout({
           </div>
         </div>
       </div>
+      <HelpFab />
     </KeyboardShortcutsProvider>
   );
 }

@@ -2,6 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useSession } from "next-auth/react";
 import { ColumnDef } from "@tanstack/react-table";
 import { PageHeader } from "@/components/layout/page-header";
@@ -106,7 +112,9 @@ export default function DemandasPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [erro, setErro] = useState<string | null>(null);
-  const PAGE_SIZE = 100; // 100 itens por página
+  const [pageSize, setPageSize] = useState<number>(
+    parseInt(searchParams.get("pageSize") || "50")
+  );
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean;
     demandaId?: string;
@@ -177,7 +185,7 @@ export default function DemandasPage() {
       try {
         const params = new URLSearchParams();
         params.append("page", page);
-        params.append("pageSize", PAGE_SIZE.toString());
+        params.append("pageSize", pageSize.toString());
         if (busca) params.append("busca", busca);
         if (status) params.append("status", status);
         if (prioridade) params.append("prioridade", prioridade);
@@ -212,7 +220,7 @@ export default function DemandasPage() {
     };
 
     fetchDemandas();
-  }, [page, busca, status, prioridade, areaTematica, trfRegiao, regiaoBrasil]);
+  }, [page, pageSize, busca, status, prioridade, areaTematica, trfRegiao, regiaoBrasil]);
 
   const handleDelete = async () => {
     if (!deleteDialog.demandaId) return;
@@ -446,16 +454,35 @@ export default function DemandasPage() {
       header: "Título / Objeto",
       cell: ({ row }) => (
         <div className="max-w-[220px]">
-          <p className="font-medium text-sm truncate" title={row.original.titulo}>
-            {row.original.titulo}
-          </p>
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="font-medium text-sm truncate cursor-default">
+                  {row.original.titulo}
+                </p>
+              </TooltipTrigger>
+              {row.original.titulo.length > 30 && (
+                <TooltipContent side="top" className="max-w-xs text-xs">
+                  {row.original.titulo}
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </TooltipProvider>
           {row.original.objetoAcao && (
-            <p
-              className="text-xs text-muted-foreground truncate"
-              title={row.original.objetoAcao}
-            >
-              {row.original.objetoAcao}
-            </p>
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="text-xs text-muted-foreground truncate cursor-default">
+                    {row.original.objetoAcao}
+                  </p>
+                </TooltipTrigger>
+                {row.original.objetoAcao.length > 35 && (
+                  <TooltipContent side="bottom" className="max-w-xs text-xs">
+                    {row.original.objetoAcao}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
       ),
@@ -465,12 +492,18 @@ export default function DemandasPage() {
       header: "Grupo Temático",
       cell: ({ row }) =>
         row.original.areaTematica ? (
-          <span
-            className="text-xs bg-accent text-accent-foreground px-2 py-0.5 rounded-full whitespace-nowrap max-w-[160px] truncate block border border-border"
-            title={row.original.areaTematica}
-          >
-            {row.original.areaTematica}
-          </span>
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-xs bg-accent text-accent-foreground px-2 py-0.5 rounded-full whitespace-nowrap max-w-[160px] truncate block border border-border cursor-default">
+                  {row.original.areaTematica}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs text-xs">
+                {row.original.areaTematica}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ) : (
           <span className="text-muted-foreground/40 text-xs">—</span>
         ),
@@ -772,7 +805,7 @@ export default function DemandasPage() {
           columns={visibleColumns}
           data={demandas}
           loading={false}
-          pageSize={PAGE_SIZE}
+          pageSize={pageSize}
           onRowClick={(row) => router.push(`/demandas/${row.id}`)}
           renderEmptyState={() => (
             <EmptyState
@@ -799,39 +832,64 @@ export default function DemandasPage() {
         />
       )}
 
-      {/* Paginação — ícones, padrão DataTable */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between px-1">
-          <p className="text-xs text-muted-foreground">
-            Página{" "}
-            <span className="font-semibold text-foreground">{page}</span>{" "}
-            de{" "}
-            <span className="font-semibold text-foreground">
-              {totalPages.toLocaleString("pt-BR")}
-            </span>
-          </p>
+      {/* Paginação + pagesize selector */}
+      <div className="flex items-center justify-between px-1 flex-wrap gap-3">
+        {/* Pagesize selector */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Itens por página:</span>
           <div className="flex gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-              disabled={page === "1"}
-              onClick={() => { const p = String(Math.max(1, parseInt(page) - 1)); setPage(p); updateUrl({ page: p }); }}
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-              disabled={parseInt(page) >= totalPages}
-              onClick={() => { const p = String(Math.min(totalPages, parseInt(page) + 1)); setPage(p); updateUrl({ page: p }); }}
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </Button>
+            {[20, 50, 100].map((size) => (
+              <Button
+                key={size}
+                variant={pageSize === size ? "default" : "outline"}
+                size="sm"
+                className="h-7 px-2.5 text-xs"
+                onClick={() => {
+                  setPageSize(size);
+                  setPage("1");
+                  updateUrl({ pageSize: String(size), page: "1" });
+                }}
+              >
+                {size}
+              </Button>
+            ))}
           </div>
         </div>
-      )}
+
+        {/* Paginação */}
+        {totalPages > 1 && (
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-muted-foreground">
+              Página{" "}
+              <span className="font-semibold text-foreground">{page}</span>{" "}
+              de{" "}
+              <span className="font-semibold text-foreground">
+                {totalPages.toLocaleString("pt-BR")}
+              </span>
+            </p>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
+                disabled={page === "1"}
+                onClick={() => { const p = String(Math.max(1, parseInt(page) - 1)); setPage(p); updateUrl({ page: p }); }}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
+                disabled={parseInt(page) >= totalPages}
+                onClick={() => { const p = String(Math.min(totalPages, parseInt(page) + 1)); setPage(p); updateUrl({ page: p }); }}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <ConfirmDialog
         open={deleteDialog.open}

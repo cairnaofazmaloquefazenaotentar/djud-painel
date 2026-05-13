@@ -14,6 +14,7 @@ import {
   EmptyState,
 } from "@/components/backoffice";
 import { formatDateTime } from "@/lib/utils";
+import { ENTITY_LABELS, parseChanges } from "@/lib/log-labels";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -158,7 +159,9 @@ export default function LogsPage() {
       accessorKey: "entity",
       header: "Entidade",
       cell: ({ row }) => (
-        <span className="text-sm font-medium">{row.original.entity}</span>
+        <span className="text-sm font-medium">
+          {ENTITY_LABELS[row.original.entity] ?? row.original.entity}
+        </span>
       ),
     },
     {
@@ -166,8 +169,11 @@ export default function LogsPage() {
       header: "ID",
       cell: ({ row }) =>
         row.original.entityId ? (
-          <span className="text-xs font-mono text-muted-foreground">
-            {row.original.entityId.slice(0, 12)}…
+          <span
+            className="text-xs font-mono text-muted-foreground"
+            title={row.original.entityId}
+          >
+            #{row.original.entityId.slice(0, 8)}
           </span>
         ) : (
           <span className="text-muted-foreground">—</span>
@@ -269,18 +275,40 @@ export default function LogsPage() {
           )}
         />
 
-        {/* Inline JSON viewer for changes */}
+        {/* Diff visual formatado */}
         {expandedId && (() => {
           const log = logs.find((l) => l.id === expandedId);
           if (!log?.changes) return null;
+          const lines = parseChanges(log.changes as Record<string, unknown>);
+          const entityLabel = ENTITY_LABELS[log.entity] ?? log.entity;
+          const actionLabel = actionConfig[log.action]?.label ?? log.action;
           return (
-            <div className="border border-border rounded-lg p-4 bg-muted/30">
-              <p className="text-xs font-medium text-muted-foreground mb-2">
-                Mudanças registradas — {log.entity} / {log.action}
+            <div className="border border-border rounded-lg p-4 bg-muted/30 space-y-2">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                Mudanças — {entityLabel} · {actionLabel}
               </p>
-              <pre className="text-xs text-foreground overflow-auto max-h-48">
-                {JSON.stringify(log.changes, null, 2)}
-              </pre>
+              {lines.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Sem detalhes registrados.</p>
+              ) : (
+                <div className="divide-y divide-border/50">
+                  {lines.map((line) => (
+                    <div key={line.field} className="flex items-start gap-2 py-1.5 text-xs">
+                      <span className="text-muted-foreground min-w-[140px] shrink-0 font-medium">
+                        {line.label}
+                      </span>
+                      {line.before !== undefined || line.after !== undefined ? (
+                        <span className="flex items-center gap-1.5 flex-wrap">
+                          <span className="line-through text-muted-foreground/60">{line.before}</span>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="text-foreground font-medium">{line.after}</span>
+                        </span>
+                      ) : (
+                        <span className="text-foreground">{line.value}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })()}
