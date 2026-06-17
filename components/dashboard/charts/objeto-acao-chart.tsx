@@ -47,8 +47,8 @@ export function ObjetoAcaoChart({ data }: Props) {
       objeto: d.objeto!,
       label:  d.objeto!.length > 28 ? d.objeto!.slice(0, 26) + "…" : d.objeto!,
       count:  d.count,
-    }))
-    .reverse();
+    }));
+    // Ordem decrescente do topo para a base (item 3.3): maior volume em cima.
 
   return (
     <ResponsiveContainer width="100%" height={300}>

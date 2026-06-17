@@ -59,6 +59,15 @@ function sanitizeNumber(value: any): number | null {
   return isNaN(num) ? null : num;
 }
 
+// Converte valor monetário em formato brasileiro ("5.551.031,41") para number (5551031.41)
+function parseValorBR(value: any): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number") return isNaN(value) ? null : value;
+  const s = String(value).trim().replace(/[R$\s]/g, "").replace(/\./g, "").replace(",", ".");
+  const num = parseFloat(s);
+  return isNaN(num) ? null : num;
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -143,7 +152,17 @@ async function main() {
           const trfRegiao = sanitizeNumber(row["TRF Região"] || row["trfRegiao"]);
           const objetoAcao = sanitizeString(row["Objeto da Ação"] || row["objetoAcao"]);
           const principioAtivo = sanitizeString(row["Princípio_Ativo"] || row["principioAtivo"]);
+          // Fornecedor/laboratório — campo ainda inexistente na base atual.
+          // Aceita vários nomes prováveis; quando a exportação do Redmine trouxer a coluna, passa a ser preenchido.
+          const fornecedor = sanitizeString(
+            row["Fornecedor"] || row["Laboratório"] || row["Laboratorio"] ||
+            row["Empresa"] || row["Fabricante"] || row["Detentor do Registro"] || row["fornecedor"]
+          );
           const dataEntradaDJUD = parseDate(row["Data de Entrada_DJUD"] || row["dataEntradaDJUD"]);
+          // Valor do depósito judicial (só preenchido em demandas de Cumprimento de Ordem Judicial)
+          const valorEstimado = parseValorBR(row["Valor do Depósito (em reais)"] || row["valorEstimado"]);
+          // Data real de criação no Redmine — sem isso, criadoEm cairia no default now() e a série histórica colapsaria num único mês
+          const criadoEm = parseDate(row.created_on || row["created_on"]) ?? undefined;
 
           // Prioridade
           const prioridade = sanitizeString(row.priority || row["Priority"] || row["Prioridade"]) || "Normal";
@@ -163,7 +182,10 @@ async function main() {
             trfRegiao,
             objetoAcao,
             principioAtivo,
+            fornecedor,
             dataEntradaDJUD,
+            valorEstimado,
+            criadoEm,
             criadoPorId: sistemaUserId,
             responsavelId: null,
           });

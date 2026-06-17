@@ -59,8 +59,8 @@ export function TopMedicamentosChart({ data }: Props) {
       label: d.medicamento!.length > 28 ? d.medicamento!.slice(0, 26) + "…" : d.medicamento!,
       count: d.count,
       rank: idx + 1,
-    }))
-    .reverse();
+    }));
+    // Ordem decrescente do topo para a base (item 3): maior volume em cima.
 
   return (
     <motion.div

@@ -1,10 +1,18 @@
 "use client";
 
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } from "recharts";
+import {
+  FunnelChart,
+  Funnel,
+  LabelList,
+  Tooltip,
+  Cell,
+  ResponsiveContainer,
+} from "recharts";
 import { motion } from "framer-motion";
 import { STATUS_COLORS } from "./chart-utils";
 
 interface StatusChartProps {
+  // Espera-se que os dados já cheguem ordenados pelo fluxo de execução (ver lib/metrics.ts → FLUXO_DJUD).
   data: Array<{ status: string; count: number }>;
 }
 
@@ -17,9 +25,11 @@ const CustomTooltip = ({ active, payload }: any) => {
         animate={{ opacity: 1, y: 0 }}
         className="bg-background/95 backdrop-blur-md border border-primary/30 rounded-lg px-4 py-3 shadow-lg"
       >
-        <p className="text-sm font-semibold text-foreground">{data.status}</p>
+        <p className="text-sm font-semibold text-foreground">
+          {data.etapa}. {data.status}
+        </p>
         <p className="text-lg font-bold text-primary">{data.count.toLocaleString("pt-BR")}</p>
-        <p className="text-xs text-muted-foreground mt-1">processos em gargalo</p>
+        <p className="text-xs text-muted-foreground mt-1">processos nesta etapa</p>
       </motion.div>
     );
   }
@@ -35,12 +45,15 @@ export function StatusChart({ data }: StatusChartProps) {
     );
   }
 
-  const chartData = data.map((item) => ({
+  // Mantém a ordem do fluxo recebida do backend e anexa o número da etapa + cor.
+  const chartData = data.map((item, idx) => ({
     ...item,
+    etapa: idx + 1,
     fill: STATUS_COLORS[item.status] ?? "#94a3b8",
   }));
 
-  const maxValue = Math.max(...chartData.map((d) => d.count));
+  // Altura proporcional ao número de etapas para não espremer os rótulos.
+  const height = Math.max(360, chartData.length * 42);
 
   return (
     <motion.div
@@ -49,68 +62,40 @@ export function StatusChart({ data }: StatusChartProps) {
       transition={{ duration: 0.5 }}
       className="w-full"
     >
-      <ResponsiveContainer width="100%" height={320}>
-        <BarChart
-          data={chartData}
-          margin={{ top: 20, right: 30, left: 0, bottom: 70 }}
-        >
-          <defs>
-            {chartData.map((item, idx) => (
-              <linearGradient
-                key={`grad-status-${idx}`}
-                id={`gradStatus${idx}`}
-                x1="0"
-                y1="0"
-                x2="0"
-                y2="1"
-              >
-                <stop offset="0%" stopColor={item.fill} stopOpacity={1} />
-                <stop offset="100%" stopColor={item.fill} stopOpacity={0.7} />
-              </linearGradient>
-            ))}
-          </defs>
-
-          <CartesianGrid
-            strokeDasharray="3 3"
-            stroke="hsl(var(--border))"
-            vertical={false}
-            opacity={0.2}
-          />
-
-          <XAxis
-            dataKey="status"
-            angle={-45}
-            textAnchor="end"
-            height={90}
-            tick={{ fontSize: 12, fill: "hsl(var(--foreground))", fontWeight: 500 }}
-            axisLine={{ stroke: "hsl(var(--border))" }}
-            tickLine={{ stroke: "hsl(var(--border))" }}
-          />
-
-          <YAxis
-            tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))", fontWeight: 500 }}
-            tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toString())}
-            axisLine={{ stroke: "hsl(var(--border))" }}
-            tickLine={{ stroke: "hsl(var(--border))" }}
-          />
-
-          <Tooltip content={<CustomTooltip />} cursor={{ fill: "hsl(var(--primary))", opacity: 0.1 }} />
-
-          <Bar
+      <ResponsiveContainer width="100%" height={height}>
+        <FunnelChart margin={{ top: 8, right: 160, left: 16, bottom: 8 }}>
+          <Tooltip content={<CustomTooltip />} />
+          <Funnel
             dataKey="count"
-            name="Demandas"
-            radius={[8, 8, 0, 0]}
-            isAnimationActive={true}
+            data={chartData}
+            isAnimationActive
             animationDuration={800}
+            // orientation vertical (padrão): primeira etapa no topo, última embaixo
           >
             {chartData.map((entry, idx) => (
-              <Cell
-                key={idx}
-                fill={`url(#gradStatus${idx})`}
-              />
+              <Cell key={idx} fill={entry.fill} fillOpacity={0.9} stroke="hsl(var(--background))" strokeWidth={1} />
             ))}
-          </Bar>
-        </BarChart>
+            {/* Nome da etapa à direita de cada faixa */}
+            <LabelList
+              position="right"
+              dataKey="status"
+              stroke="none"
+              fill="hsl(var(--foreground))"
+              fontSize={12}
+              fontWeight={500}
+            />
+            {/* Quantidade dentro de cada faixa */}
+            <LabelList
+              position="inside"
+              dataKey="count"
+              stroke="none"
+              fill="#ffffff"
+              fontSize={12}
+              fontWeight={700}
+              formatter={(v: number) => v.toLocaleString("pt-BR")}
+            />
+          </Funnel>
+        </FunnelChart>
       </ResponsiveContainer>
     </motion.div>
   );
