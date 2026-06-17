@@ -29,7 +29,13 @@ function mesLabel(m: Date | string) {
   return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
-const CustomTooltip = ({ active, payload }: any) => {
+const CustomTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: { mes: string; valor: number } }>;
+}) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (

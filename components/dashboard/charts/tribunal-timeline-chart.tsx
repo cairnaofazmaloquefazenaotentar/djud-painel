@@ -27,6 +27,44 @@ function mesLabel(m: Date | string) {
   return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
+type TooltipEntry = { value?: number; dataKey?: string | number; color?: string };
+
+// Definido fora do render (regra react-hooks/static-components). O Recharts injeta
+// active/payload/label via cloneElement, preservando os props format/unidade.
+function TribunalTooltip({
+  active,
+  payload,
+  label,
+  format,
+  unidade,
+}: {
+  active?: boolean;
+  payload?: TooltipEntry[];
+  label?: string;
+  format: (n: number) => string;
+  unidade: string;
+}) {
+  if (!active || !payload?.length) return null;
+  const total = payload.reduce((s, p) => s + (p.value || 0), 0);
+  return (
+    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
+      <p className="font-semibold text-foreground mb-1">{label}</p>
+      {payload
+        .filter((p) => (p.value || 0) > 0)
+        .map((p) => (
+          <p key={String(p.dataKey)} className="flex justify-between gap-4" style={{ color: p.color }}>
+            <span>{String(p.dataKey)}</span>
+            <span className="font-medium">{format(p.value || 0)}</span>
+          </p>
+        ))}
+      <p className="flex justify-between gap-4 mt-1 pt-1 border-t border-border text-foreground">
+        <span>Total ({unidade})</span>
+        <span className="font-bold">{format(total)}</span>
+      </p>
+    </div>
+  );
+}
+
 export function TribunalTimelineChart({
   data,
   format = (n) => n.toLocaleString("pt-BR"),
@@ -64,28 +102,6 @@ export function TribunalTimelineChart({
   }
   const chartData = ordemMeses.map((m) => mapa.get(m)!);
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    const total = payload.reduce((s: number, p: any) => s + (p.value || 0), 0);
-    return (
-      <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
-        <p className="font-semibold text-foreground mb-1">{label}</p>
-        {payload
-          .filter((p: any) => p.value > 0)
-          .map((p: any) => (
-            <p key={p.dataKey} className="flex justify-between gap-4" style={{ color: p.color }}>
-              <span>{p.dataKey}</span>
-              <span className="font-medium">{format(p.value)}</span>
-            </p>
-          ))}
-        <p className="flex justify-between gap-4 mt-1 pt-1 border-t border-border text-foreground">
-          <span>Total ({unidade})</span>
-          <span className="font-bold">{format(total)}</span>
-        </p>
-      </div>
-    );
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -112,7 +128,7 @@ export function TribunalTimelineChart({
             axisLine={{ stroke: "hsl(var(--border))" }}
             tickLine={{ stroke: "hsl(var(--border))" }}
           />
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={<TribunalTooltip format={format} unidade={unidade} />} />
           <Legend wrapperStyle={{ fontSize: 11 }} />
           {trfs.map((t, idx) => (
             <Area

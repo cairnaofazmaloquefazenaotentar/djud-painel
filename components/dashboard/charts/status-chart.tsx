@@ -16,7 +16,13 @@ interface StatusChartProps {
   data: Array<{ status: string; count: number }>;
 }
 
-const CustomTooltip = ({ active, payload }: any) => {
+const CustomTooltip = ({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: { status: string; count: number; etapa: number } }>;
+}) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload;
     return (
