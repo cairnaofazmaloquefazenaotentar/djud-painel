@@ -145,6 +145,7 @@ model Demanda {
   regiaoBrasil                 String?          // Região Brasil (Norte, Nordeste, Centro-Oeste, Sudeste, Sul)
   objetoAcao                   String?          // Objeto da Ação (Medicamento - Oncológico, etc)
   principioAtivo               String?          // Princípio_Ativo / Medicamento (nome do medicamento)
+  fornecedor                   String?          // Fornecedor/laboratório do medicamento (preenchido quando a base trouxer essa coluna)
   numeroProcesso               String?          // Ação Judicial Originário (ex: 5000904-02.2021.4.03.6006)
   dataEntradaDJUD              DateTime?        // Data de Entrada no DJUD
 
@@ -181,6 +182,7 @@ model Demanda {
   @@index([numeroProcesso])
   @@index([numeroExterno])
   @@index([regiaoBrasil])
+  @@index([fornecedor])
   @@index([deletedAt])
 }
 

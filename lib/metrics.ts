@@ -13,9 +13,23 @@ export interface MetricsData {
   topMedicamentosDistribution:  Array<{ medicamento: string | null; count: number }>;
   areaTematicaDistribution:     Array<{ area: string | null; count: number }>;
   objetoAcaoDistribution:       Array<{ objeto: string | null; count: number }>;
+  // Fornecedor/laboratório — vazio até a base trazer a coluna (ver scripts/import-excel-demandas.ts)
+  fornecedorDistribution:       Array<{ fornecedor: string | null; count: number }>;
 
   // ── Tendência de judicialização ──────────────────────────────────────────────
   demandasTimeline: Array<{ date: Date; count: number }>;
+
+  // ── Decomposição da série por Tribunal (TRF) — item 1.1 ──────────────────────
+  // Formato longo (mês × tribunal): a pivotagem para empilhamento é feita no componente
+  tribunalTimeline: Array<{ mes: Date; trf: number | null; count: number }>;
+
+  // ── Séries de valores em R$ — itens 2 e 3.1 ──────────────────────────────────
+  // Observação: valorEstimado só existe em demandas de Cumprimento de Ordem Judicial,
+  // e essas linhas não têm trfRegiao preenchido — por isso valorTribunalTimeline
+  // ficará vazio até que o tribunal seja preenchido nessas demandas na base.
+  valorTimeline: Array<{ mes: Date; valor: number }>;
+  valorTribunalTimeline: Array<{ mes: Date; trf: number | null; valor: number }>;
+  topMedicamentosValor: Array<{ medicamento: string | null; valor: number }>;
 
   // ── Gestão de riscos ─────────────────────────────────────────────────────────
   statusDistribution:      Array<{ status: string; count: number }>;
@@ -45,6 +59,26 @@ const STATUS_RESOLVIDOS   = ["Fechada", "Concluída", "Encerrada", "Cancelada"];
 // Prioridades de risco elevado
 const PRIORIDADES_RISCO   = ["Alta", "Crítica"];
 
+// Ordem canônica do fluxo de execução do DJUD — usada para ordenar o funil de gargalos (item 4).
+// Etapa 1 (entrada) no topo → última etapa embaixo. Status fora do mapa vão para o fim.
+const FLUXO_DJUD: Record<string, number> = {
+  "Cadastro Demanda Judicial": 1,
+  "Recebido": 2,
+  "Em Análise COAJUD": 3,
+  "Solicitado Parecer COMFAD": 4,
+  "Analisado pela COMFAD": 5,
+  "Pendente": 6,
+  "Tramitado": 7,
+  "Solicitado Cumprimento": 8,
+  "Concluída": 9,
+  // Trilha de Cumprimento
+  "Solicitada Autorização": 10,
+  "Deposito Cancelado": 11,
+  "Retorno Divergência": 12,
+  "Depósito Efetivado": 13,
+};
+const ordemFluxo = (status: string) => FLUXO_DJUD[status] ?? 999;
+
 export async function getMetricsData(filters: MetricsFilterInput): Promise<MetricsData> {
   // WHERE clause Prisma ORM
   const where: Prisma.DemandaWhereInput = {};
@@ -70,6 +104,15 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     ? Prisma.sql`WHERE ${Prisma.join(sqlConditions, " AND ")}`
     : Prisma.sql``;
 
+  // WHERE específicos para as novas séries.
+  // TRF válido = 1..6 (TRF1 a TRF6); valores fora disso são erros de digitação na base.
+  const condTrfValido = Prisma.sql`"trfRegiao" BETWEEN 1 AND 6`;
+  const condComValor  = Prisma.sql`"valorEstimado" IS NOT NULL`;
+  const whereTribunal       = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condTrfValido], " AND ")}`;
+  const whereValor          = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condComValor], " AND ")}`;
+  const whereValorTribunal  = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condComValor, condTrfValido], " AND ")}`;
+  const whereFornecedor     = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, Prisma.sql`"fornecedor" IS NOT NULL`], " AND ")}`;
+
   // ── Todas as queries em paralelo — ZERO findMany ────────────────────────────
   const [
     totalCount,
@@ -89,6 +132,10 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     responsaveisCounts,
     topMedicamentosCounts,
     objetoAcaoCounts,
+    tribunalTimelineRaw,
+    valorTimelineRaw,
+    valorTribunalTimelineRaw,
+    topMedicamentosValorRaw,
   ] = await Promise.all([
     // Total de processos
     db.demanda.count({ where }),
@@ -190,6 +237,45 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       orderBy: { _count: { id: "desc" } },
       take: 10,
     }),
+
+    // ── NOVO (item 1.1): Série mensal decomposta por Tribunal (TRF 1..6) ───────
+    db.$queryRaw<Array<{ mes: Date; trf: number | null; count: bigint }>>`
+      SELECT DATE_TRUNC('month', "criadoEm") AS mes, "trfRegiao" AS trf, COUNT(*) AS count
+      FROM "Demanda"
+      ${whereTribunal}
+      GROUP BY DATE_TRUNC('month', "criadoEm"), "trfRegiao"
+      ORDER BY mes ASC
+    `,
+
+    // ── NOVO (item 2): Série mensal de VALOR total (R$) ───────────────────────
+    db.$queryRaw<Array<{ mes: Date; valor: number }>>`
+      SELECT DATE_TRUNC('month', "criadoEm") AS mes, SUM("valorEstimado")::float8 AS valor
+      FROM "Demanda"
+      ${whereValor}
+      GROUP BY DATE_TRUNC('month', "criadoEm")
+      ORDER BY mes ASC
+    `,
+
+    // ── NOVO (item 2): Série mensal de VALOR decomposta por Tribunal ──────────
+    // Ficará vazio enquanto as demandas com valor não tiverem trfRegiao na base.
+    db.$queryRaw<Array<{ mes: Date; trf: number | null; valor: number }>>`
+      SELECT DATE_TRUNC('month', "criadoEm") AS mes, "trfRegiao" AS trf, SUM("valorEstimado")::float8 AS valor
+      FROM "Demanda"
+      ${whereValorTribunal}
+      GROUP BY DATE_TRUNC('month', "criadoEm"), "trfRegiao"
+      ORDER BY mes ASC
+    `,
+
+    // ── NOVO (item 3.1): Top 15 Princípios Ativos por VALOR total (R$) ────────
+    db.$queryRaw<Array<{ medicamento: string | null; valor: number }>>`
+      SELECT "principioAtivo" AS medicamento, SUM("valorEstimado")::float8 AS valor
+      FROM "Demanda"
+      ${whereValor}
+      AND "principioAtivo" IS NOT NULL
+      GROUP BY "principioAtivo"
+      ORDER BY valor DESC
+      LIMIT 15
+    `,
   ]);
 
   // Buscar nomes dos top responsáveis
@@ -203,6 +289,26 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   });
 
   const responsaveisMap = new Map(responsaveisDetails.map((r) => [r.id, r.name]));
+
+  // Fornecedor — consulta resiliente em SQL bruto: a coluna "fornecedor" pode ainda não existir na base.
+  // Mantida FORA do Promise.all e dentro de try/catch para que sua ausência não derrube as demais métricas.
+  let fornecedorDistribution: Array<{ fornecedor: string | null; count: number }> = [];
+  try {
+    const fornecedorRows = await db.$queryRaw<Array<{ fornecedor: string | null; count: bigint }>>`
+      SELECT "fornecedor", COUNT(*) AS count
+      FROM "Demanda"
+      ${whereFornecedor}
+      GROUP BY "fornecedor"
+      ORDER BY count DESC
+      LIMIT 15
+    `;
+    fornecedorDistribution = fornecedorRows.map((r) => ({
+      fornecedor: r.fornecedor,
+      count:      Number(r.count),
+    }));
+  } catch {
+    // Coluna "fornecedor" ainda não existe (ou base não populada) — segue como lista vazia.
+  }
 
   const totalDemandas      = totalCount;
   const totalValorEstimado = totalValueAgg._sum.valorEstimado?.toNumber() ?? 0;
@@ -229,6 +335,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       objeto: item.objetoAcao,
       count:  item._count.id,
     })),
+    fornecedorDistribution,
 
     // Tendência
     demandasTimeline: timelineRaw.map((r) => ({
@@ -236,11 +343,35 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       count: Number(r.count),
     })),
 
-    // Gestão de riscos
-    statusDistribution: statusCounts.map((item) => ({
-      status: item.status || "Sem status",
-      count:  item._count.id,
+    // Decomposição por tribunal (item 1.1)
+    tribunalTimeline: tribunalTimelineRaw.map((r) => ({
+      mes:   r.mes,
+      trf:   r.trf,
+      count: Number(r.count),
     })),
+
+    // Séries de valores (itens 2 e 3.1)
+    valorTimeline: valorTimelineRaw.map((r) => ({
+      mes:   r.mes,
+      valor: Number(r.valor) || 0,
+    })),
+    valorTribunalTimeline: valorTribunalTimelineRaw.map((r) => ({
+      mes:   r.mes,
+      trf:   r.trf,
+      valor: Number(r.valor) || 0,
+    })),
+    topMedicamentosValor: topMedicamentosValorRaw.map((r) => ({
+      medicamento: r.medicamento,
+      valor:       Number(r.valor) || 0,
+    })),
+
+    // Gestão de riscos — ordenado pelo FLUXO de execução do DJUD (funil, item 4)
+    statusDistribution: statusCounts
+      .map((item) => ({
+        status: item.status || "Sem status",
+        count:  item._count.id,
+      }))
+      .sort((a, b) => ordemFluxo(a.status) - ordemFluxo(b.status)),
     prioridadeDistribution: prioridadeCounts.map((item) => ({
       prioridade: item.prioridade || "Normal",
       count:      item._count.id,

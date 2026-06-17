@@ -13,6 +13,10 @@ import { AreaTematicaChart } from "@/components/dashboard/charts/area-tematica-c
 import { RegiaoBrasilChart } from "@/components/dashboard/charts/regiao-brasil-chart";
 import { TopMedicamentosChart } from "@/components/dashboard/charts/top-medicamentos-chart";
 import { ObjetoAcaoChart } from "@/components/dashboard/charts/objeto-acao-chart";
+import { TribunalTimelineChart } from "@/components/dashboard/charts/tribunal-timeline-chart";
+import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/charts/valor-timeline-chart";
+import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
+import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
 import { useMetrics } from "@/hooks/useMetrics";
 import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
@@ -31,6 +35,9 @@ import {
   MapPin,
   BarChart2,
   ShieldAlert,
+  Coins,
+  Landmark,
+  Building2,
 } from "lucide-react";
 
 const selectCn =
@@ -232,11 +239,15 @@ export default function DashboardPage() {
           </div>
 
           {/* Tabs analíticas */}
-          <Tabs defaultValue="tendencia">
+          <Tabs defaultValue="valores">
             <TabsList className="mb-2">
-              <TabsTrigger value="tendencia">
+              <TabsTrigger value="valores">
+                <Coins className="h-3.5 w-3.5 mr-1.5" />
+                Valores
+              </TabsTrigger>
+              <TabsTrigger value="processos">
                 <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
-                Tendência
+                Processos
               </TabsTrigger>
               <TabsTrigger value="dimensionamento">
                 <Pill className="h-3.5 w-3.5 mr-1.5" />
@@ -256,8 +267,33 @@ export default function DashboardPage() {
               </TabsTrigger>
             </TabsList>
 
-            {/* ── Tendência ─────────────────────────────────────────────── */}
-            <TabsContent value="tendencia" className="space-y-6 mt-4">
+            {/* ── Valores (item 2 — primeira aba, à esquerda) ───────────── */}
+            <TabsContent value="valores" className="space-y-6 mt-4">
+              <Section
+                icon={<Coins className="h-4 w-4" />}
+                title="Série Histórica de Valores"
+                subtitle="Evolução mensal do valor total dos processos (R$) — base para dimensionamento orçamentário"
+                full
+              >
+                <ValorTimelineChart data={metrics.valorTimeline} />
+              </Section>
+              <Section
+                icon={<Landmark className="h-4 w-4" />}
+                title="Valores por Tribunal ao Longo do Tempo"
+                subtitle="Decomposição mensal do valor (R$) por TRF — concentração de valor por tribunal"
+                full
+              >
+                <TribunalTimelineChart
+                  data={metrics.valorTribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.valor }))}
+                  format={fmtBRLCompacto}
+                  unidade="R$"
+                  emptyLabel="As demandas com valor (Cumprimento de Ordem Judicial) ainda não têm o Tribunal (TRF) preenchido na base. Assim que esse campo for populado na exportação do Redmine, a decomposição por tribunal aparece aqui."
+                />
+              </Section>
+            </TabsContent>
+
+            {/* ── Processos (antiga aba Tendência — item 1) ─────────────── */}
+            <TabsContent value="processos" className="space-y-6 mt-4">
               <Section
                 icon={<TrendingUp className="h-4 w-4" />}
                 title="Série Histórica de Demandas"
@@ -265,6 +301,18 @@ export default function DashboardPage() {
                 full
               >
                 <TimelineChart data={metrics.demandasTimeline} />
+              </Section>
+              <Section
+                icon={<Landmark className="h-4 w-4" />}
+                title="Volume por Tribunal ao Longo do Tempo"
+                subtitle="Decomposição mensal das demandas por TRF — revela picos de entrada concentrados em um tribunal (item 1.1)"
+                full
+              >
+                <TribunalTimelineChart
+                  data={metrics.tribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.count }))}
+                  unidade="processos"
+                  emptyLabel="Sem dados de tribunal (TRF) no período selecionado."
+                />
               </Section>
             </TabsContent>
 
@@ -278,6 +326,27 @@ export default function DashboardPage() {
               >
                 <TopMedicamentosChart data={metrics.topMedicamentosDistribution} />
               </Section>
+
+              {/* item 3.1 — Top 15 por VALOR total */}
+              <Section
+                icon={<Coins className="h-4 w-4" />}
+                title="Top 15 Princípios Ativos por Valor Total"
+                subtitle="Ranking por valor (R$) dos processos — complementa o ranking por quantidade. Cobre o universo de demandas com valor de depósito informado"
+                full
+              >
+                <TopMedicamentosValorChart data={metrics.topMedicamentosValor} />
+              </Section>
+
+              {/* item 3.2 — Fornecedores (gráfico real; mostra estado-vazio até a base trazer o campo) */}
+              <Section
+                icon={<Building2 className="h-4 w-4" />}
+                title="Demandas por Fornecedor do Medicamento"
+                subtitle="Empresa que produz/comercializa o medicamento pleiteado"
+                full
+              >
+                <FornecedorChart data={metrics.fornecedorDistribution} />
+              </Section>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Section
                   icon={<BarChart2 className="h-4 w-4" />}
@@ -297,15 +366,17 @@ export default function DashboardPage() {
             </TabsContent>
 
             {/* ── Riscos ────────────────────────────────────────────────── */}
-            <TabsContent value="riscos" className="mt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <Section
-                  icon={<ShieldAlert className="h-4 w-4" />}
-                  title="Gargalos por Status"
-                  subtitle="Etapas com maior volume de processos parados"
-                >
-                  <StatusChart data={metrics.statusDistribution} />
-                </Section>
+            <TabsContent value="riscos" className="space-y-6 mt-4">
+              {/* item 4 — funil de gargalos ordenado pelo fluxo de execução do DJUD */}
+              <Section
+                icon={<ShieldAlert className="h-4 w-4" />}
+                title="Gargalos por Status (funil do fluxo de execução)"
+                subtitle="Etapas do processo do topo (entrada) para a base (conclusão) — a largura indica o volume parado em cada etapa"
+                full
+              >
+                <StatusChart data={metrics.statusDistribution} />
+              </Section>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <Section
                   icon={<AlertTriangle className="h-4 w-4" />}
                   title="Perfil de Risco"
