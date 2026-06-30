@@ -1,0 +1,181 @@
+diff --git a/app/(auth)/dashboard/page.tsx b/app/(auth)/dashboard/page.tsx
+index 28649d5..fbd4186 100644
+--- a/app/(auth)/dashboard/page.tsx
++++ b/app/(auth)/dashboard/page.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useState } from "react";
++import { useState, useEffect } from "react";
+ import { PageHeader } from "@/components/layout/page-header";
+ import { MetricCard } from "@/components/dashboard/metric-card";
+ import { StatusChart } from "@/components/dashboard/charts/status-chart";
+@@ -38,6 +38,7 @@ import {
+   Coins,
+   Landmark,
+   Building2,
++  Search,
+ } from "lucide-react";
+ 
+ const selectCn =
+@@ -93,14 +94,24 @@ export default function DashboardPage() {
+   const [endDate, setEndDate] = useState("");
+   const [filterStatus, setFilterStatus] = useState("");
+   const [filterPrioridade, setFilterPrioridade] = useState("");
++  // Busca aberta por princípio ativo: texto digitado (imediato) + valor com debounce (usado na query)
++  const [principioInput, setPrincipioInput] = useState("");
++  const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
+ 
+-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade);
++  // Debounce de 400ms — evita disparar a query a cada tecla digitada
++  useEffect(() => {
++    const t = setTimeout(() => setFilterPrincipioAtivo(principioInput.trim()), 400);
++    return () => clearTimeout(t);
++  }, [principioInput]);
++
++  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || principioInput);
+ 
+   const metricsFilters = {
+     startDate:   startDate   ? new Date(startDate)   : undefined,
+     endDate:     endDate     ? new Date(endDate)      : undefined,
+     status:      filterStatus     || undefined,
+     prioridade:  filterPrioridade || undefined,
++    principioAtivo: filterPrincipioAtivo || undefined,
+   };
+ 
+   const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
+@@ -110,6 +121,8 @@ export default function DashboardPage() {
+     setEndDate("");
+     setFilterStatus("");
+     setFilterPrioridade("");
++    setPrincipioInput("");
++    setFilterPrincipioAtivo("");
+   };
+ 
+   if (error) {
+@@ -192,6 +205,19 @@ export default function DashboardPage() {
+             { value: "Baixa", label: "Baixa" },
+           ]}
+         />
++        <div className="flex flex-col gap-1.5">
++          <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
++          <div className="relative">
++            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
++            <Input
++              type="text"
++              value={principioInput}
++              onChange={(e) => setPrincipioInput(e.target.value)}
++              placeholder="Buscar medicamento..."
++              className="h-8 w-56 pl-8 text-sm"
++            />
++          </div>
++        </div>
+         {hasActiveFilters && (
+           <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
+             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+diff --git a/app/api/demandas/metrics/route.ts b/app/api/demandas/metrics/route.ts
+index 83689bc..3792dab 100644
+--- a/app/api/demandas/metrics/route.ts
++++ b/app/api/demandas/metrics/route.ts
+@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
+       endDate:       searchParams.get("endDate")       ?? undefined,
+       status:        searchParams.get("status")        ?? undefined,
+       prioridade:    searchParams.get("prioridade")    ?? undefined,
++      principioAtivo: searchParams.get("principioAtivo") ?? undefined,
+       organizacaoId: searchParams.get("organizacaoId") ?? undefined,
+     });
+ 
+@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
+       endDate: filters.endDate ? new Date(filters.endDate) : undefined,
+       status: filters.status,
+       prioridade: filters.prioridade,
++      principioAtivo: filters.principioAtivo,
+       organizacaoId: filters.organizacaoId,
+     };
+ 
+diff --git a/hooks/useMetrics.ts b/hooks/useMetrics.ts
+index cb048c5..66d565f 100644
+--- a/hooks/useMetrics.ts
++++ b/hooks/useMetrics.ts
+@@ -8,6 +8,7 @@ interface UseMetricsOptions {
+   endDate?: Date;
+   status?: string;
+   prioridade?: string;
++  principioAtivo?: string;
+   organizacaoId?: string;
+ }
+ 
+@@ -20,6 +21,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
+       endDate: options.endDate?.toISOString(),
+       status: options.status,
+       prioridade: options.prioridade,
++      principioAtivo: options.principioAtivo,
+       organizacaoId: options.organizacaoId,
+     },
+   ];
+@@ -41,6 +43,9 @@ export function useMetrics(options: UseMetricsOptions = {}) {
+       if (options.prioridade) {
+         params.append("prioridade", options.prioridade);
+       }
++      if (options.principioAtivo) {
++        params.append("principioAtivo", options.principioAtivo);
++      }
+       if (options.organizacaoId) {
+         params.append("organizacaoId", options.organizacaoId);
+       }
+diff --git a/lib/metrics.ts b/lib/metrics.ts
+index b492300..2e7d7f7 100644
+--- a/lib/metrics.ts
++++ b/lib/metrics.ts
+@@ -51,6 +51,7 @@ export interface MetricsFilterInput {
+   endDate?:        Date;
+   status?:         string;
+   prioridade?:     string;
++  principioAtivo?: string;
+   organizacaoId?:  string;
+ }
+ 
+@@ -90,6 +91,8 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
+   }
+   if (filters.status)        where.status        = filters.status;
+   if (filters.prioridade)    where.prioridade    = filters.prioridade;
++  if (filters.principioAtivo)
++    where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
+   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
+ 
+   // WHERE clause para raw SQL
+@@ -98,6 +101,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
+   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
+   if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
+   if (filters.prioridade)    sqlConditions.push(Prisma.sql`prioridade = ${filters.prioridade}`);
++  if (filters.principioAtivo) sqlConditions.push(Prisma.sql`"principioAtivo" ILIKE ${`%${filters.principioAtivo}%`}`);
+   if (filters.organizacaoId) sqlConditions.push(Prisma.sql`"organizacaoId" = ${filters.organizacaoId}`);
+ 
+   const whereRaw = sqlConditions.length > 0
+@@ -223,7 +227,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
+     // Pilar de dimensionamento: quais medicamentos e em qual volume
+     db.demanda.groupBy({
+       by: ["principioAtivo"],
+-      where: { ...where, principioAtivo: { not: null } },
++      where: {
++        ...where,
++        // Mantém o filtro de busca (contains) quando ativo; caso contrário apenas exclui nulos
++        principioAtivo: filters.principioAtivo
++          ? { contains: filters.principioAtivo, mode: "insensitive" }
++          : { not: null },
++      },
+       _count: { id: true },
+       orderBy: { _count: { id: "desc" } },
+       take: 15,
+diff --git a/lib/schemas.ts b/lib/schemas.ts
+index b007f13..d852d04 100644
+--- a/lib/schemas.ts
++++ b/lib/schemas.ts
+@@ -77,6 +77,7 @@ export const filterMetricsSchema = z.object({
+   endDate: z.string().datetime().optional(),
+   status: z.string().optional(),
+   prioridade: z.string().optional(),
++  principioAtivo: z.string().optional(),
+   organizacaoId: z.string().optional(),
+ });
+ 

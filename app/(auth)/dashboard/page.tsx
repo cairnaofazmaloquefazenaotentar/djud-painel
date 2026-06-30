@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusChart } from "@/components/dashboard/charts/status-chart";
@@ -38,6 +38,7 @@ import {
   Coins,
   Landmark,
   Building2,
+  Search,
 } from "lucide-react";
 
 const selectCn =
@@ -93,14 +94,24 @@ export default function DashboardPage() {
   const [endDate, setEndDate] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPrioridade, setFilterPrioridade] = useState("");
+  // Busca aberta por princípio ativo: texto digitado (imediato) + valor com debounce (usado na query)
+  const [principioInput, setPrincipioInput] = useState("");
+  const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade);
+  // Debounce de 400ms — evita disparar a query a cada tecla digitada
+  useEffect(() => {
+    const t = setTimeout(() => setFilterPrincipioAtivo(principioInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [principioInput]);
+
+  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || principioInput);
 
   const metricsFilters = {
     startDate:   startDate   ? new Date(startDate)   : undefined,
     endDate:     endDate     ? new Date(endDate)      : undefined,
     status:      filterStatus     || undefined,
     prioridade:  filterPrioridade || undefined,
+    principioAtivo: filterPrincipioAtivo || undefined,
   };
 
   const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
@@ -110,6 +121,8 @@ export default function DashboardPage() {
     setEndDate("");
     setFilterStatus("");
     setFilterPrioridade("");
+    setPrincipioInput("");
+    setFilterPrincipioAtivo("");
   };
 
   if (error) {
@@ -192,6 +205,19 @@ export default function DashboardPage() {
             { value: "Baixa", label: "Baixa" },
           ]}
         />
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              value={principioInput}
+              onChange={(e) => setPrincipioInput(e.target.value)}
+              placeholder="Buscar medicamento..."
+              className="h-8 w-56 pl-8 text-sm"
+            />
+          </div>
+        </div>
         {hasActiveFilters && (
           <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />

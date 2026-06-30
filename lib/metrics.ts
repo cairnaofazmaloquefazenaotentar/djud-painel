@@ -51,6 +51,7 @@ export interface MetricsFilterInput {
   endDate?:        Date;
   status?:         string;
   prioridade?:     string;
+  principioAtivo?: string;
   organizacaoId?:  string;
 }
 
@@ -90,6 +91,8 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   }
   if (filters.status)        where.status        = filters.status;
   if (filters.prioridade)    where.prioridade    = filters.prioridade;
+  if (filters.principioAtivo)
+    where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
 
   // WHERE clause para raw SQL
@@ -98,6 +101,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
   if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
   if (filters.prioridade)    sqlConditions.push(Prisma.sql`prioridade = ${filters.prioridade}`);
+  if (filters.principioAtivo) sqlConditions.push(Prisma.sql`"principioAtivo" ILIKE ${`%${filters.principioAtivo}%`}`);
   if (filters.organizacaoId) sqlConditions.push(Prisma.sql`"organizacaoId" = ${filters.organizacaoId}`);
 
   const whereRaw = sqlConditions.length > 0
@@ -223,7 +227,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Pilar de dimensionamento: quais medicamentos e em qual volume
     db.demanda.groupBy({
       by: ["principioAtivo"],
-      where: { ...where, principioAtivo: { not: null } },
+      where: {
+        ...where,
+        // Mantém o filtro de busca (contains) quando ativo; caso contrário apenas exclui nulos
+        principioAtivo: filters.principioAtivo
+          ? { contains: filters.principioAtivo, mode: "insensitive" }
+          : { not: null },
+      },
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 15,

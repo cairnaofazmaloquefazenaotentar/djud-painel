@@ -77,6 +77,7 @@ export const filterMetricsSchema = z.object({
   endDate: z.string().datetime().optional(),
   status: z.string().optional(),
   prioridade: z.string().optional(),
+  principioAtivo: z.string().optional(),
   organizacaoId: z.string().optional(),
 });
 

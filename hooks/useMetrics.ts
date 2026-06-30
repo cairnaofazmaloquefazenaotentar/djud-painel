@@ -8,6 +8,7 @@ interface UseMetricsOptions {
   endDate?: Date;
   status?: string;
   prioridade?: string;
+  principioAtivo?: string;
   organizacaoId?: string;
 }
 
@@ -20,6 +21,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       endDate: options.endDate?.toISOString(),
       status: options.status,
       prioridade: options.prioridade,
+      principioAtivo: options.principioAtivo,
       organizacaoId: options.organizacaoId,
     },
   ];
@@ -40,6 +42,9 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       }
       if (options.prioridade) {
         params.append("prioridade", options.prioridade);
+      }
+      if (options.principioAtivo) {
+        params.append("principioAtivo", options.principioAtivo);
       }
       if (options.organizacaoId) {
         params.append("organizacaoId", options.organizacaoId);

@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
       endDate:       searchParams.get("endDate")       ?? undefined,
       status:        searchParams.get("status")        ?? undefined,
       prioridade:    searchParams.get("prioridade")    ?? undefined,
+      principioAtivo: searchParams.get("principioAtivo") ?? undefined,
       organizacaoId: searchParams.get("organizacaoId") ?? undefined,
     });
 
@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
       endDate: filters.endDate ? new Date(filters.endDate) : undefined,
       status: filters.status,
       prioridade: filters.prioridade,
+      principioAtivo: filters.principioAtivo,
       organizacaoId: filters.organizacaoId,
     };
 
