@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusChart } from "@/components/dashboard/charts/status-chart";
@@ -18,6 +18,8 @@ import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/chart
 import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
 import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
 import { useMetrics } from "@/hooks/useMetrics";
+import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
+import { Combobox } from "@/components/ui/combobox";
 import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +40,6 @@ import {
   Coins,
   Landmark,
   Building2,
-  Search,
 } from "lucide-react";
 
 const selectCn =
@@ -94,17 +95,17 @@ export default function DashboardPage() {
   const [endDate, setEndDate] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterPrioridade, setFilterPrioridade] = useState("");
-  // Busca aberta por princípio ativo: texto digitado (imediato) + valor com debounce (usado na query)
-  const [principioInput, setPrincipioInput] = useState("");
+  // Filtro por princípio ativo: seleção direta de um item da lista (sem busca por texto livre)
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
-  // Debounce de 400ms — evita disparar a query a cada tecla digitada
-  useEffect(() => {
-    const t = setTimeout(() => setFilterPrincipioAtivo(principioInput.trim()), 400);
-    return () => clearTimeout(t);
-  }, [principioInput]);
+  // Lista de princípios ativos disponíveis (limpa, ordenada por frequência) para o combobox
+  const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
+  const principioOptions = (principios ?? []).map((p) => ({
+    value: p.value,
+    count: p.count,
+  }));
 
-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || principioInput);
+  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo);
 
   const metricsFilters = {
     startDate:   startDate   ? new Date(startDate)   : undefined,
@@ -121,7 +122,6 @@ export default function DashboardPage() {
     setEndDate("");
     setFilterStatus("");
     setFilterPrioridade("");
-    setPrincipioInput("");
     setFilterPrincipioAtivo("");
   };
 
@@ -207,16 +207,17 @@ export default function DashboardPage() {
         />
         <div className="flex flex-col gap-1.5">
           <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              value={principioInput}
-              onChange={(e) => setPrincipioInput(e.target.value)}
-              placeholder="Buscar medicamento..."
-              className="h-8 w-56 pl-8 text-sm"
-            />
-          </div>
+          <Combobox
+            value={filterPrincipioAtivo}
+            onChange={setFilterPrincipioAtivo}
+            options={principioOptions}
+            loading={principiosLoading}
+            placeholder="Selecione o medicamento..."
+            searchPlaceholder="Buscar princípio ativo..."
+            allLabel="Todos os princípios ativos"
+            emptyText="Nenhum princípio ativo encontrado."
+            className="w-64"
+          />
         </div>
         {hasActiveFilters && (
           <Button variant="outline" size="sm" onClick={handleReset} className="self-end">

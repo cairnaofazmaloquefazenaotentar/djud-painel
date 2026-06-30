@@ -1,181 +1,461 @@
 diff --git a/app/(auth)/dashboard/page.tsx b/app/(auth)/dashboard/page.tsx
-index 28649d5..fbd4186 100644
+index fbd4186..fbbc3df 100644
 --- a/app/(auth)/dashboard/page.tsx
 +++ b/app/(auth)/dashboard/page.tsx
 @@ -1,6 +1,6 @@
  "use client";
  
--import { useState } from "react";
-+import { useState, useEffect } from "react";
+-import { useState, useEffect } from "react";
++import { useState } from "react";
  import { PageHeader } from "@/components/layout/page-header";
  import { MetricCard } from "@/components/dashboard/metric-card";
  import { StatusChart } from "@/components/dashboard/charts/status-chart";
-@@ -38,6 +38,7 @@ import {
+@@ -18,6 +18,8 @@ import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/chart
+ import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
+ import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
+ import { useMetrics } from "@/hooks/useMetrics";
++import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
++import { Combobox } from "@/components/ui/combobox";
+ import { FilterSelect } from "@/components/backoffice";
+ import { Button } from "@/components/ui/button";
+ import { Input } from "@/components/ui/input";
+@@ -38,7 +40,6 @@ import {
    Coins,
    Landmark,
    Building2,
-+  Search,
+-  Search,
  } from "lucide-react";
  
  const selectCn =
-@@ -93,14 +94,24 @@ export default function DashboardPage() {
+@@ -94,17 +95,17 @@ export default function DashboardPage() {
    const [endDate, setEndDate] = useState("");
    const [filterStatus, setFilterStatus] = useState("");
    const [filterPrioridade, setFilterPrioridade] = useState("");
-+  // Busca aberta por princípio ativo: texto digitado (imediato) + valor com debounce (usado na query)
-+  const [principioInput, setPrincipioInput] = useState("");
-+  const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
+-  // Busca aberta por princípio ativo: texto digitado (imediato) + valor com debounce (usado na query)
+-  const [principioInput, setPrincipioInput] = useState("");
++  // Filtro por princípio ativo: seleção direta de um item da lista (sem busca por texto livre)
+   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
  
--  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade);
-+  // Debounce de 400ms — evita disparar a query a cada tecla digitada
-+  useEffect(() => {
-+    const t = setTimeout(() => setFilterPrincipioAtivo(principioInput.trim()), 400);
-+    return () => clearTimeout(t);
-+  }, [principioInput]);
-+
-+  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || principioInput);
+-  // Debounce de 400ms — evita disparar a query a cada tecla digitada
+-  useEffect(() => {
+-    const t = setTimeout(() => setFilterPrincipioAtivo(principioInput.trim()), 400);
+-    return () => clearTimeout(t);
+-  }, [principioInput]);
++  // Lista de princípios ativos disponíveis (limpa, ordenada por frequência) para o combobox
++  const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
++  const principioOptions = (principios ?? []).map((p) => ({
++    value: p.value,
++    count: p.count,
++  }));
+ 
+-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || principioInput);
++  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo);
  
    const metricsFilters = {
      startDate:   startDate   ? new Date(startDate)   : undefined,
-     endDate:     endDate     ? new Date(endDate)      : undefined,
-     status:      filterStatus     || undefined,
-     prioridade:  filterPrioridade || undefined,
-+    principioAtivo: filterPrincipioAtivo || undefined,
-   };
- 
-   const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
-@@ -110,6 +121,8 @@ export default function DashboardPage() {
+@@ -121,7 +122,6 @@ export default function DashboardPage() {
      setEndDate("");
      setFilterStatus("");
      setFilterPrioridade("");
-+    setPrincipioInput("");
-+    setFilterPrincipioAtivo("");
+-    setPrincipioInput("");
+     setFilterPrincipioAtivo("");
    };
  
-   if (error) {
-@@ -192,6 +205,19 @@ export default function DashboardPage() {
-             { value: "Baixa", label: "Baixa" },
-           ]}
+@@ -207,16 +207,17 @@ export default function DashboardPage() {
          />
-+        <div className="flex flex-col gap-1.5">
-+          <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
-+          <div className="relative">
-+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-+            <Input
-+              type="text"
-+              value={principioInput}
-+              onChange={(e) => setPrincipioInput(e.target.value)}
-+              placeholder="Buscar medicamento..."
-+              className="h-8 w-56 pl-8 text-sm"
-+            />
-+          </div>
-+        </div>
+         <div className="flex flex-col gap-1.5">
+           <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
+-          <div className="relative">
+-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+-            <Input
+-              type="text"
+-              value={principioInput}
+-              onChange={(e) => setPrincipioInput(e.target.value)}
+-              placeholder="Buscar medicamento..."
+-              className="h-8 w-56 pl-8 text-sm"
+-            />
+-          </div>
++          <Combobox
++            value={filterPrincipioAtivo}
++            onChange={setFilterPrincipioAtivo}
++            options={principioOptions}
++            loading={principiosLoading}
++            placeholder="Selecione o medicamento..."
++            searchPlaceholder="Buscar princípio ativo..."
++            allLabel="Todos os princípios ativos"
++            emptyText="Nenhum princípio ativo encontrado."
++            className="w-64"
++          />
+         </div>
          {hasActiveFilters && (
            <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
-             <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-diff --git a/app/api/demandas/metrics/route.ts b/app/api/demandas/metrics/route.ts
-index 83689bc..3792dab 100644
---- a/app/api/demandas/metrics/route.ts
-+++ b/app/api/demandas/metrics/route.ts
-@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
-       endDate:       searchParams.get("endDate")       ?? undefined,
-       status:        searchParams.get("status")        ?? undefined,
-       prioridade:    searchParams.get("prioridade")    ?? undefined,
-+      principioAtivo: searchParams.get("principioAtivo") ?? undefined,
-       organizacaoId: searchParams.get("organizacaoId") ?? undefined,
-     });
- 
-@@ -29,6 +30,7 @@ export async function GET(request: NextRequest) {
-       endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-       status: filters.status,
-       prioridade: filters.prioridade,
-+      principioAtivo: filters.principioAtivo,
-       organizacaoId: filters.organizacaoId,
-     };
- 
-diff --git a/hooks/useMetrics.ts b/hooks/useMetrics.ts
-index cb048c5..66d565f 100644
---- a/hooks/useMetrics.ts
-+++ b/hooks/useMetrics.ts
-@@ -8,6 +8,7 @@ interface UseMetricsOptions {
-   endDate?: Date;
-   status?: string;
-   prioridade?: string;
-+  principioAtivo?: string;
-   organizacaoId?: string;
- }
- 
-@@ -20,6 +21,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
-       endDate: options.endDate?.toISOString(),
-       status: options.status,
-       prioridade: options.prioridade,
-+      principioAtivo: options.principioAtivo,
-       organizacaoId: options.organizacaoId,
-     },
-   ];
-@@ -41,6 +43,9 @@ export function useMetrics(options: UseMetricsOptions = {}) {
-       if (options.prioridade) {
-         params.append("prioridade", options.prioridade);
-       }
-+      if (options.principioAtivo) {
-+        params.append("principioAtivo", options.principioAtivo);
+diff --git a/app/api/demandas/principios-ativos/route.ts b/app/api/demandas/principios-ativos/route.ts
+new file mode 100644
+index 0000000..3560001
+--- /dev/null
++++ b/app/api/demandas/principios-ativos/route.ts
+@@ -0,0 +1,88 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { db } from "@/lib/db";
++import { NextResponse } from "next/server";
++
++/**
++ * Normaliza um valor bruto de princípio ativo vindo do Redmine.
++ * Os dados vêm sujos: alguns valores chegam como array JSON de 1 elemento
++ * (ex.: `["Canabidiol"]`), outros como texto puro (ex.: `Canabidiol`).
++ * Esta função desempacota o array e devolve o nome limpo, ou `null` quando
++ * o valor é lixo (N/A, placeholder "==> Outro...", vazio).
++ */
++function normalizar(raw: string): string | null {
++  let s = raw.trim();
++
++  // Desempacota formas tipo ["Canabidiol"] ou ["A","B"] -> "A | B"
++  if (s.startsWith("[") && s.endsWith("]")) {
++    try {
++      const parsed = JSON.parse(s);
++      if (Array.isArray(parsed)) {
++        s = parsed.map((x) => String(x).trim()).join(" | ");
 +      }
-       if (options.organizacaoId) {
-         params.append("organizacaoId", options.organizacaoId);
-       }
-diff --git a/lib/metrics.ts b/lib/metrics.ts
-index b492300..2e7d7f7 100644
---- a/lib/metrics.ts
-+++ b/lib/metrics.ts
-@@ -51,6 +51,7 @@ export interface MetricsFilterInput {
-   endDate?:        Date;
-   status?:         string;
-   prioridade?:     string;
-+  principioAtivo?: string;
-   organizacaoId?:  string;
- }
- 
-@@ -90,6 +91,8 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
-   }
-   if (filters.status)        where.status        = filters.status;
-   if (filters.prioridade)    where.prioridade    = filters.prioridade;
-+  if (filters.principioAtivo)
-+    where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
-   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
- 
-   // WHERE clause para raw SQL
-@@ -98,6 +101,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
-   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
-   if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
-   if (filters.prioridade)    sqlConditions.push(Prisma.sql`prioridade = ${filters.prioridade}`);
-+  if (filters.principioAtivo) sqlConditions.push(Prisma.sql`"principioAtivo" ILIKE ${`%${filters.principioAtivo}%`}`);
-   if (filters.organizacaoId) sqlConditions.push(Prisma.sql`"organizacaoId" = ${filters.organizacaoId}`);
- 
-   const whereRaw = sqlConditions.length > 0
-@@ -223,7 +227,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
-     // Pilar de dimensionamento: quais medicamentos e em qual volume
-     db.demanda.groupBy({
-       by: ["principioAtivo"],
--      where: { ...where, principioAtivo: { not: null } },
-+      where: {
-+        ...where,
-+        // Mantém o filtro de busca (contains) quando ativo; caso contrário apenas exclui nulos
-+        principioAtivo: filters.principioAtivo
-+          ? { contains: filters.principioAtivo, mode: "insensitive" }
-+          : { not: null },
-+      },
-       _count: { id: true },
-       orderBy: { _count: { id: "desc" } },
-       take: 15,
-diff --git a/lib/schemas.ts b/lib/schemas.ts
-index b007f13..d852d04 100644
---- a/lib/schemas.ts
-+++ b/lib/schemas.ts
-@@ -77,6 +77,7 @@ export const filterMetricsSchema = z.object({
-   endDate: z.string().datetime().optional(),
-   status: z.string().optional(),
-   prioridade: z.string().optional(),
-+  principioAtivo: z.string().optional(),
-   organizacaoId: z.string().optional(),
- });
- 
++    } catch {
++      // fallback: remove colchetes/aspas manualmente
++      s = s.replace(/^\[|\]$/g, "").replace(/^"|"$/g, "").trim();
++    }
++  }
++
++  s = s.trim();
++  const upper = s.toUpperCase();
++
++  // Descarta lixo conhecido
++  if (s === "") return null;
++  if (upper === "N/A" || upper === "NA") return null;
++  if (s.startsWith("==>")) return null;
++
++  return s;
++}
++
++export async function GET() {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    // Agrupa por princípio ativo com a contagem de demandas de cada um
++    const grupos = await db.demanda.groupBy({
++      by: ["principioAtivo"],
++      where: { principioAtivo: { not: null } },
++      _count: { id: true },
++    });
++
++    // Limpa, mescla formas equivalentes (case-insensitive) e soma as contagens
++    const mapa = new Map<string, { value: string; count: number }>();
++
++    for (const g of grupos) {
++      const limpo = normalizar(g.principioAtivo ?? "");
++      if (!limpo) continue;
++
++      const chave = limpo.toLowerCase();
++      const atual = mapa.get(chave);
++      const n = g._count.id;
++
++      if (atual) {
++        atual.count += n;
++      } else {
++        mapa.set(chave, { value: limpo, count: n });
++      }
++    }
++
++    // Ordena por frequência (desc) e, em empate, alfabético
++    const items = Array.from(mapa.values()).sort(
++      (a, b) => b.count - a.count || a.value.localeCompare(b.value, "pt-BR"),
++    );
++
++    return NextResponse.json(
++      { items },
++      { headers: { "Cache-Control": "public, max-age=3600" } }, // 1h: lista muda pouco
++    );
++  } catch (error) {
++    console.error("[principios-ativos] Erro:", error);
++    const message =
++      error instanceof Error ? error.message : "Erro ao listar princípios ativos";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/components/ui/combobox.tsx b/components/ui/combobox.tsx
+new file mode 100644
+index 0000000..8828f66
+--- /dev/null
++++ b/components/ui/combobox.tsx
+@@ -0,0 +1,237 @@
++"use client";
++
++import * as React from "react";
++import { Check, ChevronsUpDown, Search, X } from "lucide-react";
++import { cn } from "@/lib/utils";
++
++export interface ComboboxOption {
++  value: string;
++  /** rótulo opcional; se ausente, usa o próprio value */
++  label?: string;
++  /** contagem opcional exibida à direita (ex.: nº de demandas) */
++  count?: number;
++}
++
++interface ComboboxProps {
++  value: string;
++  onChange: (value: string) => void;
++  options: ComboboxOption[];
++  placeholder?: string;
++  searchPlaceholder?: string;
++  emptyText?: string;
++  /** texto da opção que limpa a seleção (topo da lista) */
++  allLabel?: string;
++  loading?: boolean;
++  disabled?: boolean;
++  className?: string;
++  /** máx. de itens renderizados por vez (virtualização simples) */
++  maxRender?: number;
++}
++
++/** remove acentos e baixa caixa para busca tolerante */
++function norm(s: string): string {
++  return s
++    .normalize("NFD")
++    .replace(/\p{Diacritic}/gu, "")
++    .toLowerCase();
++}
++
++export function Combobox({
++  value,
++  onChange,
++  options,
++  placeholder = "Selecionar...",
++  searchPlaceholder = "Buscar...",
++  emptyText = "Nenhum resultado.",
++  allLabel = "Todos",
++  loading = false,
++  disabled = false,
++  className,
++  maxRender = 80,
++}: ComboboxProps) {
++  const [open, setOpen] = React.useState(false);
++  const [query, setQuery] = React.useState("");
++  const [highlight, setHighlight] = React.useState(0);
++
++  const rootRef = React.useRef<HTMLDivElement>(null);
++  const inputRef = React.useRef<HTMLInputElement>(null);
++  const listRef = React.useRef<HTMLDivElement>(null);
++
++  // fecha ao clicar fora
++  React.useEffect(() => {
++    if (!open) return;
++    function onDocClick(e: MouseEvent) {
++      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
++        setOpen(false);
++      }
++    }
++    document.addEventListener("mousedown", onDocClick);
++    return () => document.removeEventListener("mousedown", onDocClick);
++  }, [open]);
++
++  // foca o input de busca ao abrir
++  React.useEffect(() => {
++    if (open) {
++      setQuery("");
++      setHighlight(0);
++      // pequeno atraso para garantir que o input já está montado
++      requestAnimationFrame(() => inputRef.current?.focus());
++    }
++  }, [open]);
++
++  const filtered = React.useMemo(() => {
++    const q = norm(query.trim());
++    if (!q) return options;
++    return options.filter((o) => norm(o.label ?? o.value).includes(q));
++  }, [options, query]);
++
++  const visible = filtered.slice(0, maxRender);
++  const overflow = filtered.length - visible.length;
++
++  const selected = options.find((o) => o.value === value);
++  const selectedLabel = selected?.label ?? selected?.value;
++
++  function commit(v: string) {
++    onChange(v);
++    setOpen(false);
++  }
++
++  function onKeyDown(e: React.KeyboardEvent) {
++    if (e.key === "ArrowDown") {
++      e.preventDefault();
++      setHighlight((h) => Math.min(h + 1, visible.length - 1));
++    } else if (e.key === "ArrowUp") {
++      e.preventDefault();
++      setHighlight((h) => Math.max(h - 1, 0));
++    } else if (e.key === "Enter") {
++      e.preventDefault();
++      const opt = visible[highlight];
++      if (opt) commit(opt.value);
++    } else if (e.key === "Escape") {
++      e.preventDefault();
++      setOpen(false);
++    }
++  }
++
++  // mantém o item destacado visível na rolagem
++  React.useEffect(() => {
++    const el = listRef.current?.querySelector<HTMLElement>(
++      `[data-idx="${highlight}"]`,
++    );
++    el?.scrollIntoView({ block: "nearest" });
++  }, [highlight]);
++
++  return (
++    <div ref={rootRef} className={cn("relative", className)}>
++      <button
++        type="button"
++        disabled={disabled || loading}
++        onClick={() => setOpen((o) => !o)}
++        className={cn(
++          "flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow]",
++          "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
++          "disabled:cursor-not-allowed disabled:opacity-50",
++        )}
++      >
++        <span className={cn("truncate", !selectedLabel && "text-muted-foreground")}>
++          {loading ? "Carregando..." : selectedLabel || placeholder}
++        </span>
++        {value ? (
++          <X
++            className="h-3.5 w-3.5 shrink-0 text-muted-foreground hover:text-foreground"
++            onClick={(e) => {
++              e.stopPropagation();
++              onChange("");
++            }}
++          />
++        ) : (
++          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
++        )}
++      </button>
++
++      {open && (
++        <div
++          className="absolute z-50 mt-1 w-full min-w-[16rem] rounded-md border border-input bg-popover text-popover-foreground shadow-md"
++          onKeyDown={onKeyDown}
++        >
++          <div className="flex items-center gap-2 border-b px-2.5 py-2">
++            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
++            <input
++              ref={inputRef}
++              value={query}
++              onChange={(e) => {
++                setQuery(e.target.value);
++                setHighlight(0);
++              }}
++              placeholder={searchPlaceholder}
++              className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
++            />
++          </div>
++
++          <div ref={listRef} className="max-h-72 overflow-y-auto p-1">
++            {/* opção "Todos" — limpa a seleção */}
++            <button
++              type="button"
++              onMouseEnter={() => setHighlight(-1)}
++              onClick={() => commit("")}
++              className={cn(
++                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
++                "hover:bg-accent hover:text-accent-foreground",
++                !value && "font-medium",
++              )}
++            >
++              <Check
++                className={cn("h-3.5 w-3.5 shrink-0", value ? "opacity-0" : "opacity-100")}
++              />
++              {allLabel}
++            </button>
++
++            {visible.length === 0 && (
++              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
++                {emptyText}
++              </div>
++            )}
++
++            {visible.map((o, i) => {
++              const isSel = o.value === value;
++              const isHi = i === highlight;
++              return (
++                <button
++                  key={o.value}
++                  type="button"
++                  data-idx={i}
++                  onMouseEnter={() => setHighlight(i)}
++                  onClick={() => commit(o.value)}
++                  className={cn(
++                    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
++                    isHi && "bg-accent text-accent-foreground",
++                    isSel && "font-medium",
++                  )}
++                >
++                  <Check
++                    className={cn(
++                      "h-3.5 w-3.5 shrink-0",
++                      isSel ? "opacity-100" : "opacity-0",
++                    )}
++                  />
++                  <span className="flex-1 truncate">{o.label ?? o.value}</span>
++                  {typeof o.count === "number" && (
++                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
++                      {o.count.toLocaleString("pt-BR")}
++                    </span>
++                  )}
++                </button>
++              );
++            })}
++
++            {overflow > 0 && (
++              <div className="px-2 py-2 text-center text-xs text-muted-foreground">
++                +{overflow.toLocaleString("pt-BR")} — refine a busca para ver mais
++              </div>
++            )}
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/hooks/usePrincipiosAtivos.ts b/hooks/usePrincipiosAtivos.ts
+new file mode 100644
+index 0000000..d9af366
+--- /dev/null
++++ b/hooks/usePrincipiosAtivos.ts
+@@ -0,0 +1,27 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++
++export interface PrincipioAtivoOption {
++  value: string;
++  count: number;
++}
++
++/**
++ * Carrega a lista de princípios ativos disponíveis (com contagem de demandas),
++ * já limpa e ordenada por frequência. Usada para popular o combobox de filtro.
++ * A lista muda pouco, então fica em cache por bastante tempo.
++ */
++export function usePrincipiosAtivos() {
++  return useQuery<PrincipioAtivoOption[]>({
++    queryKey: ["principios-ativos"],
++    queryFn: async () => {
++      const res = await fetch("/api/demandas/principios-ativos");
++      if (!res.ok) throw new Error("Erro ao carregar princípios ativos");
++      const data = await res.json();
++      return data.items as PrincipioAtivoOption[];
++    },
++    staleTime: 60 * 60 * 1000, // 1 hora
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
