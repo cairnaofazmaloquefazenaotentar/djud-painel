@@ -1,10 +1,12 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  schemas  = ["public", "sismat"]
 }
 
 // Auth.js standard entities
@@ -31,6 +33,7 @@ model User {
 
   @@index([organizationId])
   @@index([email])
+  @@schema("public")
 }
 
 model Account {
@@ -51,6 +54,7 @@ model Account {
 
   @@unique([provider, providerAccountId])
   @@index([userId])
+  @@schema("public")
 }
 
 model Session {
@@ -61,6 +65,7 @@ model Session {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@schema("public")
 }
 
 model VerificationToken {
@@ -69,6 +74,7 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+  @@schema("public")
 }
 
 // Backoffice entities
@@ -76,6 +82,8 @@ enum UserRole {
   ADMIN
   MANAGER
   OPERATOR
+
+  @@schema("public")
 }
 
 model Organization {
@@ -90,6 +98,7 @@ model Organization {
   updatedAt DateTime  @updatedAt
 
   @@index([slug])
+  @@schema("public")
 }
 
 model Role {
@@ -101,6 +110,7 @@ model Role {
   updatedAt   DateTime     @updatedAt
 
   @@unique([name])
+  @@schema("public")
 }
 
 model Permission {
@@ -111,6 +121,7 @@ model Permission {
 
   @@unique([action, roleId])
   @@index([roleId])
+  @@schema("public")
 }
 
 // DJUD-specific entities
@@ -118,6 +129,8 @@ enum FormaCumprimento {
   AQUISICAO_DJUD
   DEPOSITO_JUDICIAL
   ENTREGA_CEAF
+
+  @@schema("public")
 }
 
 model Demanda {
@@ -184,6 +197,7 @@ model Demanda {
   @@index([regiaoBrasil])
   @@index([fornecedor])
   @@index([deletedAt])
+  @@schema("public")
 }
 
 model Attachment {
@@ -200,6 +214,7 @@ model Attachment {
 
   @@index([demandaId])
   @@index([uploadedById])
+  @@schema("public")
 }
 
 model DataSource {
@@ -216,6 +231,7 @@ model DataSource {
 
   @@index([status])
   @@index([sha256])
+  @@schema("public")
 }
 
 model UserView {
@@ -227,6 +243,7 @@ model UserView {
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@schema("public")
 }
 
 model AuditLog {
@@ -244,4 +261,47 @@ model AuditLog {
   @@index([action])
   @@index([entity])
   @@index([createdAt])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SISMAT — entradas de material (compras/estoque) importadas do SISMAT_entradas.csv
+// Vive em schema Postgres dedicado "sismat", separado do "public" (Redmine/app).
+// É um espelho fiel da base: TODAS as movimentações são importadas cruas; o recorte
+// de "gastos" (só aquisições) é aplicado na camada de consulta, não aqui.
+// ─────────────────────────────────────────────────────────────────────────────
+model SismatEntrada {
+  id                  String    @id @default(cuid())
+
+  siafi               Int?      // Código SIAFI da unidade (ex: 309, 336)
+  material            String    // Material bruto: "0860921 - VENETOCLAX 100MG COMPRIMIDO"
+  materialNome        String?   // Nome normalizado (princípio ativo): "VENETOCLAX"
+  dtArmazenamento     DateTime? // Dt. Armaz.
+  dtValidade          DateTime? // Dt. Validade
+  progSaude           String?   // Prog Saúde (ex: "DEMANDA JUDICIAL - Aquisi")
+  unidade             String?   // Unid (COMP., FR., etc)
+  quantidade          Float?    // Quantidade
+  valorUnitario       Decimal?  // Valor Unitário (formato inglês no CSV: ponto decimal)
+  valorTotal          Decimal?  // Valor Total — base para os gráficos de gasto
+  nLote               String?   // N Lote
+  fornecedor          String?   // Fornecedor
+  contrato            String?   // Contrato
+  empenhoDoc          String?   // Empenho/Doc
+  dtRecebimento       DateTime? // Dt. Recebimento — dirige a série temporal do dashboard
+  notaFiscalDoc       String?   // Nota Fiscal/Doc
+  statusArmazenamento String?   // Status Armazenamento (ex: "ARMAZENADO")
+  numeroOrdem         String?   // Nº de Ordem
+  distribuidor        String?   // Distribuidor
+  fabricante          String?   // Fabricante
+  tipoMovimentacao    String?   // Tipo de Movimentação (ENTRADA ORÇAMENTÁRIA, EXTRA-ORÇ. / AQUISIÇÃO, etc)
+
+  criadoEm            DateTime  @default(now())
+
+  @@index([fornecedor])
+  @@index([fabricante])
+  @@index([distribuidor])
+  @@index([materialNome])
+  @@index([tipoMovimentacao])
+  @@index([dtRecebimento])
+  @@schema("sismat")
 }

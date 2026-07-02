@@ -17,6 +17,7 @@ import { TribunalTimelineChart } from "@/components/dashboard/charts/tribunal-ti
 import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/charts/valor-timeline-chart";
 import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
 import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
+import { SismatDashboard } from "@/components/dashboard/sismat-dashboard";
 import { useMetrics } from "@/hooks/useMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
 import { Combobox } from "@/components/ui/combobox";
@@ -40,6 +41,7 @@ import {
   Coins,
   Landmark,
   Building2,
+  Database,
 } from "lucide-react";
 
 const selectCn =
@@ -98,6 +100,9 @@ export default function DashboardPage() {
   // Filtro por princípio ativo: seleção direta de um item da lista (sem busca por texto livre)
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
+  // Fonte de dados ativa: base do Redmine (processo/jurídico) ou do SISMAT (compras/estoque)
+  const [source, setSource] = useState<"redmine" | "sismat">("redmine");
+
   // Lista de princípios ativos disponíveis (limpa, ordenada por frequência) para o combobox
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
   const principioOptions = (principios ?? []).map((p) => ({
@@ -125,7 +130,7 @@ export default function DashboardPage() {
     setFilterPrincipioAtivo("");
   };
 
-  if (error) {
+  if (error && source === "redmine") {
     return (
       <div className="space-y-8">
         <PageHeader
@@ -158,6 +163,41 @@ export default function DashboardPage() {
         description="Dimensionamento, tendência e gestão de riscos das demandas judiciais de medicamentos — Ministério da Saúde"
       />
 
+      {/* ── Fonte de dados: alterna entre a base do Redmine e a do SISMAT ────── */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-muted-foreground mr-1">Fonte de dados:</span>
+        <div className="inline-flex rounded-lg border border-border bg-card p-1">
+          <button
+            onClick={() => setSource("redmine")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              source === "redmine"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Scale className="h-3.5 w-3.5" />
+            Redmine
+          </button>
+          <button
+            onClick={() => setSource("sismat")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              source === "sismat"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Database className="h-3.5 w-3.5" />
+            SISMAT
+          </button>
+        </div>
+      </div>
+
+      {/* ── SISMAT: dashboard de gastos (fornecedores/fabricantes) ──────────── */}
+      {source === "sismat" && <SismatDashboard />}
+
+      {/* ── Redmine: painel de inteligência das demandas judiciais ─────────── */}
+      {source === "redmine" && (
+      <>
       {/* ── Filtros ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-4 items-end bg-card border border-border rounded-xl p-4 shadow-sm">
         <div className="flex flex-col gap-1.5">
@@ -505,6 +545,8 @@ export default function DashboardPage() {
             </TabsContent>
           </Tabs>
         </div>
+      )}
+      </>
       )}
     </div>
   );
