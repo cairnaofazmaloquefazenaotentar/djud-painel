@@ -305,3 +305,43 @@ model SismatEntrada {
   @@index([dtRecebimento])
   @@schema("sismat")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SISMAT — saídas de material (entregas/baixas) importadas de
+// "Demanda_Judicial_-_Saidas.xlsx". Espelho fiel: TODAS as linhas são
+// importadas cruas (inclui devoluções); o recorte de "saídas efetivas"
+// (Programa Saúde = Aquisição) é aplicado na camada de consulta.
+// Granularidade temporal: MENSAL ("Mês e Ano Baixa" não tem dia; dtBaixa
+// recebe o 1º dia do mês, em UTC).
+// ─────────────────────────────────────────────────────────────────────────────
+model SismatSaida {
+  id                 String    @id @default(cuid())
+
+  material           String    // Material bruto: "ABEMACICLIBE  50MG - COMPRIMIDO" (sem código prefixo)
+  materialCodigo     String?   // Código BR/CATMAT (coluna sem cabeçalho B, quando presente)
+  materialNome       String?   // Nome normalizado (princípio ativo): "ABEMACICLIBE" — chave de cruzamento com entradas
+  progSaude          String?   // "DEMANDA JUDICIAL - Aquisição" | "DEMANDA JUDICIAL - Devolução"
+  fornecedor         String?   // Fornecedor
+  destinatario       String?   // Entidade/Destinatário (autor da ação + nº SEI)
+  destinatarioCodigo String?   // Código do destinatário (coluna sem cabeçalho F)
+  esfera             String?   // Esfera Administrativa (FEDERAL, PARTICULAR, ESTADUAL, …)
+  ufNome             String?   // UF por extenso ("SAO PAULO")
+  uf                 String?   // Sigla da UF ("SP"; "NI" = não informado)
+  tipoDestinatario   String?   // Tipo Entidade/Destinatário (AUTARQUIA, ENTIDADE PRIVADA, …)
+  mesAnoBaixa        String?   // Valor original ("MAI 2025") — preservado para auditoria
+  dtBaixa            DateTime? // 1º dia do mês da baixa (UTC) — dirige as séries temporais
+  qtdEntregue        Float?    // Qtd Entregue
+  qtdPedido          Float?    // Qtd Pedido
+  valorItem          Decimal?  // Vlr Item Saída (unitário)
+  valorTotal         Decimal?  // Valor Total Saída — base dos gráficos
+
+  criadoEm           DateTime  @default(now())
+
+  @@index([fornecedor])
+  @@index([materialNome])
+  @@index([uf])
+  @@index([tipoDestinatario])
+  @@index([progSaude])
+  @@index([dtBaixa])
+  @@schema("sismat")
+}

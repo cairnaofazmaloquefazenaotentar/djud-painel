@@ -11,7 +11,8 @@
     "tokens:check": "tsx design-system/generate-css.ts --check",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "import:sismat": "tsx scripts/import-sismat-entradas.ts"
+    "import:sismat": "tsx scripts/import-sismat-entradas.ts",
+    "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.2",
