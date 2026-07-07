@@ -39,4 +39,9 @@ export const SISMAT_COLORS = [
 export const SISMAT_GRAY = "#8b98a5";
 export const SISMAT_OUTROS = "#3a4450";
 
+/** Cores do fluxo Entradas × Saídas (aba Estoque). */
+export const SISMAT_ENTRADA_COLOR = "#4dabf7"; // azul (entrou no estoque)
+export const SISMAT_SAIDA_COLOR = "#ff922b"; // laranja (saiu do estoque)
+export const SISMAT_SALDO_COLOR = "#51cf66"; // verde (saldo derivado)
+
 export const colorAt = (i: number): string => SISMAT_COLORS[i % SISMAT_COLORS.length];

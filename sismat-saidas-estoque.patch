@@ -1,0 +1,1877 @@
+diff --git a/app/api/sismat/estoque/route.ts b/app/api/sismat/estoque/route.ts
+new file mode 100644
+index 0000000..98cfd0d
+--- /dev/null
++++ b/app/api/sismat/estoque/route.ts
+@@ -0,0 +1,30 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
++import { getSismatEstoqueMetrics } from "@/lib/sismat-estoque-metrics";
++import { NextRequest, NextResponse } from "next/server";
++
++export async function GET(request: NextRequest) {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const perRaw = request.nextUrl.searchParams.get("period") ?? "monthly";
++    const period: SismatPeriodo = (SISMAT_PERIODOS as readonly string[]).includes(perRaw)
++      ? (perRaw as SismatPeriodo)
++      : "monthly";
++
++    const data = await getSismatEstoqueMetrics(period);
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" },
++    });
++  } catch (error) {
++    console.error("[sismat/estoque] Erro:", error);
++    const message = error instanceof Error ? error.message : "Erro ao obter métricas de estoque SISMAT";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/app/api/sismat/saidas/metrics/route.ts b/app/api/sismat/saidas/metrics/route.ts
+new file mode 100644
+index 0000000..60dd247
+--- /dev/null
++++ b/app/api/sismat/saidas/metrics/route.ts
+@@ -0,0 +1,40 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
++import {
++  getSismatSaidasMetrics,
++  SISMAT_SAIDA_DIMENSOES,
++  type SismatSaidaDimensao,
++} from "@/lib/sismat-saidas-metrics";
++import { NextRequest, NextResponse } from "next/server";
++
++export async function GET(request: NextRequest) {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const sp = request.nextUrl.searchParams;
++    const dimRaw = sp.get("dimension") ?? "material";
++    const perRaw = sp.get("period") ?? "monthly";
++
++    const dimension: SismatSaidaDimensao = (SISMAT_SAIDA_DIMENSOES as readonly string[]).includes(dimRaw)
++      ? (dimRaw as SismatSaidaDimensao)
++      : "material";
++    const period: SismatPeriodo = (SISMAT_PERIODOS as readonly string[]).includes(perRaw)
++      ? (perRaw as SismatPeriodo)
++      : "monthly";
++
++    const data = await getSismatSaidasMetrics(dimension, period);
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" },
++    });
++  } catch (error) {
++    console.error("[sismat/saidas/metrics] Erro:", error);
++    const message = error instanceof Error ? error.message : "Erro ao obter métricas de saídas SISMAT";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/components/dashboard/charts/sismat-flux-chart.tsx b/components/dashboard/charts/sismat-flux-chart.tsx
+new file mode 100644
+index 0000000..49dad32
+--- /dev/null
++++ b/components/dashboard/charts/sismat-flux-chart.tsx
+@@ -0,0 +1,122 @@
++"use client";
++
++import {
++  BarChart,
++  Bar,
++  XAxis,
++  YAxis,
++  CartesianGrid,
++  Tooltip,
++  Legend,
++  ResponsiveContainer,
++} from "recharts";
++import { motion } from "framer-motion";
++import {
++  fmtBRL,
++  fmtBRLCompact,
++  SISMAT_ENTRADA_COLOR,
++  SISMAT_SAIDA_COLOR,
++} from "./sismat-format";
++
++export interface SismatFluxDatum {
++  period: string;
++  entradas: number;
++  saidas: number;
++}
++
++interface SismatFluxChartProps {
++  data: SismatFluxDatum[];
++  periodType: "monthly" | "yearly";
++}
++
++function periodLabel(p: string, type: "monthly" | "yearly"): string {
++  if (type === "yearly") return p;
++  const [y, m] = p.split("-");
++  if (!m) return p;
++  const d = new Date(Number(y), Number(m) - 1, 1);
++  return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
++}
++
++type TooltipEntry = { value?: number; name?: string; color?: string };
++
++function FluxTooltip({
++  active,
++  payload,
++  label,
++}: {
++  active?: boolean;
++  payload?: TooltipEntry[];
++  label?: string;
++}) {
++  if (!active || !payload?.length) return null;
++  const e = payload.find((p) => p.name === "Entradas")?.value ?? 0;
++  const s = payload.find((p) => p.name === "Saídas")?.value ?? 0;
++  return (
++    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
++      <p className="font-semibold text-foreground mb-1">{label}</p>
++      <p className="flex justify-between gap-4" style={{ color: SISMAT_ENTRADA_COLOR }}>
++        <span>Entradas</span>
++        <span className="font-medium tabular-nums">{fmtBRL(e)}</span>
++      </p>
++      <p className="flex justify-between gap-4" style={{ color: SISMAT_SAIDA_COLOR }}>
++        <span>Saídas</span>
++        <span className="font-medium tabular-nums">{fmtBRL(s)}</span>
++      </p>
++      <p className="flex justify-between gap-4 text-muted-foreground border-t border-border mt-1 pt-1">
++        <span>Saldo do período</span>
++        <span className="font-medium tabular-nums">{fmtBRL(e - s)}</span>
++      </p>
++    </div>
++  );
++}
++
++export function SismatFluxChart({ data, periodType }: SismatFluxChartProps) {
++  if (!data.length) {
++    return (
++      <div className="flex items-center justify-center h-[340px] text-sm text-muted-foreground">
++        Sem dados para o fluxo Entradas × Saídas.
++      </div>
++    );
++  }
++
++  const chartData = data.map((d) => ({
++    ...d,
++    __label: periodLabel(d.period, periodType),
++  }));
++
++  return (
++    <motion.div
++      initial={{ opacity: 0, y: 16 }}
++      animate={{ opacity: 1, y: 0 }}
++      transition={{ duration: 0.4 }}
++      className="w-full"
++    >
++      <ResponsiveContainer width="100%" height={340}>
++        <BarChart data={chartData} margin={{ top: 16, right: 24, left: 12, bottom: 24 }} barGap={2}>
++          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} vertical={false} />
++          <XAxis
++            dataKey="__label"
++            angle={periodType === "monthly" ? -45 : 0}
++            textAnchor={periodType === "monthly" ? "end" : "middle"}
++            height={periodType === "monthly" ? 56 : 30}
++            interval="preserveStartEnd"
++            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
++            axisLine={{ stroke: "hsl(var(--border))" }}
++            tickLine={{ stroke: "hsl(var(--border))" }}
++          />
++          <YAxis
++            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
++            tickFormatter={(v: number) => fmtBRLCompact(v)}
++            width={72}
++            axisLine={{ stroke: "hsl(var(--border))" }}
++            tickLine={{ stroke: "hsl(var(--border))" }}
++          />
++          <Tooltip content={<FluxTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
++          <Legend wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
++          <Bar dataKey="entradas" name="Entradas" fill={SISMAT_ENTRADA_COLOR} radius={[3, 3, 0, 0]} isAnimationActive={false} />
++          <Bar dataKey="saidas" name="Saídas" fill={SISMAT_SAIDA_COLOR} radius={[3, 3, 0, 0]} isAnimationActive={false} />
++        </BarChart>
++      </ResponsiveContainer>
++    </motion.div>
++  );
++}
+diff --git a/components/dashboard/charts/sismat-format.ts b/components/dashboard/charts/sismat-format.ts
+index 4fd8854..9ead2c6 100644
+--- a/components/dashboard/charts/sismat-format.ts
++++ b/components/dashboard/charts/sismat-format.ts
+@@ -39,4 +39,9 @@ export const SISMAT_COLORS = [
+ export const SISMAT_GRAY = "#8b98a5";
+ export const SISMAT_OUTROS = "#3a4450";
+ 
++/** Cores do fluxo Entradas × Saídas (aba Estoque). */
++export const SISMAT_ENTRADA_COLOR = "#4dabf7"; // azul (entrou no estoque)
++export const SISMAT_SAIDA_COLOR = "#ff922b"; // laranja (saiu do estoque)
++export const SISMAT_SALDO_COLOR = "#51cf66"; // verde (saldo derivado)
++
+ export const colorAt = (i: number): string => SISMAT_COLORS[i % SISMAT_COLORS.length];
+diff --git a/components/dashboard/charts/sismat-saldo-chart.tsx b/components/dashboard/charts/sismat-saldo-chart.tsx
+new file mode 100644
+index 0000000..a31a95c
+--- /dev/null
++++ b/components/dashboard/charts/sismat-saldo-chart.tsx
+@@ -0,0 +1,112 @@
++"use client";
++
++import {
++  AreaChart,
++  Area,
++  XAxis,
++  YAxis,
++  CartesianGrid,
++  Tooltip,
++  ReferenceLine,
++  ResponsiveContainer,
++} from "recharts";
++import { motion } from "framer-motion";
++import { fmtBRL, fmtBRLCompact, SISMAT_SALDO_COLOR, SISMAT_GRAY } from "./sismat-format";
++
++export interface SismatSaldoDatum {
++  period: string; // "YYYY-MM"
++  saldoAcumulado: number;
++}
++
++interface SismatSaldoChartProps {
++  data: SismatSaldoDatum[];
++}
++
++function periodLabel(p: string): string {
++  const [y, m] = p.split("-");
++  if (!m) return p;
++  const d = new Date(Number(y), Number(m) - 1, 1);
++  return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
++}
++
++function SaldoTooltip({
++  active,
++  payload,
++  label,
++}: {
++  active?: boolean;
++  payload?: Array<{ value?: number }>;
++  label?: string;
++}) {
++  if (!active || !payload?.length) return null;
++  return (
++    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
++      <p className="font-semibold text-foreground">{label}</p>
++      <p className="text-muted-foreground tabular-nums">
++        Saldo acumulado: <span className="font-medium text-foreground">{fmtBRL(payload[0].value ?? 0)}</span>
++      </p>
++    </div>
++  );
++}
++
++export function SismatSaldoChart({ data }: SismatSaldoChartProps) {
++  if (!data.length) {
++    return (
++      <div className="flex items-center justify-center h-[300px] text-sm text-muted-foreground">
++        Sem dados para a evolução do saldo.
++      </div>
++    );
++  }
++
++  const chartData = data.map((d) => ({ ...d, __label: periodLabel(d.period) }));
++
++  return (
++    <motion.div
++      initial={{ opacity: 0, y: 16 }}
++      animate={{ opacity: 1, y: 0 }}
++      transition={{ duration: 0.4 }}
++      className="w-full"
++    >
++      <ResponsiveContainer width="100%" height={300}>
++        <AreaChart data={chartData} margin={{ top: 12, right: 24, left: 12, bottom: 40 }}>
++          <defs>
++            <linearGradient id="sismatSaldoFill" x1="0" y1="0" x2="0" y2="1">
++              <stop offset="0%" stopColor={SISMAT_SALDO_COLOR} stopOpacity={0.35} />
++              <stop offset="100%" stopColor={SISMAT_SALDO_COLOR} stopOpacity={0.02} />
++            </linearGradient>
++          </defs>
++          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} vertical={false} />
++          <XAxis
++            dataKey="__label"
++            angle={-45}
++            textAnchor="end"
++            height={54}
++            interval="preserveStartEnd"
++            minTickGap={24}
++            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
++            axisLine={{ stroke: "hsl(var(--border))" }}
++            tickLine={{ stroke: "hsl(var(--border))" }}
++          />
++          <YAxis
++            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
++            tickFormatter={(v: number) => fmtBRLCompact(v)}
++            width={78}
++            axisLine={{ stroke: "hsl(var(--border))" }}
++            tickLine={{ stroke: "hsl(var(--border))" }}
++          />
++          <Tooltip content={<SaldoTooltip />} />
++          <ReferenceLine y={0} stroke={SISMAT_GRAY} strokeDasharray="4 4" />
++          <Area
++            type="monotone"
++            dataKey="saldoAcumulado"
++            stroke={SISMAT_SALDO_COLOR}
++            strokeWidth={2}
++            fill="url(#sismatSaldoFill)"
++            dot={false}
++            isAnimationActive={false}
++          />
++        </AreaChart>
++      </ResponsiveContainer>
++    </motion.div>
++  );
++}
+diff --git a/components/dashboard/sismat-dashboard.tsx b/components/dashboard/sismat-dashboard.tsx
+index 33fb8c1..6bd684c 100644
+--- a/components/dashboard/sismat-dashboard.tsx
++++ b/components/dashboard/sismat-dashboard.tsx
+@@ -5,8 +5,10 @@ import { useSismatMetrics } from "@/hooks/useSismatMetrics";
+ import type { SismatDimensao, SismatPeriodo } from "@/lib/sismat-metrics";
+ import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
+ import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
+-import { fmtBRL, colorAt } from "./charts/sismat-format";
++import { fmtBRL, colorAt, SISMAT_ENTRADA_COLOR, SISMAT_SAIDA_COLOR } from "./charts/sismat-format";
+ import { MetricCard } from "./metric-card";
++import { SismatSaidasView } from "./sismat-saidas-view";
++import { SismatEstoqueView } from "./sismat-estoque-view";
+ import { Combobox } from "@/components/ui/combobox";
+ import { Button } from "@/components/ui/button";
+ import {
+@@ -21,6 +23,9 @@ import {
+   Loader2,
+   AlertTriangle,
+   ArrowUpDown,
++  ArrowDownToLine,
++  ArrowUpFromLine,
++  ArrowLeftRight,
+ } from "lucide-react";
+ 
+ // ── Constantes de UI (client-safe: não importa valores da lib server) ─────────
+@@ -75,7 +80,7 @@ function Panel({
+ 
+ // ── Componente principal ──────────────────────────────────────────────────────
+ 
+-export function SismatDashboard() {
++function SismatEntradasView() {
+   const [dimension, setDimension] = useState<SismatDimensao>("fornecedor");
+   const [period, setPeriod] = useState<SismatPeriodo>("monthly");
+   const [topN, setTopN] = useState(8);
+@@ -423,3 +428,108 @@ export function SismatDashboard() {
+     </div>
+   );
+ }
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Wrapper do SISMAT: os checkboxes [Entradas] [Saídas] controlam quais seções
++// aparecem (cada base tem seu conjunto próprio de gráficos). Os gráficos
++// COMPARATIVOS entre as duas bases (fluxo E×S, saldo derivado acumulado e
++// saldo por material) ficam SEMPRE ao final da página, independentemente da
++// seleção — são o cruzamento inspirado no Relatório de Logística da CGLJUD.
++// ─────────────────────────────────────────────────────────────────────────────
++
++function SectionHeader({
++  icon,
++  title,
++  subtitle,
++}: {
++  icon: ReactNode;
++  title: string;
++  subtitle: string;
++}) {
++  return (
++    <div className="flex items-center gap-3 pt-2">
++      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
++        {icon}
++      </span>
++      <div>
++        <h2 className="text-lg font-semibold leading-tight">{title}</h2>
++        <p className="text-xs text-muted-foreground">{subtitle}</p>
++      </div>
++    </div>
++  );
++}
++
++export function SismatDashboard() {
++  const [showEntradas, setShowEntradas] = useState(true);
++  const [showSaidas, setShowSaidas] = useState(true);
++
++  return (
++    <div className="space-y-6">
++      {/* ── Seleção de bases ─────────────────────────────────────────────── */}
++      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 bg-card border border-border rounded-xl p-4 shadow-sm">
++        <span className="text-xs text-muted-foreground">Bases exibidas</span>
++        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
++          <input
++            type="checkbox"
++            checked={showEntradas}
++            onChange={(e) => setShowEntradas(e.target.checked)}
++            className="h-4 w-4 accent-primary cursor-pointer"
++          />
++          <ArrowDownToLine className="h-4 w-4" style={{ color: SISMAT_ENTRADA_COLOR }} />
++          Entradas
++        </label>
++        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
++          <input
++            type="checkbox"
++            checked={showSaidas}
++            onChange={(e) => setShowSaidas(e.target.checked)}
++            className="h-4 w-4 accent-primary cursor-pointer"
++          />
++          <ArrowUpFromLine className="h-4 w-4" style={{ color: SISMAT_SAIDA_COLOR }} />
++          Saídas
++        </label>
++      </div>
++
++      {!showEntradas && !showSaidas && (
++        <p className="text-sm text-muted-foreground px-1">
++          Nenhuma base selecionada — marque Entradas e/ou Saídas acima. O comparativo entre as duas
++          permanece disponível abaixo.
++        </p>
++      )}
++
++      {/* ── Seção Entradas ───────────────────────────────────────────────── */}
++      {showEntradas && (
++        <section className="space-y-4">
++          <SectionHeader
++            icon={<ArrowDownToLine className="h-4 w-4" />}
++            title="Entradas"
++            subtitle="Aquisições de material recebidas (SISMAT)"
++          />
++          <SismatEntradasView />
++        </section>
++      )}
++
++      {/* ── Seção Saídas ─────────────────────────────────────────────────── */}
++      {showSaidas && (
++        <section className="space-y-4">
++          <SectionHeader
++            icon={<ArrowUpFromLine className="h-4 w-4" />}
++            title="Saídas"
++            subtitle="Entregas/baixas de material aos destinatários (SISMAT)"
++          />
++          <SismatSaidasView />
++        </section>
++      )}
++
++      {/* ── Comparativo E×S — sempre ao final da página ──────────────────── */}
++      <section className="space-y-4">
++        <SectionHeader
++          icon={<ArrowLeftRight className="h-4 w-4" />}
++          title="Entradas × Saídas"
++          subtitle="Comparativo entre as duas bases: fluxo por período, saldo derivado acumulado e saldo por material"
++        />
++        <SismatEstoqueView />
++      </section>
++    </div>
++  );
++}
+diff --git a/components/dashboard/sismat-estoque-view.tsx b/components/dashboard/sismat-estoque-view.tsx
+new file mode 100644
+index 0000000..7f4e3bc
+--- /dev/null
++++ b/components/dashboard/sismat-estoque-view.tsx
+@@ -0,0 +1,277 @@
++"use client";
++
++import { useMemo, useState } from "react";
++import { useSismatEstoque } from "@/hooks/useSismatEstoque";
++import type { SismatPeriodo } from "@/lib/sismat-metrics";
++import { SismatFluxChart } from "./charts/sismat-flux-chart";
++import { SismatSaldoChart } from "./charts/sismat-saldo-chart";
++import {
++  fmtBRL,
++  SISMAT_ENTRADA_COLOR,
++  SISMAT_SAIDA_COLOR,
++  SISMAT_SALDO_COLOR,
++} from "./charts/sismat-format";
++import { MetricCard } from "./metric-card";
++import { Panel, selectCn } from "./sismat-shared";
++import { Button } from "@/components/ui/button";
++import {
++  ArrowDownToLine,
++  ArrowUpFromLine,
++  Wallet,
++  Boxes,
++  TrendingUp,
++  BarChart3,
++  Loader2,
++  AlertTriangle,
++  ArrowUpDown,
++  Info,
++} from "lucide-react";
++
++const PERIODOS: { value: SismatPeriodo; label: string }[] = [
++  { value: "monthly", label: "Mensal" },
++  { value: "yearly", label: "Anual" },
++];
++
++type SortField = "nome" | "entradas" | "saidas" | "saldo";
++
++export function SismatEstoqueView() {
++  const [period, setPeriod] = useState<SismatPeriodo>("monthly");
++  const [year, setYear] = useState("");
++  const [sortField, setSortField] = useState<SortField>("saldo");
++  const [sortDir, setSortDir] = useState<1 | -1>(-1);
++
++  const { data, isLoading, error } = useSismatEstoque(period);
++
++  const view = useMemo(() => {
++    if (!data) return null;
++
++    // Fluxo exibido: filtro de ano (client-side) só faz sentido no mensal
++    const fy = year && period === "monthly" ? year : null;
++    const fluxoExibido = fy ? data.fluxo.filter((f) => f.period.startsWith(fy)) : data.fluxo;
++
++    // Saldo derivado acumulado ao longo de TODOS os períodos disponíveis
++    let acc = 0;
++    const saldoAcumulado = data.fluxo.map((f) => {
++      acc += f.entradas - f.saidas;
++      return { period: f.period, saldoAcumulado: acc };
++    });
++
++    return { fluxoExibido, saldoAcumulado };
++  }, [data, year, period]);
++
++  const ranking = useMemo(() => {
++    if (!data) return [];
++    const dir = sortDir;
++    return [...data.porMaterial].sort((a, b) => {
++      if (sortField === "nome") return dir * a.nome.localeCompare(b.nome, "pt-BR");
++      return dir * (a[sortField] - b[sortField]);
++    });
++  }, [data, sortField, sortDir]);
++
++  function toggleSort(field: SortField) {
++    if (sortField === field) setSortDir((d) => (d === 1 ? -1 : 1));
++    else {
++      setSortField(field);
++      setSortDir(field === "nome" ? 1 : -1);
++    }
++  }
++
++  if (isLoading) {
++    return (
++      <div className="flex justify-center py-16">
++        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
++      </div>
++    );
++  }
++
++  if (error) {
++    return (
++      <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-2">
++        <div className="flex items-center gap-2 text-destructive">
++          <AlertTriangle className="h-4 w-4" />
++          <span className="font-medium text-sm">Erro ao carregar o cruzamento Entradas × Saídas</span>
++        </div>
++        <p className="text-xs text-muted-foreground">
++          {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
++        </p>
++      </div>
++    );
++  }
++
++  if (!data || !view || !data.hasData) {
++    return (
++      <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
++        <Boxes className="h-8 w-8 mx-auto text-muted-foreground" />
++        <p className="text-sm font-medium">Sem dados para o cruzamento Entradas × Saídas</p>
++        <p className="text-xs text-muted-foreground">
++          Importe as duas bases: <code>import:sismat</code> (entradas) e <code>import:sismat-saidas</code> (saídas).
++        </p>
++      </div>
++    );
++  }
++
++  const maxAbs = Math.max(...ranking.map((r) => Math.abs(r.saldo)), 1);
++
++  return (
++    <div className="space-y-6">
++      {/* ── Controles ──────────────────────────────────────────────────────── */}
++      <div className="flex flex-wrap items-end gap-4 bg-card border border-border rounded-xl p-4 shadow-sm">
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">Período</span>
++          <div className="flex gap-1">
++            {PERIODOS.map((p) => (
++              <Button
++                key={p.value}
++                size="sm"
++                variant={period === p.value ? "default" : "outline"}
++                onClick={() => {
++                  setPeriod(p.value);
++                  if (p.value === "yearly") setYear("");
++                }}
++              >
++                {p.label}
++              </Button>
++            ))}
++          </div>
++        </div>
++
++        {period === "monthly" && (
++          <div className="flex flex-col gap-1.5">
++            <span className="text-xs text-muted-foreground">Ano (fluxo mensal)</span>
++            <select className={selectCn} value={year} onChange={(e) => setYear(e.target.value)}>
++              <option value="">Todos os anos</option>
++              {data.years.map((y) => (
++                <option key={y} value={y}>
++                  {y}
++                </option>
++              ))}
++            </select>
++          </div>
++        )}
++      </div>
++
++      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
++        <MetricCard
++          label="Total de entradas"
++          value={fmtBRL(data.totalEntradas)}
++          icon={<ArrowDownToLine className="h-5 w-5" />}
++          description="Aquisições (todo o período)"
++        />
++        <MetricCard
++          label="Total de saídas"
++          value={fmtBRL(data.totalSaidas)}
++          icon={<ArrowUpFromLine className="h-5 w-5" />}
++          description="Entregas (todo o período)"
++        />
++        <MetricCard
++          label="Saldo derivado (E − S)"
++          value={fmtBRL(data.saldo)}
++          icon={<Wallet className="h-5 w-5" />}
++          description="Diferença dos extratos"
++        />
++        <MetricCard
++          label="Materiais com saldo positivo"
++          value={data.materiaisComSaldoPositivo}
++          icon={<Boxes className="h-5 w-5" />}
++          description={`De ${data.porMaterial.length} materiais cruzados`}
++        />
++      </div>
++
++      {/* ── Fluxo E×S ──────────────────────────────────────────────────────── */}
++      <Panel
++        icon={<BarChart3 className="h-4 w-4" />}
++        title={`Entradas e saídas por ${period === "monthly" ? "mês" : "ano"}`}
++        subtitle={`Aquisições recebidas vs. entregas realizadas${year && period === "monthly" ? ` — ano ${year}` : ""}`}
++      >
++        <SismatFluxChart data={view.fluxoExibido} periodType={period} />
++      </Panel>
++
++      {/* ── Saldo acumulado + Ranking por material ─────────────────────────── */}
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
++        <Panel
++          icon={<TrendingUp className="h-4 w-4" />}
++          title="Evolução do saldo derivado acumulado"
++          subtitle={`Acumulado de (entradas − saídas) ${period === "monthly" ? "mês a mês" : "ano a ano"}, todo o período`}
++        >
++          <SismatSaldoChart data={view.saldoAcumulado} />
++          <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
++            <Info className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
++            <span>
++              Saldo <strong>derivado</strong> dos dois extratos disponíveis — não é o estoque contábil do
++              SISMAT. O estoque anterior a 2018 não consta nas entradas e a valoração de saída pode diferir
++              da de entrada, por isso o acumulado pode ficar negativo.
++            </span>
++          </p>
++        </Panel>
++
++        <Panel
++          icon={<Boxes className="h-4 w-4" />}
++          title="Saldo derivado por material"
++          subtitle={`Entradas, saídas e saldo por princípio ativo · ${data.porMaterial.length} materiais`}
++        >
++          <div className="max-h-[360px] overflow-y-auto pr-1">
++            <table className="w-full text-sm">
++              <thead className="sticky top-0 bg-card z-10">
++                <tr className="border-b border-border text-xs text-muted-foreground">
++                  <th className="text-left py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("nome")}>
++                      Material <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                  <th className="text-right py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("entradas")}>
++                      Entradas <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                  <th className="text-right py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("saidas")}>
++                      Saídas <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                  <th className="text-right py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("saldo")}>
++                      Saldo <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                </tr>
++              </thead>
++              <tbody>
++                {ranking.map((r) => (
++                  <tr key={r.nome} className="border-b border-border/50">
++                    <td className="py-2 pr-2 max-w-[180px]">
++                      <span className="truncate block" title={r.nome}>
++                        {r.nome}
++                      </span>
++                      <div className="h-1 mt-1 rounded bg-muted overflow-hidden">
++                        <div
++                          className="h-full rounded"
++                          style={{
++                            width: `${(Math.abs(r.saldo) / maxAbs) * 100}%`,
++                            backgroundColor: r.saldo >= 0 ? SISMAT_SALDO_COLOR : SISMAT_SAIDA_COLOR,
++                          }}
++                        />
++                      </div>
++                    </td>
++                    <td className="py-2 text-right tabular-nums whitespace-nowrap" style={{ color: SISMAT_ENTRADA_COLOR }}>
++                      {fmtBRL(r.entradas)}
++                    </td>
++                    <td className="py-2 text-right tabular-nums whitespace-nowrap" style={{ color: SISMAT_SAIDA_COLOR }}>
++                      {fmtBRL(r.saidas)}
++                    </td>
++                    <td
++                      className="py-2 text-right tabular-nums whitespace-nowrap font-medium"
++                      style={{ color: r.saldo >= 0 ? SISMAT_SALDO_COLOR : SISMAT_SAIDA_COLOR }}
++                    >
++                      {fmtBRL(r.saldo)}
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        </Panel>
++      </div>
++    </div>
++  );
++}
+diff --git a/components/dashboard/sismat-saidas-view.tsx b/components/dashboard/sismat-saidas-view.tsx
+new file mode 100644
+index 0000000..01e6691
+--- /dev/null
++++ b/components/dashboard/sismat-saidas-view.tsx
+@@ -0,0 +1,386 @@
++"use client";
++
++import { useMemo, useState, type ReactNode } from "react";
++import { useSismatSaidasMetrics } from "@/hooks/useSismatSaidasMetrics";
++import type { SismatPeriodo } from "@/lib/sismat-metrics";
++import type { SismatSaidaDimensao } from "@/lib/sismat-saidas-metrics";
++import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
++import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
++import { fmtBRL, colorAt } from "./charts/sismat-format";
++import { MetricCard } from "./metric-card";
++import { Panel, selectCn } from "./sismat-shared";
++import { Combobox } from "@/components/ui/combobox";
++import { Button } from "@/components/ui/button";
++import {
++  PackageOpen,
++  Building2,
++  Pill,
++  MapPin,
++  Landmark,
++  TrendingUp,
++  Calendar,
++  Trophy,
++  Loader2,
++  AlertTriangle,
++  ArrowUpDown,
++  Coins,
++} from "lucide-react";
++
++// ── Constantes de UI ──────────────────────────────────────────────────────────
++
++const DIMENSOES: { value: SismatSaidaDimensao; label: string; icon: ReactNode }[] = [
++  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
++  { value: "fornecedor", label: "Fornecedor", icon: <Building2 className="h-3.5 w-3.5" /> },
++  { value: "uf", label: "UF", icon: <MapPin className="h-3.5 w-3.5" /> },
++  { value: "tipoDestinatario", label: "Tipo destinatário", icon: <Landmark className="h-3.5 w-3.5" /> },
++];
++const DIM_LABEL: Record<SismatSaidaDimensao, string> = {
++  material: "Material",
++  fornecedor: "Fornecedor",
++  uf: "UF",
++  tipoDestinatario: "Tipo de destinatário",
++};
++const DIM_PLURAL: Record<SismatSaidaDimensao, string> = {
++  material: "Materiais ativos",
++  fornecedor: "Fornecedores ativos",
++  uf: "UFs atendidas",
++  tipoDestinatario: "Tipos de destinatário",
++};
++const PERIODOS: { value: SismatPeriodo; label: string }[] = [
++  { value: "monthly", label: "Mensal" },
++  { value: "yearly", label: "Anual" },
++];
++const TOP_N_OPCOES = [4, 8, 10, 15];
++
++// ── Componente ────────────────────────────────────────────────────────────────
++
++export function SismatSaidasView() {
++  const [dimension, setDimension] = useState<SismatSaidaDimensao>("material");
++  const [period, setPeriod] = useState<SismatPeriodo>("monthly");
++  const [topN, setTopN] = useState(8);
++  const [entity, setEntity] = useState("");
++  const [year, setYear] = useState("");
++  const [sortField, setSortField] = useState<"name" | "valor">("valor");
++  const [sortDir, setSortDir] = useState<1 | -1>(-1);
++
++  const { data, isLoading, error } = useSismatSaidasMetrics(dimension, period);
++
++  const view = useMemo(() => {
++    if (!data) return null;
++    const { series, totalsByPeriod, years, grandTotal, hasData } = data;
++
++    const yearOf = (p: string) => Number(period === "monthly" ? p.slice(0, 4) : p);
++    const fy = year ? Number(year) : null;
++
++    const periods = totalsByPeriod
++      .map((t) => t.period)
++      .sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
++    const totalByPeriod: Record<string, number> = {};
++    totalsByPeriod.forEach((t) => (totalByPeriod[t.period] = t.valor));
++
++    const aggregateByEntity = (filterYear: number | null) => {
++      const m = new Map<string, number>();
++      for (const s of series) {
++        if (filterYear && yearOf(s.period) !== filterYear) continue;
++        m.set(s.key, (m.get(s.key) ?? 0) + s.valor);
++      }
++      return m;
++    };
++
++    const totalsAll = aggregateByEntity(null);
++    const entityOptions = Array.from(totalsAll.entries())
++      .sort((a, b) => b[1] - a[1])
++      .map(([k]) => ({ value: k }));
++
++    const totalsFiltered = aggregateByEntity(fy);
++    const rankingSorted = Array.from(totalsFiltered.entries())
++      .sort((a, b) => b[1] - a[1])
++      .map(([name, valor]) => ({ name, valor }));
++    const grandFiltered = rankingSorted.reduce((s, r) => s + r.valor, 0);
++    const tableRows = rankingSorted.map((r) => ({
++      ...r,
++      pct: grandFiltered ? (r.valor / grandFiltered) * 100 : 0,
++    }));
++
++    const top10 = rankingSorted.slice(0, 10);
++    const outrosSum = rankingSorted.slice(10).reduce((s, r) => s + r.valor, 0);
++    const pieData: SismatPieDatum[] = top10.map((r) => ({ name: r.name, valor: r.valor }));
++    if (outrosSum > 0) pieData.push({ name: "Outros", valor: outrosSum, isOutros: true });
++
++    const entitiesToShow = entity
++      ? [entity]
++      : Array.from(totalsAll.entries())
++          .sort((a, b) => b[1] - a[1])
++          .slice(0, topN)
++          .map(([k]) => k);
++    const byEntity: Record<string, Record<string, number>> = {};
++    entitiesToShow.forEach((e) => (byEntity[e] = {}));
++    for (const s of series) {
++      if (byEntity[s.key]) byEntity[s.key][s.period] = (byEntity[s.key][s.period] ?? 0) + s.valor;
++    }
++    const evoData = periods.map((p) => {
++      const row: Record<string, string | number> = { period: p };
++      entitiesToShow.forEach((e) => (row[e] = byEntity[e][p] ?? 0));
++      row[SISMAT_TOTAL_KEY] = totalByPeriod[p] ?? 0;
++      return row;
++    });
++
++    const totalGeral = fy
++      ? totalsByPeriod.filter((t) => yearOf(t.period) === fy).reduce((s, t) => s + t.valor, 0)
++      : grandTotal;
++    const periodLabel = fy
++      ? `Ano ${fy}`
++      : years.length
++        ? `${years[0]} – ${years[years.length - 1]}`
++        : "—";
++
++    return {
++      hasData,
++      years,
++      evoData,
++      entitiesToShow,
++      entityOptions,
++      tableRows,
++      pieData,
++      grandFiltered,
++      totalGeral,
++      nEntities: totalsFiltered.size,
++      periodLabel,
++      maiorItem: rankingSorted[0]?.name ?? "—",
++    };
++  }, [data, period, topN, entity, year]);
++
++  const dimLabel = DIM_LABEL[dimension];
++
++  const tableRowsSorted = useMemo(() => {
++    if (!view) return [];
++    return [...view.tableRows].sort((a, b) =>
++      sortField === "name" ? sortDir * a.name.localeCompare(b.name, "pt-BR") : sortDir * (a.valor - b.valor)
++    );
++  }, [view, sortField, sortDir]);
++
++  function toggleSort(field: "name" | "valor") {
++    if (sortField === field) setSortDir((d) => (d === 1 ? -1 : 1));
++    else {
++      setSortField(field);
++      setSortDir(field === "name" ? 1 : -1);
++    }
++  }
++
++  if (isLoading) {
++    return (
++      <div className="flex justify-center py-16">
++        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
++      </div>
++    );
++  }
++
++  if (error) {
++    return (
++      <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-2">
++        <div className="flex items-center gap-2 text-destructive">
++          <AlertTriangle className="h-4 w-4" />
++          <span className="font-medium text-sm">Erro ao carregar as saídas do SISMAT</span>
++        </div>
++        <p className="text-xs text-muted-foreground">
++          {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
++        </p>
++      </div>
++    );
++  }
++
++  if (!view || !view.hasData) {
++    return (
++      <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
++        <PackageOpen className="h-8 w-8 mx-auto text-muted-foreground" />
++        <p className="text-sm font-medium">Nenhuma saída do SISMAT encontrada</p>
++        <p className="text-xs text-muted-foreground">
++          Rode a importação: <code>npx tsx scripts/import-sismat-saidas.ts --truncate --confirm</code> após
++          aplicar o schema com <code>prisma db push</code>.
++        </p>
++      </div>
++    );
++  }
++
++  const maxTabela = Math.max(...tableRowsSorted.map((r) => r.valor), 1);
++
++  return (
++    <div className="space-y-6">
++      {/* ── Controles ──────────────────────────────────────────────────────── */}
++      <div className="flex flex-wrap items-end gap-4 bg-card border border-border rounded-xl p-4 shadow-sm">
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">Dimensão</span>
++          <div className="flex flex-wrap gap-1">
++            {DIMENSOES.map((d) => (
++              <Button
++                key={d.value}
++                size="sm"
++                variant={dimension === d.value ? "default" : "outline"}
++                onClick={() => {
++                  setDimension(d.value);
++                  setEntity("");
++                }}
++              >
++                {d.icon}
++                <span className="ml-1.5">{d.label}</span>
++              </Button>
++            ))}
++          </div>
++        </div>
++
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">Período</span>
++          <div className="flex gap-1">
++            {PERIODOS.map((p) => (
++              <Button
++                key={p.value}
++                size="sm"
++                variant={period === p.value ? "default" : "outline"}
++                onClick={() => setPeriod(p.value)}
++              >
++                {p.label}
++              </Button>
++            ))}
++          </div>
++        </div>
++
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">Top N (evolução)</span>
++          <select
++            className={selectCn}
++            value={topN}
++            onChange={(e) => setTopN(Number(e.target.value))}
++            disabled={!!entity}
++          >
++            {TOP_N_OPCOES.map((n) => (
++              <option key={n} value={n}>
++                Top {n}
++              </option>
++            ))}
++          </select>
++        </div>
++
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">{dimLabel} específico</span>
++          <Combobox
++            value={entity}
++            onChange={setEntity}
++            options={view.entityOptions}
++            placeholder="(Top N automático)"
++            searchPlaceholder={`Buscar ${dimLabel.toLowerCase()}...`}
++            allLabel="(Top N automático)"
++            emptyText="Nenhum item encontrado."
++            className="w-60"
++          />
++        </div>
++
++        <div className="flex flex-col gap-1.5">
++          <span className="text-xs text-muted-foreground">Ano (ranking/pizza)</span>
++          <select className={selectCn} value={year} onChange={(e) => setYear(e.target.value)}>
++            <option value="">Todos os anos</option>
++            {view.years.map((y) => (
++              <option key={y} value={y}>
++                {y}
++              </option>
++            ))}
++          </select>
++        </div>
++      </div>
++
++      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
++        <MetricCard label="Saídas totais" value={fmtBRL(view.totalGeral)} icon={<PackageOpen className="h-5 w-5" />} />
++        <MetricCard
++          label={DIM_PLURAL[dimension]}
++          value={view.nEntities}
++          icon={<Building2 className="h-5 w-5" />}
++          description={`Distintos${year ? ` em ${year}` : ""}`}
++        />
++        <MetricCard label="Período coberto" value={view.periodLabel} icon={<Calendar className="h-5 w-5" />} />
++        <MetricCard
++          label="Maior item"
++          value={view.maiorItem.length > 22 ? view.maiorItem.slice(0, 21) + "…" : view.maiorItem}
++          icon={<Trophy className="h-5 w-5" />}
++          description={`Por ${dimLabel.toLowerCase()}`}
++        />
++      </div>
++
++      {/* ── Evolução ───────────────────────────────────────────────────────── */}
++      <Panel
++        icon={<TrendingUp className="h-4 w-4" />}
++        title={`Evolução ${period === "monthly" ? "mensal" : "anual"} das saídas por ${dimLabel.toLowerCase()}`}
++        subtitle={
++          entity
++            ? `Série de "${entity}" vs. total geral (linha tracejada)`
++            : `Top ${topN} por valor + total geral (linha tracejada) · somente entregas (devoluções excluídas)`
++        }
++      >
++        <SismatEvolutionChart data={view.evoData} entities={view.entitiesToShow} periodType={period} />
++      </Panel>
++
++      {/* ── Ranking + Pizza ────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
++        <Panel
++          icon={<Coins className="h-4 w-4" />}
++          title={`Ranking por ${dimLabel.toLowerCase()}`}
++          subtitle={`Valor total de saída${year ? ` — ano ${year}` : ""} · ${view.tableRows.length} itens`}
++        >
++          <div className="max-h-[360px] overflow-y-auto pr-1">
++            <table className="w-full text-sm">
++              <thead className="sticky top-0 bg-card">
++                <tr className="border-b border-border text-xs text-muted-foreground">
++                  <th className="text-left py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("name")}>
++                      {dimLabel} <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                  <th className="text-right py-2 font-medium">
++                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("valor")}>
++                      Valor <ArrowUpDown className="h-3 w-3" />
++                    </button>
++                  </th>
++                  <th className="text-right py-2 font-medium w-14">%</th>
++                </tr>
++              </thead>
++              <tbody>
++                {tableRowsSorted.map((r, i) => (
++                  <tr key={r.name} className="border-b border-border/50">
++                    <td className="py-2 pr-2">
++                      <div className="flex items-center gap-2 min-w-0">
++                        <span
++                          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
++                          style={{ backgroundColor: colorAt(i) }}
++                        />
++                        <span className="truncate" title={r.name}>
++                          {r.name}
++                        </span>
++                      </div>
++                    </td>
++                    <td className="py-2 text-right tabular-nums whitespace-nowrap">
++                      <div>{fmtBRL(r.valor)}</div>
++                      <div className="h-1 mt-1 rounded bg-muted overflow-hidden">
++                        <div
++                          className="h-full rounded"
++                          style={{ width: `${(r.valor / maxTabela) * 100}%`, backgroundColor: colorAt(i) }}
++                        />
++                      </div>
++                    </td>
++                    <td className="py-2 text-right tabular-nums text-muted-foreground">{r.pct.toFixed(1)}%</td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        </Panel>
++
++        <Panel
++          icon={<Coins className="h-4 w-4" />}
++          title="Distribuição (Top 10)"
++          subtitle={`Participação nas saídas${year ? ` — ano ${year}` : ""}`}
++        >
++          <SismatPieChart data={view.pieData} grandTotal={view.grandFiltered} />
++        </Panel>
++      </div>
++    </div>
++  );
++}
+diff --git a/components/dashboard/sismat-shared.tsx b/components/dashboard/sismat-shared.tsx
+new file mode 100644
+index 0000000..4b4395b
+--- /dev/null
++++ b/components/dashboard/sismat-shared.tsx
+@@ -0,0 +1,33 @@
++"use client";
++
++import type { ReactNode } from "react";
++
++/** Classe padrão dos <select> nativos do painel (mesma do dashboard Redmine). */
++export const selectCn =
++  "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
++
++/** Painel com título/ícone/subtítulo — mesmo visual das Sections do dashboard. */
++export function Panel({
++  icon,
++  title,
++  subtitle,
++  children,
++}: {
++  icon: ReactNode;
++  title: string;
++  subtitle?: string;
++  children: ReactNode;
++}) {
++  return (
++    <div className="rounded-lg border border-border bg-card p-6">
++      <div className="flex items-start gap-2 mb-1">
++        <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>
++        <div>
++          <h3 className="text-base font-semibold leading-tight">{title}</h3>
++          {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
++        </div>
++      </div>
++      <div className="mt-4">{children}</div>
++    </div>
++  );
++}
+diff --git a/hooks/useSismatEstoque.ts b/hooks/useSismatEstoque.ts
+new file mode 100644
+index 0000000..609e472
+--- /dev/null
++++ b/hooks/useSismatEstoque.ts
+@@ -0,0 +1,23 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { SismatPeriodo } from "@/lib/sismat-metrics";
++import type { SismatEstoqueData } from "@/lib/sismat-estoque-metrics";
++
++/**
++ * Carrega o cruzamento Entradas × Saídas (fluxo por período + saldo por material).
++ */
++export function useSismatEstoque(period: SismatPeriodo) {
++  return useQuery<SismatEstoqueData>({
++    queryKey: ["sismat-estoque", period],
++    queryFn: async () => {
++      const res = await fetch(`/api/sismat/estoque?period=${period}`);
++      if (!res.ok) {
++        throw new Error("Erro ao carregar métricas de estoque SISMAT");
++      }
++      return res.json();
++    },
++    staleTime: 60 * 60 * 1000,
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
+diff --git a/hooks/useSismatSaidasMetrics.ts b/hooks/useSismatSaidasMetrics.ts
+new file mode 100644
+index 0000000..4870483
+--- /dev/null
++++ b/hooks/useSismatSaidasMetrics.ts
+@@ -0,0 +1,25 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { SismatPeriodo } from "@/lib/sismat-metrics";
++import type { SismatSaidasMetricsData, SismatSaidaDimensao } from "@/lib/sismat-saidas-metrics";
++
++/**
++ * Carrega as métricas de saídas SISMAT para uma (dimensão × período).
++ * Cache longo (1h): base de referência, muda pouco.
++ */
++export function useSismatSaidasMetrics(dimension: SismatSaidaDimensao, period: SismatPeriodo) {
++  return useQuery<SismatSaidasMetricsData>({
++    queryKey: ["sismat-saidas-metrics", dimension, period],
++    queryFn: async () => {
++      const params = new URLSearchParams({ dimension, period });
++      const res = await fetch(`/api/sismat/saidas/metrics?${params.toString()}`);
++      if (!res.ok) {
++        throw new Error("Erro ao carregar métricas de saídas SISMAT");
++      }
++      return res.json();
++    },
++    staleTime: 60 * 60 * 1000,
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
+diff --git a/lib/sismat-estoque-metrics.ts b/lib/sismat-estoque-metrics.ts
+new file mode 100644
+index 0000000..5fdd0ed
+--- /dev/null
++++ b/lib/sismat-estoque-metrics.ts
+@@ -0,0 +1,125 @@
++import { db } from "@/lib/db";
++import { TIPOS_AQUISICAO, type SismatPeriodo } from "@/lib/sismat-metrics";
++import { PROG_SAIDA_AQUISICAO } from "@/lib/sismat-saidas-metrics";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Métricas cruzadas Entradas × Saídas (inspirado no Relatório de Logística da
++// CGLJUD): fluxo por período, saldo derivado acumulado e saldo por material.
++//
++// Recortes coerentes nos dois lados:
++//   • Entradas: Tipo de Movimentação ∈ (ENTRADA ORÇAMENTÁRIA, EXTRA-ORÇ. / AQUISIÇÃO)
++//   • Saídas:   Programa Saúde = "DEMANDA JUDICIAL - Aquisição"
++//
++// IMPORTANTE — leitura honesta do "saldo": é um SALDO DERIVADO dos dois
++// extratos disponíveis (entradas − saídas do período coberto), NÃO o estoque
++// contábil oficial do SISMAT. O estoque anterior a 2018 não está no extrato de
++// entradas, e a valoração de saída pode diferir da de entrada — por isso o
++// saldo global pode inclusive ser negativo. A chave de cruzamento por material
++// é materialNome (normalizado); ela cobre ~97,6% do valor das saídas.
++// ─────────────────────────────────────────────────────────────────────────────
++
++export interface SismatFluxoPoint {
++  period: string; // "YYYY-MM" ou "YYYY"
++  entradas: number;
++  saidas: number;
++}
++
++export interface SismatSaldoMaterial {
++  nome: string;
++  entradas: number;
++  saidas: number;
++  saldo: number;
++}
++
++export interface SismatEstoqueData {
++  period: SismatPeriodo;
++  /** Fluxo por período (união dos períodos das duas bases), ordenado cronologicamente. */
++  fluxo: SismatFluxoPoint[];
++  /** Entradas/saídas/saldo agregados por materialNome (ordenado por saldo desc). */
++  porMaterial: SismatSaldoMaterial[];
++  years: number[];
++  totalEntradas: number;
++  totalSaidas: number;
++  /** totalEntradas − totalSaidas (saldo derivado do período coberto). */
++  saldo: number;
++  /** Materiais com saldo derivado positivo. */
++  materiaisComSaldoPositivo: number;
++  hasData: boolean;
++}
++
++function periodKey(d: Date, period: SismatPeriodo): string {
++  const y = d.getUTCFullYear();
++  if (period === "yearly") return String(y);
++  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
++  return `${y}-${m}`;
++}
++
++export async function getSismatEstoqueMetrics(period: SismatPeriodo): Promise<SismatEstoqueData> {
++  const [entradas, saidas] = await Promise.all([
++    db.sismatEntrada.findMany({
++      where: { tipoMovimentacao: { in: [...TIPOS_AQUISICAO] }, dtRecebimento: { not: null } },
++      select: { dtRecebimento: true, valorTotal: true, materialNome: true },
++    }),
++    db.sismatSaida.findMany({
++      where: { progSaude: PROG_SAIDA_AQUISICAO, dtBaixa: { not: null } },
++      select: { dtBaixa: true, valorTotal: true, materialNome: true },
++    }),
++  ]);
++
++  const fluxoMap = new Map<string, { entradas: number; saidas: number }>();
++  const matMap = new Map<string, { entradas: number; saidas: number }>();
++  const yearsSet = new Set<number>();
++  let totalEntradas = 0;
++  let totalSaidas = 0;
++
++  const bump = (map: Map<string, { entradas: number; saidas: number }>, key: string, lado: "entradas" | "saidas", v: number) => {
++    const cur = map.get(key) ?? { entradas: 0, saidas: 0 };
++    cur[lado] += v;
++    map.set(key, cur);
++  };
++
++  for (const r of entradas) {
++    if (!r.dtRecebimento) continue;
++    const v = r.valorTotal == null ? 0 : Number(r.valorTotal);
++    totalEntradas += v;
++    yearsSet.add(r.dtRecebimento.getUTCFullYear());
++    bump(fluxoMap, periodKey(r.dtRecebimento, period), "entradas", v);
++    const nome = (r.materialNome ?? "").trim();
++    if (nome) bump(matMap, nome, "entradas", v);
++  }
++
++  for (const r of saidas) {
++    if (!r.dtBaixa) continue;
++    const v = r.valorTotal == null ? 0 : Number(r.valorTotal);
++    totalSaidas += v;
++    yearsSet.add(r.dtBaixa.getUTCFullYear());
++    bump(fluxoMap, periodKey(r.dtBaixa, period), "saidas", v);
++    const nome = (r.materialNome ?? "").trim();
++    if (nome) bump(matMap, nome, "saidas", v);
++  }
++
++  const fluxo: SismatFluxoPoint[] = Array.from(fluxoMap, ([p, v]) => ({
++    period: p,
++    entradas: v.entradas,
++    saidas: v.saidas,
++  })).sort((a, b) => a.period.localeCompare(b.period)); // "YYYY-MM"/"YYYY": ordem lexicográfica = cronológica
++
++  const porMaterial: SismatSaldoMaterial[] = Array.from(matMap, ([nome, v]) => ({
++    nome,
++    entradas: v.entradas,
++    saidas: v.saidas,
++    saldo: v.entradas - v.saidas,
++  })).sort((a, b) => b.saldo - a.saldo);
++
++  return {
++    period,
++    fluxo,
++    porMaterial,
++    years: Array.from(yearsSet).sort((a, b) => a - b),
++    totalEntradas,
++    totalSaidas,
++    saldo: totalEntradas - totalSaidas,
++    materiaisComSaldoPositivo: porMaterial.filter((m) => m.saldo > 0).length,
++    hasData: entradas.length > 0 || saidas.length > 0,
++  };
++}
+diff --git a/lib/sismat-saidas-metrics.ts b/lib/sismat-saidas-metrics.ts
+new file mode 100644
+index 0000000..6693a2e
+--- /dev/null
++++ b/lib/sismat-saidas-metrics.ts
+@@ -0,0 +1,111 @@
++import { db } from "@/lib/db";
++import type { SismatPeriodo, SismatSeriesPoint, SismatTotalPoint } from "@/lib/sismat-metrics";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Métricas do dashboard de Saídas SISMAT (entregas/baixas de material)
++//
++// Recorte de "saída efetiva": Programa Saúde = "DEMANDA JUDICIAL - Aquisição".
++// Devoluções (1.540 linhas, ~R$ 288 mi) têm valor mas não são entrega ao
++// destinatário — ficam fora, espelhando o recorte de aquisições das entradas.
++// A série temporal usa dtBaixa (granularidade MENSAL — a base não tem dia).
++// ─────────────────────────────────────────────────────────────────────────────
++
++export const SISMAT_SAIDA_DIMENSOES = ["material", "fornecedor", "uf", "tipoDestinatario"] as const;
++export type SismatSaidaDimensao = (typeof SISMAT_SAIDA_DIMENSOES)[number];
++
++/** Programa Saúde que caracteriza saída efetiva (entrega). */
++export const PROG_SAIDA_AQUISICAO = "DEMANDA JUDICIAL - Aquisição";
++
++export const SISMAT_SAIDA_DIM_LABELS: Record<SismatSaidaDimensao, string> = {
++  material: "Material",
++  fornecedor: "Fornecedor",
++  uf: "UF",
++  tipoDestinatario: "Tipo de destinatário",
++};
++
++export interface SismatSaidasMetricsData {
++  dimension: SismatSaidaDimensao;
++  period: SismatPeriodo;
++  series: SismatSeriesPoint[];
++  totalsByPeriod: SismatTotalPoint[];
++  years: number[];
++  grandTotal: number;
++  hasData: boolean;
++}
++
++const DIM_FIELD: Record<SismatSaidaDimensao, "materialNome" | "fornecedor" | "uf" | "tipoDestinatario"> = {
++  material: "materialNome",
++  fornecedor: "fornecedor",
++  uf: "uf",
++  tipoDestinatario: "tipoDestinatario",
++};
++
++function periodKey(d: Date, period: SismatPeriodo): string {
++  const y = d.getUTCFullYear();
++  if (period === "yearly") return String(y);
++  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
++  return `${y}-${m}`;
++}
++
++export async function getSismatSaidasMetrics(
++  dimension: SismatSaidaDimensao,
++  period: SismatPeriodo
++): Promise<SismatSaidasMetricsData> {
++  const field = DIM_FIELD[dimension];
++
++  const rows = await db.sismatSaida.findMany({
++    where: {
++      progSaude: PROG_SAIDA_AQUISICAO,
++      dtBaixa: { not: null },
++    },
++    select: {
++      dtBaixa: true,
++      valorTotal: true,
++      materialNome: true,
++      fornecedor: true,
++      uf: true,
++      tipoDestinatario: true,
++    },
++  });
++
++  const seriesMap = new Map<string, number>();
++  const totalMap = new Map<string, number>();
++  const yearsSet = new Set<number>();
++  let grandTotal = 0;
++
++  for (const r of rows) {
++    if (!r.dtBaixa) continue;
++    const val = r.valorTotal == null ? 0 : Number(r.valorTotal);
++    const pk = periodKey(r.dtBaixa, period);
++
++    yearsSet.add(r.dtBaixa.getUTCFullYear());
++    totalMap.set(pk, (totalMap.get(pk) ?? 0) + val);
++    grandTotal += val;
++
++    const key = (r[field] ?? "").toString().trim();
++    if (!key) continue;
++    const sk = `${pk}\u0000${key}`;
++    seriesMap.set(sk, (seriesMap.get(sk) ?? 0) + val);
++  }
++
++  const series: SismatSeriesPoint[] = [];
++  for (const [k, valor] of seriesMap) {
++    const sep = k.indexOf("\u0000");
++    series.push({ period: k.slice(0, sep), key: k.slice(sep + 1), valor });
++  }
++
++  const totalsByPeriod: SismatTotalPoint[] = Array.from(totalMap, ([p, valor]) => ({
++    period: p,
++    valor,
++  }));
++
++  return {
++    dimension,
++    period,
++    series,
++    totalsByPeriod,
++    years: Array.from(yearsSet).sort((a, b) => a - b),
++    grandTotal,
++    hasData: rows.length > 0,
++  };
++}
+diff --git a/package.json b/package.json
+index 1937596..ee50401 100644
+--- a/package.json
++++ b/package.json
+@@ -11,7 +11,8 @@
+     "tokens:check": "tsx design-system/generate-css.ts --check",
+     "db:push": "prisma db push",
+     "db:seed": "tsx prisma/seed.ts",
+-    "import:sismat": "tsx scripts/import-sismat-entradas.ts"
++    "import:sismat": "tsx scripts/import-sismat-entradas.ts",
++    "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts"
+   },
+   "dependencies": {
+     "@auth/prisma-adapter": "^2.11.2",
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index b80f222..9f81f3f 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -305,3 +305,43 @@ model SismatEntrada {
+   @@index([dtRecebimento])
+   @@schema("sismat")
+ }
++
++// ─────────────────────────────────────────────────────────────────────────────
++// SISMAT — saídas de material (entregas/baixas) importadas de
++// "Demanda_Judicial_-_Saidas.xlsx". Espelho fiel: TODAS as linhas são
++// importadas cruas (inclui devoluções); o recorte de "saídas efetivas"
++// (Programa Saúde = Aquisição) é aplicado na camada de consulta.
++// Granularidade temporal: MENSAL ("Mês e Ano Baixa" não tem dia; dtBaixa
++// recebe o 1º dia do mês, em UTC).
++// ─────────────────────────────────────────────────────────────────────────────
++model SismatSaida {
++  id                 String    @id @default(cuid())
++
++  material           String    // Material bruto: "ABEMACICLIBE  50MG - COMPRIMIDO" (sem código prefixo)
++  materialCodigo     String?   // Código BR/CATMAT (coluna sem cabeçalho B, quando presente)
++  materialNome       String?   // Nome normalizado (princípio ativo): "ABEMACICLIBE" — chave de cruzamento com entradas
++  progSaude          String?   // "DEMANDA JUDICIAL - Aquisição" | "DEMANDA JUDICIAL - Devolução"
++  fornecedor         String?   // Fornecedor
++  destinatario       String?   // Entidade/Destinatário (autor da ação + nº SEI)
++  destinatarioCodigo String?   // Código do destinatário (coluna sem cabeçalho F)
++  esfera             String?   // Esfera Administrativa (FEDERAL, PARTICULAR, ESTADUAL, …)
++  ufNome             String?   // UF por extenso ("SAO PAULO")
++  uf                 String?   // Sigla da UF ("SP"; "NI" = não informado)
++  tipoDestinatario   String?   // Tipo Entidade/Destinatário (AUTARQUIA, ENTIDADE PRIVADA, …)
++  mesAnoBaixa        String?   // Valor original ("MAI 2025") — preservado para auditoria
++  dtBaixa            DateTime? // 1º dia do mês da baixa (UTC) — dirige as séries temporais
++  qtdEntregue        Float?    // Qtd Entregue
++  qtdPedido          Float?    // Qtd Pedido
++  valorItem          Decimal?  // Vlr Item Saída (unitário)
++  valorTotal         Decimal?  // Valor Total Saída — base dos gráficos
++
++  criadoEm           DateTime  @default(now())
++
++  @@index([fornecedor])
++  @@index([materialNome])
++  @@index([uf])
++  @@index([tipoDestinatario])
++  @@index([progSaude])
++  @@index([dtBaixa])
++  @@schema("sismat")
++}
+diff --git a/scripts/import-sismat-saidas.ts b/scripts/import-sismat-saidas.ts
+new file mode 100644
+index 0000000..f6444ac
+--- /dev/null
++++ b/scripts/import-sismat-saidas.ts
+@@ -0,0 +1,301 @@
++#!/usr/bin/env node
++
++/**
++ * Script de Importação: Demanda_Judicial_-_Saidas.xlsx → schema "sismat" (tabela SismatSaida)
++ *
++ * Particularidades da base de SAÍDAS (diferentes do CSV de entradas!):
++ *   • Formato XLSX (SheetJS/xlsx, já devDependency) — valores numéricos vêm NATIVOS
++ *     do Excel (float), sem risco de locale. NÃO aplicar parsing pt-BR.
++ *   • 3 colunas SEM cabeçalho (B = código BR/CATMAT do material; F = código do
++ *     destinatário; I = sigla da UF) → mapeamento por ÍNDICE, não por nome.
++ *   • Data em texto pt-BR mensal: "MAI 2025" (sem dia) → dtBaixa = 1º dia do mês (UTC).
++ *   • Material SEM código prefixo ("ABEMACICLIBE  50MG - COMPRIMIDO"); a normalização
++ *     usa a MESMA regra das entradas (remove prefixo se houver + corta na dosagem)
++ *     para que materialNome seja chave de cruzamento entre as duas bases.
++ *
++ * Importa TODAS as linhas cruas (Aquisição + Devolução). O recorte de "saídas
++ * efetivas" (Programa Saúde = Aquisição) é aplicado na camada de consulta.
++ *
++ * Uso:
++ *   npx tsx scripts/import-sismat-saidas.ts --dry-run
++ *   npx tsx scripts/import-sismat-saidas.ts --limit=100
++ *   npx tsx scripts/import-sismat-saidas.ts --truncate --confirm
++ *   npx tsx scripts/import-sismat-saidas.ts --file=/caminho/Demanda_Judicial_-_Saidas.xlsx
++ *
++ * Fonte do arquivo: --file=... > env SISMAT_SAIDAS_XLSX > ./Demanda_Judicial_-_Saidas.xlsx
++ */
++
++import * as fs from "fs";
++import * as path from "path";
++import * as XLSX from "xlsx";
++
++// ── Flags / config ──────────────────────────────────────────────────────────
++
++const arg = (name: string): string | undefined =>
++  process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
++
++const DRY_RUN = process.argv.includes("--dry-run");
++const CONFIRM = process.argv.includes("--confirm");
++const TRUNCATE = process.argv.includes("--truncate");
++const LIMIT = parseInt(arg("limit") || "0", 10);
++const BATCH_SIZE = 500;
++
++const XLSX_PATH =
++  arg("file") ||
++  process.env.SISMAT_SAIDAS_XLSX ||
++  path.join(process.cwd(), "Demanda_Judicial_-_Saidas.xlsx");
++
++/** Recorte de "saída efetiva" — apenas para o resumo do dry-run (o filtro real vive nas métricas). */
++const PROG_AQUISICAO = "DEMANDA JUDICIAL - Aquisição";
++
++// ── Índices de coluna (a planilha tem 3 colunas SEM cabeçalho) ───────────────
++
++const COL = {
++  material: 0,
++  materialCodigo: 1, // sem cabeçalho (ex: "BR0345240")
++  progSaude: 2,
++  fornecedor: 3,
++  destinatario: 4,
++  destinatarioCodigo: 5, // sem cabeçalho (numérico)
++  esfera: 6,
++  ufNome: 7,
++  uf: 8, // sem cabeçalho (sigla; "NI" = não informado)
++  tipoDestinatario: 9,
++  mesAnoBaixa: 10,
++  qtdEntregue: 11,
++  qtdPedido: 12,
++  valorItem: 13,
++  valorTotal: 14,
++} as const;
++
++// ── Utilitários de parsing ───────────────────────────────────────────────────
++
++function sanitizeStr(value: unknown): string | null {
++  if (value === null || value === undefined) return null;
++  const s = String(value).replace(/\u200b/g, "").trim();
++  return s || null;
++}
++
++/** Número nativo do Excel (ou string com ponto decimal). NÃO aplica locale pt-BR. */
++function toNum(value: unknown): number | null {
++  if (value === null || value === undefined || value === "") return null;
++  if (typeof value === "number") return isNaN(value) ? null : value;
++  const s = String(value).trim();
++  if (!s || s.includes(",")) return null; // vírgula não é esperada — descarta por segurança
++  const n = parseFloat(s);
++  return isNaN(n) ? null : n;
++}
++
++const MESES_PT: Record<string, number> = {
++  JAN: 1, FEV: 2, MAR: 3, ABR: 4, MAI: 5, JUN: 6,
++  JUL: 7, AGO: 8, SET: 9, OUT: 10, NOV: 11, DEZ: 12,
++};
++
++/** "MAI 2025" → Date(2025-05-01 UTC). Formato inesperado → null. */
++function parseMesAnoPT(value: unknown): Date | null {
++  const s = sanitizeStr(value);
++  if (!s) return null;
++  const m = s.toUpperCase().match(/^([A-ZÇ]{3})[A-ZÇ]*\s*\/?\s*(\d{4})$/);
++  if (!m) return null;
++  const mes = MESES_PT[m[1]];
++  if (!mes) return null;
++  return new Date(Date.UTC(Number(m[2]), mes - 1, 1));
++}
++
++/**
++ * Normalização de material — MESMA regra das entradas (import-sismat-entradas.ts),
++ * garantindo que materialNome cruze entre as duas bases:
++ *   (1) remove "código - " inicial se houver (nas saídas normalmente não há);
++ *   (2) corta no primeiro token de dosagem (espaço seguido de dígito).
++ *   "ABEMACICLIBE  50MG - COMPRIMIDO" → "ABEMACICLIBE"
++ */
++function normalizeMaterial(raw: string): string {
++  let s = raw.replace(/^\s*\d+\s*-\s*/, "");
++  const m = s.match(/\s\d/);
++  if (m && m.index !== undefined) s = s.slice(0, m.index);
++  s = s.trim();
++  return s || raw.trim();
++}
++
++// ── Leitura + mapeamento ─────────────────────────────────────────────────────
++
++interface SaidaRow {
++  material: string;
++  materialCodigo: string | null;
++  materialNome: string | null;
++  progSaude: string | null;
++  fornecedor: string | null;
++  destinatario: string | null;
++  destinatarioCodigo: string | null;
++  esfera: string | null;
++  ufNome: string | null;
++  uf: string | null;
++  tipoDestinatario: string | null;
++  mesAnoBaixa: string | null;
++  dtBaixa: Date | null;
++  qtdEntregue: number | null;
++  qtdPedido: number | null;
++  valorItem: number | null;
++  valorTotal: number | null;
++}
++
++function readRows(): SaidaRow[] {
++  if (!fs.existsSync(XLSX_PATH)) {
++    console.error(`❌ Arquivo não encontrado: ${XLSX_PATH}`);
++    console.error(`   Use --file=/caminho/arquivo.xlsx ou defina SISMAT_SAIDAS_XLSX.`);
++    process.exit(1);
++  }
++
++  console.log("📖 Lendo XLSX...");
++  const wb = XLSX.readFile(XLSX_PATH);
++  const ws = wb.Sheets[wb.SheetNames[0]];
++  // header:1 → arrays crus (necessário: a planilha tem colunas sem cabeçalho)
++  const table = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null });
++
++  if (table.length < 2) {
++    console.error("❌ Planilha vazia ou sem linhas de dados.");
++    process.exit(1);
++  }
++
++  // Sanidade do cabeçalho: as colunas NOMEADAS devem estar onde esperamos
++  const header = (table[0] || []).map((h) => (h == null ? "" : String(h).trim()));
++  const esperado: Array<[number, string]> = [
++    [COL.material, "Material"],
++    [COL.progSaude, "Programa Saúde"],
++    [COL.fornecedor, "Fornecedor"],
++    [COL.mesAnoBaixa, "Mês e Ano Baixa"],
++    [COL.valorTotal, "Valor Total Saída"],
++  ];
++  const divergentes = esperado.filter(([i, nome]) => header[i] !== nome);
++  if (divergentes.length > 0) {
++    console.error("❌ Layout do XLSX diferente do esperado:");
++    divergentes.forEach(([i, nome]) =>
++      console.error(`   coluna ${i}: esperado "${nome}", encontrado "${header[i] ?? ""}"`)
++    );
++    console.error("   Verifique se o export do SISMAT mudou de estrutura.");
++    process.exit(1);
++  }
++
++  const out: SaidaRow[] = [];
++  let ignoradas = 0;
++  for (let r = 1; r < table.length; r++) {
++    const c = table[r] || [];
++    const materialRaw = sanitizeStr(c[COL.material]);
++    if (!materialRaw) {
++      ignoradas++;
++      continue;
++    }
++    const mesAno = sanitizeStr(c[COL.mesAnoBaixa]);
++    out.push({
++      material: materialRaw,
++      materialCodigo: sanitizeStr(c[COL.materialCodigo]),
++      materialNome: normalizeMaterial(materialRaw),
++      progSaude: sanitizeStr(c[COL.progSaude]),
++      fornecedor: sanitizeStr(c[COL.fornecedor]),
++      destinatario: sanitizeStr(c[COL.destinatario]),
++      destinatarioCodigo: sanitizeStr(c[COL.destinatarioCodigo]),
++      esfera: sanitizeStr(c[COL.esfera]),
++      ufNome: sanitizeStr(c[COL.ufNome]),
++      uf: sanitizeStr(c[COL.uf]),
++      tipoDestinatario: sanitizeStr(c[COL.tipoDestinatario]),
++      mesAnoBaixa: mesAno,
++      dtBaixa: parseMesAnoPT(mesAno),
++      qtdEntregue: toNum(c[COL.qtdEntregue]),
++      qtdPedido: toNum(c[COL.qtdPedido]),
++      valorItem: toNum(c[COL.valorItem]),
++      valorTotal: toNum(c[COL.valorTotal]),
++    });
++    if (LIMIT && out.length >= LIMIT) break;
++  }
++  if (ignoradas) console.log(`⚠️  ${ignoradas} linha(s) ignorada(s) por Material vazio.`);
++  return out;
++}
++
++function resumo(rows: SaidaRow[]) {
++  const brl = (v: number) =>
++    v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
++  const distintos = (key: keyof SaidaRow) => new Set(rows.map((r) => r[key]).filter(Boolean)).size;
++
++  const soma = (pred: (r: SaidaRow) => boolean) =>
++    rows.reduce((s, r) => s + (pred(r) ? r.valorTotal ?? 0 : 0), 0);
++
++  const aquisicao = rows.filter((r) => r.progSaude === PROG_AQUISICAO);
++  const comData = rows.filter((r) => r.dtBaixa).length;
++
++  console.log("\n📊 Resumo do parsing:");
++  console.log(`   Linhas válidas ............ ${rows.length}`);
++  console.log(`   Materiais (normalizados) .. ${distintos("materialNome")}`);
++  console.log(`   Fornecedores distintos .... ${distintos("fornecedor")}`);
++  console.log(`   UFs distintas ............. ${distintos("uf")}`);
++  console.log(`   Tipos de destinatário ..... ${distintos("tipoDestinatario")}`);
++  console.log(`   Com data de baixa ......... ${comData}`);
++  console.log(`   Valor Total (bruto) ....... ${brl(soma(() => true))}`);
++  console.log(`   Valor Total (Aquisição) ... ${brl(soma((r) => r.progSaude === PROG_AQUISICAO))}  ← saídas efetivas (${aquisicao.length} linhas)`);
++  console.log(`   Valor Total (Devolução) ... ${brl(soma((r) => r.progSaude !== PROG_AQUISICAO))}`);
++  const a = rows[0];
++  if (a) {
++    console.log("\n🔎 Amostra (1ª linha):");
++    console.log(`   material: ${a.material}`);
++    console.log(`   materialNome: ${a.materialNome} | codigo: ${a.materialCodigo}`);
++    console.log(`   mesAnoBaixa: ${a.mesAnoBaixa} → dtBaixa: ${a.dtBaixa?.toISOString().slice(0, 10)}`);
++    console.log(`   uf: ${a.uf} | tipoDestinatario: ${a.tipoDestinatario}`);
++    console.log(`   valorItem: ${a.valorItem} | valorTotal: ${a.valorTotal}`);
++  }
++}
++
++// ── Main ─────────────────────────────────────────────────────────────────────
++
++async function main() {
++  console.log("🚀 Importador SISMAT (Saídas) → schema sismat.SismatSaida");
++  console.log(`📄 Arquivo: ${XLSX_PATH}`);
++  console.log(
++    `🔧 Modo: ${DRY_RUN ? "DRY_RUN" : LIMIT ? `LIMIT ${LIMIT}` : "FULL"}${TRUNCATE ? " + TRUNCATE" : ""}\n`
++  );
++
++  const rows = readRows();
++  resumo(rows);
++
++  if (DRY_RUN) {
++    console.log("\n✅ DRY_RUN concluído — nenhum dado gravado.");
++    return;
++  }
++
++  if (!LIMIT && !CONFIRM) {
++    console.log(
++      "\n⛔ Importação completa requer --confirm (ou use --limit=N para testar).\n" +
++        "   Ex.: npx tsx scripts/import-sismat-saidas.ts --truncate --confirm"
++    );
++    return;
++  }
++
++  const { PrismaClient } = await import("@prisma/client");
++  const db = new PrismaClient({ log: ["error"] });
++
++  try {
++    if (TRUNCATE) {
++      console.log("\n🧹 Limpando tabela sismat.SismatSaida...");
++      const del = await db.sismatSaida.deleteMany({});
++      console.log(`   ${del.count} registro(s) removido(s).`);
++    }
++
++    console.log(`\n💾 Inserindo ${rows.length} registro(s) em lotes de ${BATCH_SIZE}...`);
++    let inseridos = 0;
++    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
++      const lote = rows.slice(i, i + BATCH_SIZE);
++      const res = await db.sismatSaida.createMany({ data: lote });
++      inseridos += res.count;
++      process.stdout.write(`\r   ${inseridos}/${rows.length}`);
++    }
++    console.log(`\n✅ Importação concluída: ${inseridos} registro(s).`);
++  } catch (err) {
++    console.error("\n❌ Erro na importação:", err);
++    process.exitCode = 1;
++  } finally {
++    await db.$disconnect();
++  }
++}
++
++main().catch((e) => {
++  console.error(e);
++  process.exit(1);
++});
