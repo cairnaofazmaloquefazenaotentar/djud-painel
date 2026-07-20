@@ -345,3 +345,32 @@ model SismatSaida {
   @@index([dtBaixa])
   @@schema("sismat")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComprasGov — preços praticados em compras públicas de medicamentos
+// (base histórica 2018–2025 extraída de "dashboard_ComprasGov_Jud.html").
+// Cada linha é UMA compra: medicamento × unidade de fornecimento, com esfera
+// administrativa, modalidade de compra, marcador Judicial/Não Judicial, data,
+// quantidade, valor total e preço unitário. Alimenta a aba "Preços" do painel
+// (comparativo dos preços praticados — compras judiciais vs. administrativas).
+// ─────────────────────────────────────────────────────────────────────────────
+model ComprasGovPreco {
+  id            Int      @id      // id do registro na base de origem (estável — usado p/ ocultar outliers)
+
+  material      String            // Medicamento (ex: "VENETOCLAX")
+  unidade       String            // Unidade de fornecimento (ex: "COMPRIMIDO", "FRASCO 5 ML")
+  esfera        String            // Esfera Unid Participante: Federal | Estadual | Municipal
+  modalidade    String            // Modalidade: Pregão | Dispensa de Licitação | Inexigibilidade de Licitação
+  judicial      String            // "Judicial" | "Não Judicial"
+  dtCompra      DateTime          // Data da compra (UTC, meia-noite)
+  quantidade    Float             // Quantidade adquirida
+  valorTotal    Decimal           // Valor total da compra (R$)
+  precoUnitario Decimal           // Preço unitário praticado (R$) — eixo Y do gráfico
+
+  criadoEm      DateTime @default(now())
+
+  @@index([material, unidade])
+  @@index([dtCompra])
+  @@index([judicial])
+  @@schema("sismat")
+}

@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
 import { Badge } from "@/components/ui/badge";
 import {
   ChevronsUpDown,
+  Coins,
   FileClock,
   LayoutDashboard,
   LogOut,
@@ -86,6 +87,12 @@ const primaryNav = [
     href: "/demandas",
     icon: FileText,
     description: "Gestão de demandas",
+  },
+  {
+    label: "Preços",
+    href: "/precos",
+    icon: Coins,
+    description: "Preços praticados de medicamentos",
   },
 ];
 
