@@ -1,0 +1,1326 @@
+diff --git a/app/(auth)/precos/page.tsx b/app/(auth)/precos/page.tsx
+new file mode 100644
+index 0000000..09e000b
+--- /dev/null
++++ b/app/(auth)/precos/page.tsx
+@@ -0,0 +1,16 @@
++"use client";
++
++import { PageHeader } from "@/components/layout/page-header";
++import { PrecosView } from "@/components/dashboard/precos-view";
++
++export default function PrecosPage() {
++  return (
++    <div className="space-y-8">
++      <PageHeader
++        title="Preços de Medicamentos"
++        description="Comparativo dos preços praticados em compras públicas (base ComprasGov 2018–2025) — compras judiciais vs. administrativas, por medicamento e unidade de fornecimento"
++      />
++      <PrecosView />
++    </div>
++  );
++}
+diff --git a/app/api/precos/overview/route.ts b/app/api/precos/overview/route.ts
+new file mode 100644
+index 0000000..933350e
+--- /dev/null
++++ b/app/api/precos/overview/route.ts
+@@ -0,0 +1,24 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { getPrecosOverview } from "@/lib/precos-metrics";
++import { NextResponse } from "next/server";
++
++export async function GET() {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const data = await getPrecosOverview();
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base histórica de referência muda pouco
++    });
++  } catch (error) {
++    console.error("[precos/overview] Erro:", error);
++    const message = error instanceof Error ? error.message : "Erro ao obter visão geral de preços";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/app/api/precos/serie/route.ts b/app/api/precos/serie/route.ts
+new file mode 100644
+index 0000000..a950ab9
+--- /dev/null
++++ b/app/api/precos/serie/route.ts
+@@ -0,0 +1,35 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { getPrecosSerie } from "@/lib/precos-metrics";
++import { NextRequest, NextResponse } from "next/server";
++
++export async function GET(request: NextRequest) {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const sp = request.nextUrl.searchParams;
++    const material = (sp.get("material") ?? "").trim();
++    const unidade = (sp.get("unidade") ?? "").trim();
++
++    if (!material || !unidade) {
++      return NextResponse.json(
++        { error: "Parâmetros obrigatórios: material e unidade" },
++        { status: 400 }
++      );
++    }
++
++    const data = await getPrecosSerie(material, unidade);
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base histórica de referência muda pouco
++    });
++  } catch (error) {
++    console.error("[precos/serie] Erro:", error);
++    const message = error instanceof Error ? error.message : "Erro ao obter série de preços";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/components/dashboard/charts/precos-scatter-chart.tsx b/components/dashboard/charts/precos-scatter-chart.tsx
+new file mode 100644
+index 0000000..6552e93
+--- /dev/null
++++ b/components/dashboard/charts/precos-scatter-chart.tsx
+@@ -0,0 +1,227 @@
++"use client";
++
++import { useMemo } from "react";
++import {
++  ScatterChart,
++  Scatter,
++  XAxis,
++  YAxis,
++  CartesianGrid,
++  Tooltip,
++  ResponsiveContainer,
++} from "recharts";
++import { motion } from "framer-motion";
++import type { PrecoPonto } from "@/lib/precos-metrics";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Dispersão de preços praticados: cada ponto é UMA compra (x = data,
++// y = preço unitário). Cor = categoria (esfera OU modalidade); formato do
++// marcador = Judicial/Não Judicial. Clicar em um ponto o oculta (outlier).
++// Reproduz o comportamento do dashboard ComprasGov original, em Recharts.
++// ─────────────────────────────────────────────────────────────────────────────
++
++/** Paleta das categorias (mesma ordem/cores do dashboard de origem). */
++export const PRECOS_PALETTE = [
++  "#2563eb",
++  "#dc2626",
++  "#16a34a",
++  "#d97706",
++  "#7c3aed",
++  "#db2777",
++  "#0891b2",
++  "#ea580c",
++  "#65a30d",
++  "#c026d3",
++] as const;
++
++/** Formato do marcador por valor de "Judicial" (e o glifo da legenda). */
++const JUDICIAL_SHAPES: Record<string, "circle" | "square" | "diamond"> = {
++  Judicial: "circle",
++  "Não Judicial": "square",
++};
++export const JUDICIAL_GLYPHS: Record<string, string> = {
++  Judicial: "●",
++  "Não Judicial": "■",
++};
++const shapeFor = (j: string) => JUDICIAL_SHAPES[j] ?? "diamond";
++export const glyphFor = (j: string) => JUDICIAL_GLYPHS[j] ?? "◆";
++
++/** R$ com até 4 casas — preços unitários pequenos (ex: R$ 0,0329) precisam delas. */
++export function fmtPreco(v: number): string {
++  return v.toLocaleString("pt-BR", {
++    style: "currency",
++    currency: "BRL",
++    minimumFractionDigits: 2,
++    maximumFractionDigits: 4,
++  });
++}
++
++/** R$ compacto para o eixo Y (mil/mi quando grande, decimais quando pequeno). */
++function fmtPrecoEixo(v: number): string {
++  const abs = Math.abs(v);
++  if (abs >= 1_000_000) return `R$ ${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
++  if (abs >= 10_000) return `R$ ${(v / 1_000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
++  if (abs >= 100) return `R$ ${v.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
++  return `R$ ${v.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`;
++}
++
++function fmtDataCurta(ts: number): string {
++  return new Date(ts).toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
++}
++
++export function fmtDataISO(iso: string): string {
++  const [y, m, d] = iso.split("-");
++  return `${d}/${m}/${y}`;
++}
++
++// ── Tooltip ──────────────────────────────────────────────────────────────────
++
++interface PontoChart extends PrecoPonto {
++  ts: number; // timestamp UTC da data (eixo X numérico)
++  cat: string; // categoria da cor (esfera ou modalidade, conforme o agrupamento)
++  cor: string;
++}
++
++const CustomTooltip = ({
++  active,
++  payload,
++}: {
++  active?: boolean;
++  payload?: Array<{ payload: PontoChart }>;
++}) => {
++  if (!active || !payload?.length) return null;
++  const p = payload[0].payload;
++  return (
++    <motion.div
++      initial={{ opacity: 0, y: -10 }}
++      animate={{ opacity: 1, y: 0 }}
++      className="bg-background/95 border border-primary/40 rounded-lg px-3 py-2 shadow-lg backdrop-blur-sm"
++    >
++      <p className="text-sm font-bold" style={{ color: p.cor }}>
++        {p.cat} <span className="text-muted-foreground font-normal">· {glyphFor(p.j)} {p.j}</span>
++      </p>
++      <p className="text-sm font-semibold text-foreground">{fmtPreco(p.p)}</p>
++      <p className="text-xs text-muted-foreground">Data: {fmtDataISO(p.d)}</p>
++      <p className="text-xs text-muted-foreground">Qtde: {p.q.toLocaleString("pt-BR")}</p>
++      <p className="text-xs text-muted-foreground">Total: {fmtPreco(p.v)}</p>
++      <p className="text-[10px] text-muted-foreground/70 mt-1">Clique para ocultar este ponto</p>
++    </motion.div>
++  );
++};
++
++// ── Componente ───────────────────────────────────────────────────────────────
++
++interface PrecosScatterChartProps {
++  /** Pontos VISÍVEIS (outliers ocultados já filtrados pelo componente pai). */
++  pontos: PrecoPonto[];
++  /** Campo que dá a COR: "e" (esfera) ou "c" (modalidade de compra). */
++  groupKey: "e" | "c";
++  /** Categorias em ordem alfabética — define o mapeamento estável de cores. */
++  categorias: string[];
++  onPointClick: (id: number) => void;
++}
++
++const DIA_MS = 24 * 3600 * 1000;
++
++export function PrecosScatterChart({
++  pontos,
++  groupKey,
++  categorias,
++  onPointClick,
++}: PrecosScatterChartProps) {
++  // Limites dos eixos a partir dos pontos visíveis (mesma regra do original:
++  // trocar o agrupamento não mexe nos eixos; ocultar pontos, sim).
++  const { xDomain, yDomain, series } = useMemo(() => {
++    const tempos = pontos.map((p) => new Date(p.d + "T00:00:00Z").getTime());
++    const minT = Math.min(...tempos);
++    const maxT = Math.max(...tempos);
++    const padT = Math.max((maxT - minT) * 0.04, 3 * DIA_MS);
++
++    const precos = pontos.map((p) => p.p);
++    const minP = Math.min(...precos);
++    const maxP = Math.max(...precos);
++    const padP = (maxP - minP) * 0.08 || Math.max(maxP * 0.1, 0.01);
++
++    // Uma série Recharts por (categoria × judicial): a cor vem da categoria e
++    // o formato do marcador, do valor de Judicial — como no dashboard original.
++    const corDe = new Map(categorias.map((c, i) => [c, PRECOS_PALETTE[i % PRECOS_PALETTE.length]]));
++    const grupos = new Map<string, { cat: string; j: string; data: PontoChart[] }>();
++    for (let i = 0; i < pontos.length; i++) {
++      const p = pontos[i];
++      const cat = p[groupKey];
++      const k = `${cat}\u0000${p.j}`;
++      let g = grupos.get(k);
++      if (!g) {
++        g = { cat, j: p.j, data: [] };
++        grupos.set(k, g);
++      }
++      g.data.push({ ...p, ts: tempos[i], cat, cor: corDe.get(cat) ?? PRECOS_PALETTE[0] });
++    }
++
++    const series = Array.from(grupos.values()).sort((a, b) =>
++      a.cat === b.cat ? a.j.localeCompare(b.j, "pt-BR") : a.cat.localeCompare(b.cat, "pt-BR")
++    );
++
++    return {
++      xDomain: [minT - padT, maxT + padT] as [number, number],
++      yDomain: [Math.max(0, minP - padP), maxP + padP] as [number, number],
++      series,
++    };
++  }, [pontos, groupKey, categorias]);
++
++  if (!pontos.length) return null;
++
++  const corDe = (cat: string) => {
++    const i = categorias.indexOf(cat);
++    return PRECOS_PALETTE[(i >= 0 ? i : 0) % PRECOS_PALETTE.length];
++  };
++
++  return (
++    <motion.div
++      initial={{ opacity: 0, y: 20 }}
++      whileInView={{ opacity: 1, y: 0 }}
++      viewport={{ once: true, margin: "-20px" }}
++      transition={{ type: "spring" as const, stiffness: 300, damping: 30 }}
++    >
++      <ResponsiveContainer width="100%" height={440}>
++        <ScatterChart margin={{ top: 12, right: 16, bottom: 8, left: 8 }}>
++          <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
++          <XAxis
++            type="number"
++            dataKey="ts"
++            domain={xDomain}
++            tickFormatter={fmtDataCurta}
++            tick={{ fontSize: 11 }}
++            tickCount={8}
++            name="Data da compra"
++          />
++          <YAxis
++            type="number"
++            dataKey="p"
++            domain={yDomain}
++            tickFormatter={fmtPrecoEixo}
++            tick={{ fontSize: 11 }}
++            width={78}
++            name="Preço unitário (R$)"
++          />
++          <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: "3 3" }} />
++          {series.map((s) => (
++            <Scatter
++              key={`${s.cat}|||${s.j}`}
++              name={s.cat}
++              data={s.data}
++              fill={corDe(s.cat)}
++              shape={shapeFor(s.j)}
++              isAnimationActive={false}
++              onClick={(pt: { payload?: PontoChart }) => {
++                const id = pt?.payload?.id;
++                if (typeof id === "number") onPointClick(id);
++              }}
++              className="cursor-pointer"
++            />
++          ))}
++        </ScatterChart>
++      </ResponsiveContainer>
++    </motion.div>
++  );
++}
+diff --git a/components/dashboard/precos-view.tsx b/components/dashboard/precos-view.tsx
+new file mode 100644
+index 0000000..be346d1
+--- /dev/null
++++ b/components/dashboard/precos-view.tsx
+@@ -0,0 +1,419 @@
++"use client";
++
++import { useMemo, useRef, useState } from "react";
++import { usePrecosOverview, usePrecosSerie } from "@/hooks/usePrecos";
++import { Panel } from "@/components/dashboard/sismat-shared";
++import { MetricCard } from "@/components/dashboard/metric-card";
++import { Combobox } from "@/components/ui/combobox";
++import { Button } from "@/components/ui/button";
++import {
++  Table,
++  TableBody,
++  TableCell,
++  TableHead,
++  TableHeader,
++  TableRow,
++} from "@/components/ui/table";
++import {
++  PrecosScatterChart,
++  PRECOS_PALETTE,
++  fmtPreco,
++  fmtDataISO,
++  glyphFor,
++} from "@/components/dashboard/charts/precos-scatter-chart";
++import {
++  AlertTriangle,
++  BarChart2,
++  Calendar,
++  Coins,
++  Database,
++  Loader2,
++  Pill,
++  RotateCcw,
++  TrendingUp,
++} from "lucide-react";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Aba "Preços" — comparativo dos preços praticados em compras públicas de
++// medicamentos (base ComprasGov 2018–2025). Cada ponto do gráfico é uma
++// compra; a cor separa esfera OU modalidade e o formato do marcador destaca
++// as compras judiciais frente às administrativas.
++// ─────────────────────────────────────────────────────────────────────────────
++
++const SEP = "|||"; // separador do value do combobox (mesma convenção da base de origem)
++
++const GROUP_LABELS: Record<"e" | "c", string> = {
++  e: "Esfera",
++  c: "Modalidade de compra",
++};
++
++/** Valores de "Judicial" presentes na base — legenda fixa de formatos. */
++const JUDICIAL_VALUES = ["Judicial", "Não Judicial"] as const;
++
++export function PrecosView() {
++  const [comboEscolhido, setComboEscolhido] = useState(""); // "MATERIAL|||UNIDADE" (escolha do usuário)
++  const [groupKey, setGroupKey] = useState<"e" | "c">("e");
++  const [excluded, setExcluded] = useState<Set<number>>(new Set());
++
++  const seletorRef = useRef<HTMLDivElement>(null);
++
++  const { data: overview, isLoading: overviewLoading, error: overviewError } = usePrecosOverview();
++
++  // Sem escolha do usuário, o primeiro medicamento da lista fica selecionado
++  // (como no dashboard original) — valor DERIVADO, sem setState em effect.
++  const combo = useMemo(() => {
++    if (comboEscolhido) return comboEscolhido;
++    const primeiro = overview?.combos[0];
++    return primeiro ? `${primeiro.material}${SEP}${primeiro.unidade}` : "";
++  }, [comboEscolhido, overview]);
++
++  const [material, unidade] = useMemo(() => {
++    const i = combo.indexOf(SEP);
++    return i < 0 ? ["", ""] : [combo.slice(0, i), combo.slice(i + SEP.length)];
++  }, [combo]);
++
++  const { data: serie, isLoading: serieLoading } = usePrecosSerie(material, unidade);
++
++  function selecionarCombo(novo: string) {
++    setComboEscolhido(novo);
++    setExcluded(new Set()); // trocar de medicamento restaura os pontos ocultados
++  }
++
++  function ocultarPonto(id: number) {
++    setExcluded((prev) => {
++      const next = new Set(prev);
++      next.add(id);
++      return next;
++    });
++  }
++
++  const comboOptions = useMemo(
++    () =>
++      (overview?.combos ?? []).map((c) => ({
++        value: `${c.material}${SEP}${c.unidade}`,
++        label: `${c.material} — ${c.unidade}`,
++        count: c.n,
++      })),
++    [overview]
++  );
++
++  const todosPontos = useMemo(() => serie?.pontos ?? [], [serie]);
++  const pontos = useMemo(
++    () => todosPontos.filter((p) => !excluded.has(p.id)),
++    [todosPontos, excluded]
++  );
++  const ocultados = todosPontos.length - pontos.length;
++
++  // Categorias visíveis (cores do gráfico, legenda e tabela-resumo).
++  const categorias = useMemo(
++    () =>
++      Array.from(new Set(pontos.map((p) => p[groupKey]))).sort((a, b) =>
++        a.localeCompare(b, "pt-BR")
++      ),
++    [pontos, groupKey]
++  );
++
++  // Resumo por categoria: nº de compras, preço médio, mín, máx e variação.
++  const resumo = useMemo(
++    () =>
++      categorias.map((cat) => {
++        const precos = pontos.filter((p) => p[groupKey] === cat).map((p) => p.p);
++        const n = precos.length;
++        const soma = precos.reduce((a, b) => a + b, 0);
++        const min = Math.min(...precos);
++        const max = Math.max(...precos);
++        return { cat, n, media: soma / n, min, max, razao: min > 0 ? max / min : 0 };
++      }),
++    [categorias, pontos, groupKey]
++  );
++
++  // ── Erro ao carregar a visão geral ─────────────────────────────────────────
++  if (overviewError) {
++    return (
++      <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-3">
++        <div className="flex items-center gap-2 text-destructive">
++          <AlertTriangle className="h-4 w-4" />
++          <span className="font-medium text-sm">Erro ao carregar a base de preços</span>
++        </div>
++        <p className="text-xs text-muted-foreground">
++          {overviewError instanceof Error
++            ? overviewError.message
++            : "Não foi possível consultar o banco de dados."}
++        </p>
++        <button onClick={() => window.location.reload()} className="text-xs text-primary underline">
++          Recarregar página
++        </button>
++      </div>
++    );
++  }
++
++  if (overviewLoading) {
++    return (
++      <div className="flex justify-center py-16">
++        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
++      </div>
++    );
++  }
++
++  // ── Base ainda não importada ───────────────────────────────────────────────
++  if (!overview?.hasData) {
++    return (
++      <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
++        <Coins className="h-8 w-8 mx-auto text-muted-foreground" />
++        <p className="text-sm font-medium">Nenhum registro de preços encontrado</p>
++        <p className="text-xs text-muted-foreground">
++          Importe a base ComprasGov com{" "}
++          <code>npx tsx scripts/import-comprasgov-precos.ts --truncate --confirm</code> e recarregue
++          a página.
++        </p>
++      </div>
++    );
++  }
++
++  return (
++    <div className="space-y-6">
++      {/* ── Cards de resumo da base ─────────────────────────────────────────── */}
++      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
++        <MetricCard
++          label="Compras registradas"
++          value={overview.totalRegistros}
++          icon={<Database className="h-5 w-5" />}
++        />
++        <MetricCard
++          label="Medicamentos"
++          value={overview.totalMedicamentos}
++          icon={<Pill className="h-5 w-5" />}
++        />
++        <MetricCard
++          label="Início da série"
++          value={overview.dataMin ? fmtDataISO(overview.dataMin) : "—"}
++          icon={<Calendar className="h-5 w-5" />}
++        />
++        <MetricCard
++          label="Fim da série"
++          value={overview.dataMax ? fmtDataISO(overview.dataMax) : "—"}
++          icon={<Calendar className="h-5 w-5" />}
++        />
++      </div>
++
++      {/* ── Seleção + gráfico de dispersão ──────────────────────────────────── */}
++      <div ref={seletorRef}>
++        <Panel
++          icon={<Coins className="h-4 w-4" />}
++          title="Preço praticado ao longo do tempo"
++          subtitle="Cada ponto é uma compra — cor: esfera ou modalidade · formato do marcador: se a compra é judicial"
++        >
++          <div className="flex flex-wrap items-end gap-4 mb-4">
++            <div className="flex flex-col gap-1.5">
++              <span className="text-xs text-muted-foreground">Medicamento — unidade de fornecimento</span>
++              <Combobox
++                value={combo}
++                onChange={(v) => v && selecionarCombo(v)}
++                options={comboOptions}
++                placeholder="Selecione o medicamento..."
++                searchPlaceholder="Buscar medicamento..."
++                allLabel="Selecione um medicamento"
++                emptyText="Nenhum medicamento encontrado."
++                className="w-[26rem] max-w-full"
++              />
++            </div>
++
++            <div className="flex flex-col gap-1.5">
++              <span className="text-xs text-muted-foreground">Comparar por</span>
++              <div className="inline-flex rounded-lg border border-border bg-card p-1">
++                {(Object.keys(GROUP_LABELS) as Array<"e" | "c">).map((k) => (
++                  <button
++                    key={k}
++                    onClick={() => setGroupKey(k)}
++                    className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
++                      groupKey === k
++                        ? "bg-primary text-primary-foreground"
++                        : "text-muted-foreground hover:text-foreground"
++                    }`}
++                  >
++                    {GROUP_LABELS[k]}
++                  </button>
++                ))}
++              </div>
++            </div>
++          </div>
++
++          {serieLoading && (
++            <div className="flex justify-center py-16">
++              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
++            </div>
++          )}
++
++          {!serieLoading && serie && pontos.length === 0 && (
++            <div className="flex flex-col items-center justify-center h-[300px] gap-3 text-sm text-muted-foreground">
++              <p>Todos os pontos foram ocultados.</p>
++              <Button variant="outline" size="sm" onClick={() => setExcluded(new Set())}>
++                <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
++                Restaurar pontos ocultados
++              </Button>
++            </div>
++          )}
++
++          {!serieLoading && serie && pontos.length > 0 && (
++            <div className="grid grid-cols-1 lg:grid-cols-[1fr_13rem] gap-6">
++              <div>
++                <PrecosScatterChart
++                  pontos={pontos}
++                  groupKey={groupKey}
++                  categorias={categorias}
++                  onPointClick={ocultarPonto}
++                />
++                <p className="text-xs text-muted-foreground mt-2">
++                  {pontos.length.toLocaleString("pt-BR")} compra(s) exibida(s) de{" "}
++                  <span className="font-medium text-foreground">
++                    {serie.material} ({serie.unidade})
++                  </span>
++                  . Clique em um ponto para ocultá-lo da visualização (útil para remover outliers).
++                </p>
++                {ocultados > 0 && (
++                  <div className="flex items-center gap-3 mt-2">
++                    <span className="text-xs text-muted-foreground">
++                      {ocultados.toLocaleString("pt-BR")} ponto(s) ocultado(s).
++                    </span>
++                    <Button variant="outline" size="sm" onClick={() => setExcluded(new Set())}>
++                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
++                      Restaurar pontos ocultados
++                    </Button>
++                  </div>
++                )}
++              </div>
++
++              {/* ── Legendas (cor + formato) ─────────────────────────────────── */}
++              <div className="space-y-5">
++                <div>
++                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
++                    {GROUP_LABELS[groupKey]}
++                  </p>
++                  <div className="space-y-1.5">
++                    {categorias.map((cat, i) => (
++                      <div key={cat} className="flex items-center gap-2 text-sm">
++                        <span
++                          className="h-3 w-3 rounded-sm shrink-0"
++                          style={{ backgroundColor: PRECOS_PALETTE[i % PRECOS_PALETTE.length] }}
++                        />
++                        <span className="truncate">{cat}</span>
++                      </div>
++                    ))}
++                  </div>
++                </div>
++                <div>
++                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
++                    Judicial
++                  </p>
++                  <div className="space-y-1.5">
++                    {JUDICIAL_VALUES.map((j) => (
++                      <div key={j} className="flex items-center gap-2 text-sm">
++                        <span className="w-3 text-center text-muted-foreground shrink-0">
++                          {glyphFor(j)}
++                        </span>
++                        <span>{j}</span>
++                      </div>
++                    ))}
++                  </div>
++                </div>
++              </div>
++            </div>
++          )}
++        </Panel>
++      </div>
++
++      {/* ── Resumo por categoria ────────────────────────────────────────────── */}
++      <Panel
++        icon={<BarChart2 className="h-4 w-4" />}
++        title="Resumo por categoria (item selecionado)"
++        subtitle="Estatísticas dos preços praticados considerando apenas os pontos visíveis no gráfico"
++      >
++        {resumo.length === 0 ? (
++          <p className="text-sm text-muted-foreground py-6 text-center">
++            Selecione um medicamento acima.
++          </p>
++        ) : (
++          <Table>
++            <TableHeader>
++              <TableRow>
++                <TableHead>{GROUP_LABELS[groupKey]}</TableHead>
++                <TableHead className="text-right">Nº compras</TableHead>
++                <TableHead className="text-right">Preço médio</TableHead>
++                <TableHead className="text-right">Preço mín</TableHead>
++                <TableHead className="text-right">Preço máx</TableHead>
++                <TableHead className="text-right">Variação (máx/mín)</TableHead>
++              </TableRow>
++            </TableHeader>
++            <TableBody>
++              {resumo.map((r, i) => (
++                <TableRow key={r.cat}>
++                  <TableCell className="font-medium">
++                    <span className="inline-flex items-center gap-2">
++                      <span
++                        className="h-2.5 w-2.5 rounded-full shrink-0"
++                        style={{ backgroundColor: PRECOS_PALETTE[i % PRECOS_PALETTE.length] }}
++                      />
++                      {r.cat}
++                    </span>
++                  </TableCell>
++                  <TableCell className="text-right tabular-nums">
++                    {r.n.toLocaleString("pt-BR")}
++                  </TableCell>
++                  <TableCell className="text-right tabular-nums">{fmtPreco(r.media)}</TableCell>
++                  <TableCell className="text-right tabular-nums">{fmtPreco(r.min)}</TableCell>
++                  <TableCell className="text-right tabular-nums">{fmtPreco(r.max)}</TableCell>
++                  <TableCell className="text-right tabular-nums">
++                    {r.razao > 0 ? `${r.razao.toFixed(2)}x` : "—"}
++                  </TableCell>
++                </TableRow>
++              ))}
++            </TableBody>
++          </Table>
++        )}
++      </Panel>
++
++      {/* ── Top variação geral ──────────────────────────────────────────────── */}
++      <Panel
++        icon={<TrendingUp className="h-4 w-4" />}
++        title="Medicamentos com maior variação de preço (geral)"
++        subtitle="Top itens por razão preço máximo / preço mínimo — mínimo de 5 compras registradas. Clique para analisar."
++      >
++        <Table>
++          <TableHeader>
++            <TableRow>
++              <TableHead>Medicamento</TableHead>
++              <TableHead>Unidade</TableHead>
++              <TableHead className="text-right">Nº compras</TableHead>
++              <TableHead className="text-right">Preço mín</TableHead>
++              <TableHead className="text-right">Preço máx</TableHead>
++              <TableHead className="text-right">Variação</TableHead>
++            </TableRow>
++          </TableHeader>
++          <TableBody>
++            {overview.topVariacao.map((it) => (
++              <TableRow
++                key={`${it.material}${SEP}${it.unidade}`}
++                className="cursor-pointer"
++                onClick={() => {
++                  selecionarCombo(`${it.material}${SEP}${it.unidade}`);
++                  seletorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
++                }}
++              >
++                <TableCell className="font-medium">{it.material}</TableCell>
++                <TableCell className="text-muted-foreground">{it.unidade}</TableCell>
++                <TableCell className="text-right tabular-nums">
++                  {it.n.toLocaleString("pt-BR")}
++                </TableCell>
++                <TableCell className="text-right tabular-nums">{fmtPreco(it.precoMin)}</TableCell>
++                <TableCell className="text-right tabular-nums">{fmtPreco(it.precoMax)}</TableCell>
++                <TableCell className="text-right tabular-nums text-primary font-medium">
++                  {it.razao.toFixed(1)}x
++                </TableCell>
++              </TableRow>
++            ))}
++          </TableBody>
++        </Table>
++      </Panel>
++    </div>
++  );
++}
+diff --git a/components/layout/mobile-nav.tsx b/components/layout/mobile-nav.tsx
+index 2e42d70..9c919f8 100644
+--- a/components/layout/mobile-nav.tsx
++++ b/components/layout/mobile-nav.tsx
+@@ -8,6 +8,7 @@ import {
+   Scale,
+   LayoutDashboard,
+   FileText,
++  Coins,
+   Users,
+   Building2,
+   History,
+@@ -28,6 +29,7 @@ import { Separator } from "@/components/ui/separator";
+ const navItems = [
+   { label: "Dashboard",    href: "/dashboard",     icon: LayoutDashboard },
+   { label: "Demandas",     href: "/demandas",      icon: FileText        },
++  { label: "Preços",       href: "/precos",        icon: Coins           },
+   { label: "Usuários",     href: "/users",         icon: Users           },
+   { label: "Organizações", href: "/organizations", icon: Building2       },
+   { label: "Logs",         href: "/logs",          icon: History         },
+diff --git a/components/layout/sidebar.tsx b/components/layout/sidebar.tsx
+index 4767df2..b92f86e 100644
+--- a/components/layout/sidebar.tsx
++++ b/components/layout/sidebar.tsx
+@@ -7,6 +7,7 @@ import { motion } from "framer-motion";
+ import { Badge } from "@/components/ui/badge";
+ import {
+   ChevronsUpDown,
++  Coins,
+   FileClock,
+   LayoutDashboard,
+   LogOut,
+@@ -87,6 +88,12 @@ const primaryNav = [
+     icon: FileText,
+     description: "Gestão de demandas",
+   },
++  {
++    label: "Preços",
++    href: "/precos",
++    icon: Coins,
++    description: "Preços praticados de medicamentos",
++  },
+ ];
+ 
+ const secondaryNav = [
+diff --git a/hooks/usePrecos.ts b/hooks/usePrecos.ts
+new file mode 100644
+index 0000000..5205e9e
+--- /dev/null
++++ b/hooks/usePrecos.ts
+@@ -0,0 +1,45 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { PrecosOverviewData, PrecosSerieData } from "@/lib/precos-metrics";
++
++/**
++ * Visão geral da base de preços praticados (ComprasGov): combos do combobox,
++ * cards de resumo e ranking de maior variação. Cache longo (1h): base
++ * histórica de referência, muda apenas em novas importações.
++ */
++export function usePrecosOverview() {
++  return useQuery<PrecosOverviewData>({
++    queryKey: ["precos-overview"],
++    queryFn: async () => {
++      const res = await fetch("/api/precos/overview");
++      if (!res.ok) {
++        throw new Error("Erro ao carregar a visão geral de preços");
++      }
++      return res.json();
++    },
++    staleTime: 60 * 60 * 1000, // 1 hora
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
++
++/**
++ * Todas as compras de UM combo (medicamento × unidade). Cada combo é cacheado
++ * separadamente pela queryKey; agrupamento e outliers são resolvidos no cliente.
++ */
++export function usePrecosSerie(material: string, unidade: string) {
++  return useQuery<PrecosSerieData>({
++    queryKey: ["precos-serie", material, unidade],
++    queryFn: async () => {
++      const params = new URLSearchParams({ material, unidade });
++      const res = await fetch(`/api/precos/serie?${params.toString()}`);
++      if (!res.ok) {
++        throw new Error("Erro ao carregar a série de preços do medicamento");
++      }
++      return res.json();
++    },
++    enabled: !!material && !!unidade,
++    staleTime: 60 * 60 * 1000, // 1 hora
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
+diff --git a/lib/precos-metrics.ts b/lib/precos-metrics.ts
+new file mode 100644
+index 0000000..1b052ea
+--- /dev/null
++++ b/lib/precos-metrics.ts
+@@ -0,0 +1,152 @@
++import { db } from "@/lib/db";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Métricas da aba "Preços" — comparativo dos preços praticados em compras
++// públicas de medicamentos (base ComprasGov, tabela sismat.ComprasGovPreco).
++//
++// Duas consultas servem a página inteira:
++//   • overview — 1 groupBy por (material × unidade) alimenta o combobox de
++//     seleção, os cards de resumo E o ranking de maior variação de preço.
++//   • serie    — todas as compras de UM combo (medicamento × unidade), com
++//     campos curtos (mesma semântica do dashboard de origem) para o gráfico
++//     de dispersão. O agrupamento por esfera/modalidade e a ocultação de
++//     outliers acontecem no cliente, sem novas idas ao servidor.
++// ─────────────────────────────────────────────────────────────────────────────
++
++export interface PrecosCombo {
++  material: string;
++  unidade: string;
++  n: number; // nº de compras registradas
++}
++
++export interface PrecosTopVariacao {
++  material: string;
++  unidade: string;
++  n: number;
++  precoMin: number;
++  precoMax: number;
++  razao: number; // precoMax / precoMin
++}
++
++export interface PrecosOverviewData {
++  totalRegistros: number;
++  totalMedicamentos: number;
++  dataMin: string | null; // "YYYY-MM-DD"
++  dataMax: string | null;
++  /** Combos (medicamento × unidade) em ordem alfabética — opções do combobox. */
++  combos: PrecosCombo[];
++  /** Top 15 por razão preço máx/mín (mínimo 5 compras registradas). */
++  topVariacao: PrecosTopVariacao[];
++  hasData: boolean;
++}
++
++/** Um ponto do gráfico — chaves curtas (mesma semântica da base de origem). */
++export interface PrecoPonto {
++  id: number;
++  d: string; // data "YYYY-MM-DD"
++  p: number; // preço unitário (R$)
++  q: number; // quantidade
++  v: number; // valor total (R$)
++  e: string; // esfera
++  c: string; // modalidade de compra
++  j: string; // "Judicial" | "Não Judicial"
++}
++
++export interface PrecosSerieData {
++  material: string;
++  unidade: string;
++  pontos: PrecoPonto[];
++}
++
++/** Nº mínimo de compras para um combo entrar no ranking de variação. */
++export const MIN_COMPRAS_VARIACAO = 5;
++
++const toISODate = (d: Date) => d.toISOString().slice(0, 10);
++
++export async function getPrecosOverview(): Promise<PrecosOverviewData> {
++  const grupos = await db.comprasGovPreco.groupBy({
++    by: ["material", "unidade"],
++    _count: { _all: true },
++    _min: { precoUnitario: true, dtCompra: true },
++    _max: { precoUnitario: true, dtCompra: true },
++  });
++
++  const combos: PrecosCombo[] = grupos
++    .map((g) => ({ material: g.material, unidade: g.unidade, n: g._count._all }))
++    .sort((a, b) =>
++      a.material === b.material
++        ? a.unidade.localeCompare(b.unidade, "pt-BR")
++        : a.material.localeCompare(b.material, "pt-BR")
++    );
++
++  let totalRegistros = 0;
++  let dataMin: Date | null = null;
++  let dataMax: Date | null = null;
++  const materiais = new Set<string>();
++
++  for (const g of grupos) {
++    totalRegistros += g._count._all;
++    materiais.add(g.material);
++    if (g._min.dtCompra && (!dataMin || g._min.dtCompra < dataMin)) dataMin = g._min.dtCompra;
++    if (g._max.dtCompra && (!dataMax || g._max.dtCompra > dataMax)) dataMax = g._max.dtCompra;
++  }
++
++  const topVariacao: PrecosTopVariacao[] = grupos
++    .filter((g) => g._count._all >= MIN_COMPRAS_VARIACAO)
++    .map((g) => {
++      const precoMin = g._min.precoUnitario == null ? 0 : Number(g._min.precoUnitario);
++      const precoMax = g._max.precoUnitario == null ? 0 : Number(g._max.precoUnitario);
++      return {
++        material: g.material,
++        unidade: g.unidade,
++        n: g._count._all,
++        precoMin,
++        precoMax,
++        razao: precoMin > 0 ? precoMax / precoMin : 0,
++      };
++    })
++    .sort((a, b) => b.razao - a.razao)
++    .slice(0, 15);
++
++  return {
++    totalRegistros,
++    totalMedicamentos: materiais.size,
++    dataMin: dataMin ? toISODate(dataMin) : null,
++    dataMax: dataMax ? toISODate(dataMax) : null,
++    combos,
++    topVariacao,
++    hasData: grupos.length > 0,
++  };
++}
++
++export async function getPrecosSerie(material: string, unidade: string): Promise<PrecosSerieData> {
++  // Igualdade exata: material/unidade vêm da seleção controlada (combobox),
++  // cujos valores saem do próprio banco — não há texto livre aqui.
++  const rows = await db.comprasGovPreco.findMany({
++    where: { material, unidade },
++    orderBy: { dtCompra: "asc" },
++    select: {
++      id: true,
++      dtCompra: true,
++      precoUnitario: true,
++      quantidade: true,
++      valorTotal: true,
++      esfera: true,
++      modalidade: true,
++      judicial: true,
++    },
++  });
++
++  const pontos: PrecoPonto[] = rows.map((r) => ({
++    id: r.id,
++    d: toISODate(r.dtCompra),
++    p: Number(r.precoUnitario),
++    q: r.quantidade,
++    v: Number(r.valorTotal),
++    e: r.esfera,
++    c: r.modalidade,
++    j: r.judicial,
++  }));
++
++  return { material, unidade, pontos };
++}
+diff --git a/package.json b/package.json
+index ee50401..c77db3e 100644
+--- a/package.json
++++ b/package.json
+@@ -12,7 +12,8 @@
+     "db:push": "prisma db push",
+     "db:seed": "tsx prisma/seed.ts",
+     "import:sismat": "tsx scripts/import-sismat-entradas.ts",
+-    "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts"
++    "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts",
++    "import:precos": "tsx scripts/import-comprasgov-precos.ts"
+   },
+   "dependencies": {
+     "@auth/prisma-adapter": "^2.11.2",
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 9f81f3f..2011ea4 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -345,3 +345,32 @@ model SismatSaida {
+   @@index([dtBaixa])
+   @@schema("sismat")
+ }
++
++// ─────────────────────────────────────────────────────────────────────────────
++// ComprasGov — preços praticados em compras públicas de medicamentos
++// (base histórica 2018–2025 extraída de "dashboard_ComprasGov_Jud.html").
++// Cada linha é UMA compra: medicamento × unidade de fornecimento, com esfera
++// administrativa, modalidade de compra, marcador Judicial/Não Judicial, data,
++// quantidade, valor total e preço unitário. Alimenta a aba "Preços" do painel
++// (comparativo dos preços praticados — compras judiciais vs. administrativas).
++// ─────────────────────────────────────────────────────────────────────────────
++model ComprasGovPreco {
++  id            Int      @id      // id do registro na base de origem (estável — usado p/ ocultar outliers)
++
++  material      String            // Medicamento (ex: "VENETOCLAX")
++  unidade       String            // Unidade de fornecimento (ex: "COMPRIMIDO", "FRASCO 5 ML")
++  esfera        String            // Esfera Unid Participante: Federal | Estadual | Municipal
++  modalidade    String            // Modalidade: Pregão | Dispensa de Licitação | Inexigibilidade de Licitação
++  judicial      String            // "Judicial" | "Não Judicial"
++  dtCompra      DateTime          // Data da compra (UTC, meia-noite)
++  quantidade    Float             // Quantidade adquirida
++  valorTotal    Decimal           // Valor total da compra (R$)
++  precoUnitario Decimal           // Preço unitário praticado (R$) — eixo Y do gráfico
++
++  criadoEm      DateTime @default(now())
++
++  @@index([material, unidade])
++  @@index([dtCompra])
++  @@index([judicial])
++  @@schema("sismat")
++}
+diff --git a/scripts/import-comprasgov-precos.ts b/scripts/import-comprasgov-precos.ts
+new file mode 100644
+index 0000000..c5ee951
+--- /dev/null
++++ b/scripts/import-comprasgov-precos.ts
+@@ -0,0 +1,264 @@
++#!/usr/bin/env node
++
++/**
++ * Script de Importação: dashboard_ComprasGov_Jud.html → schema "sismat" (tabela ComprasGovPreco)
++ *
++ * A base de preços praticados (ComprasGov, 2018–2025, ~53 mil compras) foi entregue
++ * EMBUTIDA em um dashboard HTML estático (`const DATA = {...};` dentro do <script>).
++ * Este script extrai esse JSON do HTML e grava os registros no banco — a partir daí a
++ * aba "Preços" do painel consulta tudo via API/Prisma, sem carregar 9 MB no cliente.
++ *
++ * Particularidades:
++ *   • Aceita o próprio .html OU um .json já extraído (mesma estrutura {records, combos, meta}).
++ *   • Campos curtos da origem: m=material, u=unidade, e=esfera, c=modalidade,
++ *     j=Judicial/Não Judicial, d=data (YYYY-MM-DD), q=quantidade, v=valor total,
++ *     p=preço unitário. O id da origem é preservado (chave estável p/ ocultar outliers).
++ *   • Datas viram meia-noite UTC (evita deslocamento de fuso nas séries temporais).
++ *   • Números já vêm com ponto decimal (JSON) — NÃO aplicar parsing pt-BR.
++ *
++ * Uso:
++ *   npx tsx scripts/import-comprasgov-precos.ts --dry-run
++ *   npx tsx scripts/import-comprasgov-precos.ts --limit=100
++ *   npx tsx scripts/import-comprasgov-precos.ts --truncate --confirm
++ *   npx tsx scripts/import-comprasgov-precos.ts --file="/caminho/dashboard_ComprasGov_Jud.html"
++ *
++ * Fonte do arquivo: --file=... > env COMPRASGOV_HTML > ./dashboard_ComprasGov_Jud.html
++ */
++
++import * as fs from "fs";
++import * as path from "path";
++
++// ── Flags / config ──────────────────────────────────────────────────────────
++
++const arg = (name: string): string | undefined =>
++  process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
++
++const DRY_RUN = process.argv.includes("--dry-run");
++const CONFIRM = process.argv.includes("--confirm");
++const TRUNCATE = process.argv.includes("--truncate");
++const LIMIT = parseInt(arg("limit") || "0", 10);
++const BATCH_SIZE = 1000;
++
++const FILE_PATH =
++  arg("file") ||
++  process.env.COMPRASGOV_HTML ||
++  path.join(process.cwd(), "dashboard_ComprasGov_Jud.html");
++
++// ── Tipos da origem ──────────────────────────────────────────────────────────
++
++interface RegistroOrigem {
++  id: number;
++  m: string; // material
++  u: string; // unidade de fornecimento
++  e: string; // esfera (Federal | Estadual | Municipal)
++  c: string; // modalidade de compra
++  j: string; // "Judicial" | "Não Judicial"
++  d: string; // data "YYYY-MM-DD"
++  q: number; // quantidade
++  v: number; // valor total
++  p: number; // preço unitário
++}
++
++interface DadosOrigem {
++  records: RegistroOrigem[];
++  combos?: Array<{ m: string; u: string; n: number }>;
++  meta?: { total?: number; date_min?: string; date_max?: string; n_meds?: number };
++}
++
++interface LinhaBanco {
++  id: number;
++  material: string;
++  unidade: string;
++  esfera: string;
++  modalidade: string;
++  judicial: string;
++  dtCompra: Date;
++  quantidade: number;
++  valorTotal: number;
++  precoUnitario: number;
++}
++
++// ── Extração do JSON embutido no HTML ────────────────────────────────────────
++
++/**
++ * Localiza `const DATA = {...};` dentro do HTML e devolve o objeto parseado.
++ * Estratégia robusta a `};` dentro de strings: o fim do objeto é o ÚLTIMO `}`
++ * antes da próxima declaração (`const COLORS`), e não a primeira ocorrência
++ * de `};` — assim nomes de medicamentos com caracteres exóticos não quebram.
++ */
++function extrairDataDoHtml(html: string): DadosOrigem {
++  const marcador = "const DATA = ";
++  const inicio = html.indexOf(marcador);
++  if (inicio < 0) {
++    throw new Error("Não encontrei `const DATA = ` no HTML — o arquivo é o dashboard correto?");
++  }
++  const jsonInicio = inicio + marcador.length;
++
++  // A declaração seguinte no dashboard original é `const COLORS = [...]`.
++  // Caso o marcador não exista (variação do arquivo), cai para o fim do <script>.
++  let limite = html.indexOf("const COLORS", jsonInicio);
++  if (limite < 0) limite = html.indexOf("</script>", jsonInicio);
++  if (limite < 0) limite = html.length;
++
++  const fim = html.lastIndexOf("}", limite);
++  if (fim <= jsonInicio) {
++    throw new Error("Não consegui delimitar o objeto DATA dentro do HTML.");
++  }
++
++  return JSON.parse(html.slice(jsonInicio, fim + 1)) as DadosOrigem;
++}
++
++function lerDados(): DadosOrigem {
++  if (!fs.existsSync(FILE_PATH)) {
++    throw new Error(
++      `Arquivo não encontrado: ${FILE_PATH}\n` +
++        `   Informe com --file="/caminho/dashboard_ComprasGov_Jud.html" ou env COMPRASGOV_HTML.`
++    );
++  }
++  const conteudo = fs.readFileSync(FILE_PATH, "utf-8");
++  const dados = FILE_PATH.toLowerCase().endsWith(".json")
++    ? (JSON.parse(conteudo) as DadosOrigem)
++    : extrairDataDoHtml(conteudo);
++
++  if (!Array.isArray(dados.records)) {
++    throw new Error("Estrutura inesperada: a propriedade `records` não é um array.");
++  }
++  return dados;
++}
++
++// ── Mapeamento origem → banco ────────────────────────────────────────────────
++
++function sanitizeStr(value: unknown): string | null {
++  if (value === null || value === undefined) return null;
++  const s = String(value).replace(/\u200b/g, "").trim();
++  return s || null;
++}
++
++/** Data "YYYY-MM-DD" → meia-noite UTC (mesma convenção dos demais imports). */
++function parseDataUTC(d: string): Date | null {
++  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d).trim());
++  if (!m) return null;
++  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
++  return isNaN(dt.getTime()) ? null : dt;
++}
++
++function paraLinha(r: RegistroOrigem): LinhaBanco | null {
++  const material = sanitizeStr(r.m);
++  const unidade = sanitizeStr(r.u);
++  const esfera = sanitizeStr(r.e);
++  const modalidade = sanitizeStr(r.c);
++  const judicial = sanitizeStr(r.j);
++  const dtCompra = parseDataUTC(r.d);
++
++  if (
++    typeof r.id !== "number" ||
++    !material ||
++    !unidade ||
++    !esfera ||
++    !modalidade ||
++    !judicial ||
++    !dtCompra ||
++    typeof r.p !== "number" ||
++    isNaN(r.p)
++  ) {
++    return null; // linha incompleta — descartada (contabilizada no resumo)
++  }
++
++  return {
++    id: r.id,
++    material,
++    unidade,
++    esfera,
++    modalidade,
++    judicial,
++    dtCompra,
++    quantidade: typeof r.q === "number" && !isNaN(r.q) ? r.q : 0,
++    valorTotal: typeof r.v === "number" && !isNaN(r.v) ? r.v : 0,
++    precoUnitario: r.p,
++  };
++}
++
++// ── Resumo (dry-run e pré-importação) ────────────────────────────────────────
++
++function resumo(linhas: LinhaBanco[], descartadas: number) {
++  const materiais = new Set(linhas.map((l) => l.material));
++  const combos = new Set(linhas.map((l) => `${l.material}|||${l.unidade}`));
++  const judiciais = linhas.filter((l) => l.judicial === "Judicial").length;
++  const datas = linhas.map((l) => l.dtCompra.getTime());
++  const fmt = (t: number) => new Date(t).toISOString().slice(0, 10);
++
++  console.log("\n📊 Resumo dos dados extraídos:");
++  console.log(`   Registros válidos:      ${linhas.length.toLocaleString("pt-BR")}`);
++  console.log(`   Linhas descartadas:     ${descartadas.toLocaleString("pt-BR")}`);
++  console.log(`   Medicamentos distintos: ${materiais.size.toLocaleString("pt-BR")}`);
++  console.log(`   Combos (med × unidade): ${combos.size.toLocaleString("pt-BR")}`);
++  console.log(`   Compras judiciais:      ${judiciais.toLocaleString("pt-BR")}`);
++  if (datas.length) {
++    console.log(`   Período:                ${fmt(Math.min(...datas))} → ${fmt(Math.max(...datas))}`);
++  }
++}
++
++// ── Main ─────────────────────────────────────────────────────────────────────
++
++async function main() {
++  console.log(`📁 Lendo: ${FILE_PATH}`);
++  const dados = lerDados();
++
++  let registros = dados.records;
++  if (LIMIT > 0) registros = registros.slice(0, LIMIT);
++
++  const linhas: LinhaBanco[] = [];
++  let descartadas = 0;
++  for (const r of registros) {
++    const linha = paraLinha(r);
++    if (linha) linhas.push(linha);
++    else descartadas++;
++  }
++
++  resumo(linhas, descartadas);
++
++  if (DRY_RUN) {
++    console.log("\n✅ DRY_RUN concluído — nenhum dado gravado.");
++    return;
++  }
++
++  if (!LIMIT && !CONFIRM) {
++    console.log(
++      "\n⛔ Importação completa requer --confirm (ou use --limit=N para testar).\n" +
++        "   Ex.: npx tsx scripts/import-comprasgov-precos.ts --truncate --confirm"
++    );
++    return;
++  }
++
++  const { PrismaClient } = await import("@prisma/client");
++  const db = new PrismaClient({ log: ["error"] });
++
++  try {
++    if (TRUNCATE) {
++      console.log("\n🧹 Limpando tabela sismat.ComprasGovPreco...");
++      const del = await db.comprasGovPreco.deleteMany({});
++      console.log(`   ${del.count} registro(s) removido(s).`);
++    }
++
++    console.log(`\n💾 Inserindo ${linhas.length} registro(s) em lotes de ${BATCH_SIZE}...`);
++    let inseridos = 0;
++    for (let i = 0; i < linhas.length; i += BATCH_SIZE) {
++      const lote = linhas.slice(i, i + BATCH_SIZE);
++      // skipDuplicates: reexecuções não duplicam (id da origem é a PK)
++      const res = await db.comprasGovPreco.createMany({ data: lote, skipDuplicates: true });
++      inseridos += res.count;
++      process.stdout.write(`\r   ${inseridos}/${linhas.length}`);
++    }
++    console.log(`\n✅ Importação concluída: ${inseridos} registro(s).`);
++  } catch (err) {
++    console.error("\n❌ Erro na importação:", err);
++    process.exitCode = 1;
++  } finally {
++    await db.$disconnect();
++  }
++}
++
++main().catch((e) => {
++  console.error(e);
++  process.exit(1);
++});

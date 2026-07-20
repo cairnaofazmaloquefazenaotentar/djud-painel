@@ -8,6 +8,7 @@ import {
   Scale,
   LayoutDashboard,
   FileText,
+  Coins,
   Users,
   Building2,
   History,
@@ -28,6 +29,7 @@ import { Separator } from "@/components/ui/separator";
 const navItems = [
   { label: "Dashboard",    href: "/dashboard",     icon: LayoutDashboard },
   { label: "Demandas",     href: "/demandas",      icon: FileText        },
+  { label: "Preços",       href: "/precos",        icon: Coins           },
   { label: "Usuários",     href: "/users",         icon: Users           },
   { label: "Organizações", href: "/organizations", icon: Building2       },
   { label: "Logs",         href: "/logs",          icon: History         },
