@@ -374,3 +374,33 @@ model ComprasGovPreco {
   @@index([judicial])
   @@schema("sismat")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Redmine × SISMAT — atributos da demanda por nº SEI (NUP)
+// Tabela de apoio (1 linha por "NUP_SEI Principal") extraída da base Redmine
+// (baseRedmine_*.xlsx) pelo scripts/import-redmine-sei.ts. Alimenta o dashboard
+// de Saídas: cada saída do SISMAT é cruzada com estes atributos pelo nº SEI
+// embutido no final do campo destinatario ("FULANO DE TAL 00737.001234/2020-11").
+// Regra de consolidação: 1ª ocorrência NÃO-VAZIA de cada campo, na ordem do
+// arquivo (réplica do dashboard_redmine_sismat.html de referência).
+// ─────────────────────────────────────────────────────────────────────────────
+model RedmineSeiAtributos {
+  sei                  String   @id      // NUP_SEI Principal ("00737.001234/2020-11")
+
+  crm                  String?           // Nº CRM do prescritor (sem separador de milhar)
+  oab                  String?           // Nº OAB do advogado (sem separador de milhar)
+  grupoTematico        String?           // Grupo Temático (Medicamentos Gerais, Alto Impacto…)
+  regiaoBrasil         String?           // Região Brasil (Norte, Nordeste, …)
+  ufResidencia         String?           // UF_Residência do autor
+  formaCumprimento     String?           // Aquisição DJUD | Depósito Judicial | Entrega CEAF
+  modalidadeTratamento String?           // Contínuo | Único
+  statusAbastecimento  String?           // Abastecido | Desabastecido | Não Informado
+  statusRedmine        String?           // coluna `status` do Redmine (Em Análise COAJUD, …)
+
+  criadoEm             DateTime @default(now())
+
+  @@index([grupoTematico])
+  @@index([regiaoBrasil])
+  @@index([statusRedmine])
+  @@schema("sismat")
+}

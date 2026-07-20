@@ -1,0 +1,1632 @@
+diff --git a/app/api/sismat/saidas/metrics/route.ts b/app/api/sismat/saidas/metrics/route.ts
+deleted file mode 100644
+index 60dd247..0000000
+--- a/app/api/sismat/saidas/metrics/route.ts
++++ /dev/null
+@@ -1,40 +0,0 @@
+-export const runtime = "nodejs";
+-
+-import { auth } from "@/lib/auth";
+-import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
+-import {
+-  getSismatSaidasMetrics,
+-  SISMAT_SAIDA_DIMENSOES,
+-  type SismatSaidaDimensao,
+-} from "@/lib/sismat-saidas-metrics";
+-import { NextRequest, NextResponse } from "next/server";
+-
+-export async function GET(request: NextRequest) {
+-  try {
+-    const session = await auth();
+-    if (!session?.user) {
+-      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+-    }
+-
+-    const sp = request.nextUrl.searchParams;
+-    const dimRaw = sp.get("dimension") ?? "material";
+-    const perRaw = sp.get("period") ?? "monthly";
+-
+-    const dimension: SismatSaidaDimensao = (SISMAT_SAIDA_DIMENSOES as readonly string[]).includes(dimRaw)
+-      ? (dimRaw as SismatSaidaDimensao)
+-      : "material";
+-    const period: SismatPeriodo = (SISMAT_PERIODOS as readonly string[]).includes(perRaw)
+-      ? (perRaw as SismatPeriodo)
+-      : "monthly";
+-
+-    const data = await getSismatSaidasMetrics(dimension, period);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" },
+-    });
+-  } catch (error) {
+-    console.error("[sismat/saidas/metrics] Erro:", error);
+-    const message = error instanceof Error ? error.message : "Erro ao obter métricas de saídas SISMAT";
+-    return NextResponse.json({ error: message }, { status: 500 });
+-  }
+-}
+diff --git a/app/api/sismat/saidas/redmine/route.ts b/app/api/sismat/saidas/redmine/route.ts
+new file mode 100644
+index 0000000..646899b
+--- /dev/null
++++ b/app/api/sismat/saidas/redmine/route.ts
+@@ -0,0 +1,30 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { getSaidasRedmineOverview } from "@/lib/sismat-saidas-redmine-metrics";
++import { NextResponse } from "next/server";
++
++/**
++ * GET /api/sismat/saidas/redmine
++ * Agregados globais do cruzamento Saídas SISMAT × Redmine (por nº SEI):
++ * KPIs, Top 20 medicamentos, Top 15 CRM/OAB, distribuições e opções de filtro.
++ */
++export async function GET() {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const data = await getSaidasRedmineOverview();
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" },
++    });
++  } catch (error) {
++    console.error("[sismat/saidas/redmine] Erro:", error);
++    const message =
++      error instanceof Error ? error.message : "Erro ao obter o cruzamento Saídas × Redmine";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/app/api/sismat/saidas/redmine/tabela/route.ts b/app/api/sismat/saidas/redmine/tabela/route.ts
+new file mode 100644
+index 0000000..8168fb9
+--- /dev/null
++++ b/app/api/sismat/saidas/redmine/tabela/route.ts
+@@ -0,0 +1,41 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import {
++  getSaidasRedmineTabela,
++  SAIDAS_REDMINE_FILTROS,
++  type SaidasRedmineFiltros,
++} from "@/lib/sismat-saidas-redmine-metrics";
++import { NextRequest, NextResponse } from "next/server";
++
++/**
++ * GET /api/sismat/saidas/redmine/tabela?grupo=…&regiao=…&uf=…&forma=…&modal=…&sabast=…&status=…&crm=…&oab=…
++ * KPIs filtrados + primeiras 500 linhas (por valor desc) do cruzamento.
++ * Filtros por igualdade exata; ausentes = sem filtro.
++ */
++export async function GET(request: NextRequest) {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const sp = request.nextUrl.searchParams;
++    const filtros: SaidasRedmineFiltros = {};
++    for (const f of SAIDAS_REDMINE_FILTROS) {
++      const v = sp.get(f);
++      if (v) filtros[f] = v;
++    }
++
++    const data = await getSaidasRedmineTabela(filtros);
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=300" },
++    });
++  } catch (error) {
++    console.error("[sismat/saidas/redmine/tabela] Erro:", error);
++    const message =
++      error instanceof Error ? error.message : "Erro ao filtrar o cruzamento Saídas × Redmine";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/components/dashboard/sismat-dashboard.tsx b/components/dashboard/sismat-dashboard.tsx
+index 6bd684c..84d7964 100644
+--- a/components/dashboard/sismat-dashboard.tsx
++++ b/components/dashboard/sismat-dashboard.tsx
+@@ -515,7 +515,7 @@ export function SismatDashboard() {
+           <SectionHeader
+             icon={<ArrowUpFromLine className="h-4 w-4" />}
+             title="Saídas"
+-            subtitle="Entregas/baixas de material aos destinatários (SISMAT)"
++            subtitle="Saídas SISMAT cruzadas com a base Redmine por nº SEI — valores, prescritores (CRM) e advogados (OAB)"
+           />
+           <SismatSaidasView />
+         </section>
+diff --git a/components/dashboard/sismat-saidas-view.tsx b/components/dashboard/sismat-saidas-view.tsx
+index 01e6691..f84f0a7 100644
+--- a/components/dashboard/sismat-saidas-view.tsx
++++ b/components/dashboard/sismat-saidas-view.tsx
+@@ -1,170 +1,224 @@
+ "use client";
+ 
+ import { useMemo, useState, type ReactNode } from "react";
+-import { useSismatSaidasMetrics } from "@/hooks/useSismatSaidasMetrics";
+-import type { SismatPeriodo } from "@/lib/sismat-metrics";
+-import type { SismatSaidaDimensao } from "@/lib/sismat-saidas-metrics";
+-import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
+-import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
+-import { fmtBRL, colorAt } from "./charts/sismat-format";
++import {
++  useSaidasRedmineOverview,
++  useSaidasRedmineTabela,
++} from "@/hooks/useSismatSaidasRedmine";
++import type {
++  RankItem,
++  SaidasRedmineFiltro,
++  SaidasRedmineFiltros,
++} from "@/lib/sismat-saidas-redmine-metrics";
+ import { MetricCard } from "./metric-card";
+-import { Panel, selectCn } from "./sismat-shared";
++import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
++import { fmtBRL, fmtBRLCompact, colorAt } from "./charts/sismat-format";
+ import { Combobox } from "@/components/ui/combobox";
+ import { Button } from "@/components/ui/button";
+ import {
+-  PackageOpen,
+-  Building2,
++  BarChart,
++  Bar,
++  XAxis,
++  YAxis,
++  CartesianGrid,
++  Tooltip,
++  ResponsiveContainer,
++  Cell,
++} from "recharts";
++import {
++  Coins,
++  FileText,
+   Pill,
++  ArrowUpFromLine,
++  Stethoscope,
++  Scale,
++  Layers,
+   MapPin,
+-  Landmark,
+-  TrendingUp,
+-  Calendar,
+-  Trophy,
++  ClipboardCheck,
++  PackageCheck,
++  Filter,
++  FilterX,
+   Loader2,
+   AlertTriangle,
+-  ArrowUpDown,
+-  Coins,
++  PackageOpen,
+ } from "lucide-react";
+ 
+-// ── Constantes de UI ──────────────────────────────────────────────────────────
+-
+-const DIMENSOES: { value: SismatSaidaDimensao; label: string; icon: ReactNode }[] = [
+-  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
+-  { value: "fornecedor", label: "Fornecedor", icon: <Building2 className="h-3.5 w-3.5" /> },
+-  { value: "uf", label: "UF", icon: <MapPin className="h-3.5 w-3.5" /> },
+-  { value: "tipoDestinatario", label: "Tipo destinatário", icon: <Landmark className="h-3.5 w-3.5" /> },
+-];
+-const DIM_LABEL: Record<SismatSaidaDimensao, string> = {
+-  material: "Material",
+-  fornecedor: "Fornecedor",
+-  uf: "UF",
+-  tipoDestinatario: "Tipo de destinatário",
+-};
+-const DIM_PLURAL: Record<SismatSaidaDimensao, string> = {
+-  material: "Materiais ativos",
+-  fornecedor: "Fornecedores ativos",
+-  uf: "UFs atendidas",
+-  tipoDestinatario: "Tipos de destinatário",
+-};
+-const PERIODOS: { value: SismatPeriodo; label: string }[] = [
+-  { value: "monthly", label: "Mensal" },
+-  { value: "yearly", label: "Anual" },
++// ─────────────────────────────────────────────────────────────────────────────
++// Saídas SISMAT × Redmine — réplica do dashboard_redmine_sismat.html:
++// KPIs globais, Top 20 medicamentos, Top 15 CRM/OAB, 4 distribuições,
++// filtros por atributo do Redmine e tabela dos processos com saídas.
++// Os gráficos são GLOBAIS (não refiltram); os filtros regem os KPIs
++// filtrados e a tabela — mesmo comportamento do dashboard de referência.
++// ─────────────────────────────────────────────────────────────────────────────
++
++const selectCn =
++  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
++
++/** Selects nativos (baixa cardinalidade); CRM e OAB usam Combobox pesquisável. */
++const FILTROS_SELECT: { key: SaidasRedmineFiltro; lbl: string }[] = [
++  { key: "grupo", lbl: "Grupo Temático" },
++  { key: "regiao", lbl: "Região Brasil" },
++  { key: "uf", lbl: "UF" },
++  { key: "forma", lbl: "Forma Cumprimento" },
++  { key: "modal", lbl: "Modalidade" },
++  { key: "sabast", lbl: "Status Abastec." },
++  { key: "status", lbl: "Status Redmine" },
+ ];
+-const TOP_N_OPCOES = [4, 8, 10, 15];
+-
+-// ── Componente ────────────────────────────────────────────────────────────────
+ 
+-export function SismatSaidasView() {
+-  const [dimension, setDimension] = useState<SismatSaidaDimensao>("material");
+-  const [period, setPeriod] = useState<SismatPeriodo>("monthly");
+-  const [topN, setTopN] = useState(8);
+-  const [entity, setEntity] = useState("");
+-  const [year, setYear] = useState("");
+-  const [sortField, setSortField] = useState<"name" | "valor">("valor");
+-  const [sortDir, setSortDir] = useState<1 | -1>(-1);
++const FILTROS_VAZIOS: Record<SaidasRedmineFiltro, string> = {
++  grupo: "",
++  regiao: "",
++  uf: "",
++  forma: "",
++  modal: "",
++  sabast: "",
++  status: "",
++  crm: "",
++  oab: "",
++};
+ 
+-  const { data, isLoading, error } = useSismatSaidasMetrics(dimension, period);
++const COLUNAS_TABELA: { key: string; lbl: string }[] = [
++  { key: "sei", lbl: "SEI" },
++  { key: "material", lbl: "Medicamento" },
++  { key: "valor", lbl: "Valor (R$)" },
++  { key: "crm", lbl: "CRM" },
++  { key: "oab", lbl: "OAB" },
++  { key: "grupo", lbl: "Grupo Temático" },
++  { key: "regiao", lbl: "Região" },
++  { key: "uf", lbl: "UF" },
++  { key: "forma", lbl: "Forma Cumprimento" },
++  { key: "modal", lbl: "Modalidade" },
++  { key: "sabast", lbl: "Status Abastec." },
++  { key: "status", lbl: "Status Redmine" },
++];
+ 
+-  const view = useMemo(() => {
+-    if (!data) return null;
+-    const { series, totalsByPeriod, years, grandTotal, hasData } = data;
++// ── Painel (mesmo visual das demais seções do SISMAT) ─────────────────────────
++
++function Panel({
++  icon,
++  title,
++  subtitle,
++  children,
++}: {
++  icon: ReactNode;
++  title: string;
++  subtitle?: string;
++  children: ReactNode;
++}) {
++  return (
++    <div className="rounded-lg border border-border bg-card p-6">
++      <div className="flex items-start gap-2 mb-1">
++        <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>
++        <div>
++          <h3 className="text-base font-semibold leading-tight">{title}</h3>
++          {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
++        </div>
++      </div>
++      <div className="mt-4">{children}</div>
++    </div>
++  );
++}
+ 
+-    const yearOf = (p: string) => Number(period === "monthly" ? p.slice(0, 4) : p);
+-    const fy = year ? Number(year) : null;
++// ── Barras horizontais (rankings por valor) ───────────────────────────────────
++
++function HBarTooltip({
++  active,
++  payload,
++}: {
++  active?: boolean;
++  payload?: Array<{ payload: { nome: string; valor: number } }>;
++}) {
++  if (!active || !payload?.length) return null;
++  const d = payload[0].payload;
++  return (
++    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs max-w-xs">
++      <p className="font-semibold text-foreground leading-snug">{d.nome}</p>
++      <p className="text-muted-foreground tabular-nums mt-1">{fmtBRL(d.valor)}</p>
++    </div>
++  );
++}
+ 
+-    const periods = totalsByPeriod
+-      .map((t) => t.period)
+-      .sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
+-    const totalByPeriod: Record<string, number> = {};
+-    totalsByPeriod.forEach((t) => (totalByPeriod[t.period] = t.valor));
++function RankingBarChart({
++  items,
++  height,
++  maxLabel = 36,
++}: {
++  items: RankItem[];
++  height: number;
++  maxLabel?: number;
++}) {
++  const data = items.map((d) => ({
++    nome: d.l,
++    label: d.l.length > maxLabel ? d.l.slice(0, maxLabel - 1) + "…" : d.l,
++    valor: d.v,
++  }));
++  if (!data.length) {
++    return (
++      <div
++        className="flex items-center justify-center text-sm text-muted-foreground"
++        style={{ height }}
++      >
++        Sem dados para o ranking.
++      </div>
++    );
++  }
++  return (
++    <ResponsiveContainer width="100%" height={height}>
++      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
++        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" opacity={0.25} />
++        <XAxis
++          type="number"
++          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
++          tickFormatter={(v: number) => fmtBRLCompact(v)}
++        />
++        <YAxis
++          type="category"
++          dataKey="label"
++          width={Math.min(250, maxLabel * 7)}
++          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
++          interval={0}
++        />
++        <Tooltip content={<HBarTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
++        <Bar dataKey="valor" radius={[0, 3, 3, 0]}>
++          {data.map((_, i) => (
++            <Cell key={i} fill={colorAt(i)} />
++          ))}
++        </Bar>
++      </BarChart>
++    </ResponsiveContainer>
++  );
++}
+ 
+-    const aggregateByEntity = (filterYear: number | null) => {
+-      const m = new Map<string, number>();
+-      for (const s of series) {
+-        if (filterYear && yearOf(s.period) !== filterYear) continue;
+-        m.set(s.key, (m.get(s.key) ?? 0) + s.valor);
+-      }
+-      return m;
+-    };
++// ── Distribuições (pizza) ─────────────────────────────────────────────────────
+ 
+-    const totalsAll = aggregateByEntity(null);
+-    const entityOptions = Array.from(totalsAll.entries())
+-      .sort((a, b) => b[1] - a[1])
+-      .map(([k]) => ({ value: k }));
++function Distribuicao({ items }: { items: RankItem[] }) {
++  const data: SismatPieDatum[] = items.map((d) => ({ name: d.l, valor: d.v }));
++  const total = items.reduce((s, d) => s + d.v, 0);
++  return <SismatPieChart data={data} grandTotal={total} />;
++}
+ 
+-    const totalsFiltered = aggregateByEntity(fy);
+-    const rankingSorted = Array.from(totalsFiltered.entries())
+-      .sort((a, b) => b[1] - a[1])
+-      .map(([name, valor]) => ({ name, valor }));
+-    const grandFiltered = rankingSorted.reduce((s, r) => s + r.valor, 0);
+-    const tableRows = rankingSorted.map((r) => ({
+-      ...r,
+-      pct: grandFiltered ? (r.valor / grandFiltered) * 100 : 0,
+-    }));
++// ── Componente principal ──────────────────────────────────────────────────────
+ 
+-    const top10 = rankingSorted.slice(0, 10);
+-    const outrosSum = rankingSorted.slice(10).reduce((s, r) => s + r.valor, 0);
+-    const pieData: SismatPieDatum[] = top10.map((r) => ({ name: r.name, valor: r.valor }));
+-    if (outrosSum > 0) pieData.push({ name: "Outros", valor: outrosSum, isOutros: true });
++export function SismatSaidasView() {
++  const [filtros, setFiltros] = useState<Record<SaidasRedmineFiltro, string>>(FILTROS_VAZIOS);
+ 
+-    const entitiesToShow = entity
+-      ? [entity]
+-      : Array.from(totalsAll.entries())
+-          .sort((a, b) => b[1] - a[1])
+-          .slice(0, topN)
+-          .map(([k]) => k);
+-    const byEntity: Record<string, Record<string, number>> = {};
+-    entitiesToShow.forEach((e) => (byEntity[e] = {}));
+-    for (const s of series) {
+-      if (byEntity[s.key]) byEntity[s.key][s.period] = (byEntity[s.key][s.period] ?? 0) + s.valor;
++  const filtrosAtivos = useMemo<SaidasRedmineFiltros>(() => {
++    const f: SaidasRedmineFiltros = {};
++    for (const [k, v] of Object.entries(filtros)) {
++      if (v) f[k as SaidasRedmineFiltro] = v;
+     }
+-    const evoData = periods.map((p) => {
+-      const row: Record<string, string | number> = { period: p };
+-      entitiesToShow.forEach((e) => (row[e] = byEntity[e][p] ?? 0));
+-      row[SISMAT_TOTAL_KEY] = totalByPeriod[p] ?? 0;
+-      return row;
+-    });
++    return f;
++  }, [filtros]);
++  const temFiltro = Object.keys(filtrosAtivos).length > 0;
+ 
+-    const totalGeral = fy
+-      ? totalsByPeriod.filter((t) => yearOf(t.period) === fy).reduce((s, t) => s + t.valor, 0)
+-      : grandTotal;
+-    const periodLabel = fy
+-      ? `Ano ${fy}`
+-      : years.length
+-        ? `${years[0]} – ${years[years.length - 1]}`
+-        : "—";
++  const { data: over, isLoading, error } = useSaidasRedmineOverview();
++  const tabela = useSaidasRedmineTabela(filtrosAtivos);
+ 
+-    return {
+-      hasData,
+-      years,
+-      evoData,
+-      entitiesToShow,
+-      entityOptions,
+-      tableRows,
+-      pieData,
+-      grandFiltered,
+-      totalGeral,
+-      nEntities: totalsFiltered.size,
+-      periodLabel,
+-      maiorItem: rankingSorted[0]?.name ?? "—",
+-    };
+-  }, [data, period, topN, entity, year]);
+-
+-  const dimLabel = DIM_LABEL[dimension];
+-
+-  const tableRowsSorted = useMemo(() => {
+-    if (!view) return [];
+-    return [...view.tableRows].sort((a, b) =>
+-      sortField === "name" ? sortDir * a.name.localeCompare(b.name, "pt-BR") : sortDir * (a.valor - b.valor)
+-    );
+-  }, [view, sortField, sortDir]);
+-
+-  function toggleSort(field: "name" | "valor") {
+-    if (sortField === field) setSortDir((d) => (d === 1 ? -1 : 1));
+-    else {
+-      setSortField(field);
+-      setSortDir(field === "name" ? 1 : -1);
+-    }
++  function setF(key: SaidasRedmineFiltro, value: string) {
++    setFiltros((prev) => ({ ...prev, [key]: value }));
++  }
++  function limpar() {
++    setFiltros(FILTROS_VAZIOS);
+   }
+ 
+   if (isLoading) {
+@@ -180,7 +234,7 @@ export function SismatSaidasView() {
+       <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-2">
+         <div className="flex items-center gap-2 text-destructive">
+           <AlertTriangle className="h-4 w-4" />
+-          <span className="font-medium text-sm">Erro ao carregar as saídas do SISMAT</span>
++          <span className="font-medium text-sm">Erro ao carregar as saídas cruzadas com o Redmine</span>
+         </div>
+         <p className="text-xs text-muted-foreground">
+           {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
+@@ -189,198 +243,217 @@ export function SismatSaidasView() {
+     );
+   }
+ 
+-  if (!view || !view.hasData) {
++  if (!over || !over.hasData) {
+     return (
+       <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
+         <PackageOpen className="h-8 w-8 mx-auto text-muted-foreground" />
+         <p className="text-sm font-medium">Nenhuma saída do SISMAT encontrada</p>
+         <p className="text-xs text-muted-foreground">
+-          Rode a importação: <code>npx tsx scripts/import-sismat-saidas.ts --truncate --confirm</code> após
+-          aplicar o schema com <code>prisma db push</code>.
++          Após <code>npx prisma db push</code>, rode as importações:{" "}
++          <code>npm run import:sismat-saidas -- --truncate --confirm --file=&quot;…Saidas.xlsx&quot;</code>{" "}
++          e <code>npm run import:redmine-sei -- --truncate --confirm --file=&quot;…baseRedmine.xlsx&quot;</code>.
+         </p>
+       </div>
+     );
+   }
+ 
+-  const maxTabela = Math.max(...tableRowsSorted.map((r) => r.valor), 1);
++  const kpisFilt = tabela.data?.kpis;
+ 
+   return (
+-    <div className="space-y-6">
+-      {/* ── Controles ──────────────────────────────────────────────────────── */}
+-      <div className="flex flex-wrap items-end gap-4 bg-card border border-border rounded-xl p-4 shadow-sm">
+-        <div className="flex flex-col gap-1.5">
+-          <span className="text-xs text-muted-foreground">Dimensão</span>
+-          <div className="flex flex-wrap gap-1">
+-            {DIMENSOES.map((d) => (
+-              <Button
+-                key={d.value}
+-                size="sm"
+-                variant={dimension === d.value ? "default" : "outline"}
+-                onClick={() => {
+-                  setDimension(d.value);
+-                  setEntity("");
+-                }}
+-              >
+-                {d.icon}
+-                <span className="ml-1.5">{d.label}</span>
+-              </Button>
+-            ))}
+-          </div>
+-        </div>
++    <div className="space-y-4">
++      {/* ── KPIs globais ─────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
++        <MetricCard label="Valor Total de Saída" value={fmtBRL(over.kpis.valor)} subtext="SISMAT" icon={<Coins className="h-4 w-4" />} />
++        <MetricCard label="Processos Únicos" value={over.kpis.processos} subtext="por nº SEI" icon={<FileText className="h-4 w-4" />} />
++        <MetricCard label="Medicamentos" value={over.kpis.medicamentos} subtext="distintos" icon={<Pill className="h-4 w-4" />} />
++        <MetricCard label="Total de Saídas" value={over.kpis.saidas} subtext="linhas SISMAT" icon={<ArrowUpFromLine className="h-4 w-4" />} />
++      </div>
+ 
+-        <div className="flex flex-col gap-1.5">
+-          <span className="text-xs text-muted-foreground">Período</span>
+-          <div className="flex gap-1">
+-            {PERIODOS.map((p) => (
+-              <Button
+-                key={p.value}
+-                size="sm"
+-                variant={period === p.value ? "default" : "outline"}
+-                onClick={() => setPeriod(p.value)}
+-              >
+-                {p.label}
+-              </Button>
+-            ))}
+-          </div>
+-        </div>
++      {/* ── Top 20 medicamentos ──────────────────────────────────────────── */}
++      <Panel
++        icon={<Pill className="h-4 w-4" />}
++        title="Top 20 Medicamentos por Valor Total de Saída"
++        subtitle="Soma do valor das saídas SISMAT por material"
++      >
++        <RankingBarChart items={over.topMed} height={560} maxLabel={38} />
++      </Panel>
+ 
+-        <div className="flex flex-col gap-1.5">
+-          <span className="text-xs text-muted-foreground">Top N (evolução)</span>
+-          <select
+-            className={selectCn}
+-            value={topN}
+-            onChange={(e) => setTopN(Number(e.target.value))}
+-            disabled={!!entity}
+-          >
+-            {TOP_N_OPCOES.map((n) => (
+-              <option key={n} value={n}>
+-                Top {n}
+-              </option>
+-            ))}
+-          </select>
+-        </div>
++      {/* ── Top CRM / OAB ────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
++        <Panel
++          icon={<Stethoscope className="h-4 w-4" />}
++          title="Top 15 por Número CRM"
++          subtitle="Prescritores com maior valor de saída (cruzamento Redmine por SEI)"
++        >
++          <RankingBarChart items={over.porCrm} height={360} maxLabel={18} />
++        </Panel>
++        <Panel
++          icon={<Scale className="h-4 w-4" />}
++          title="Top 15 por Número OAB"
++          subtitle="Advogados com maior valor de saída (cruzamento Redmine por SEI)"
++        >
++          <RankingBarChart items={over.porOab} height={360} maxLabel={18} />
++        </Panel>
++      </div>
+ 
+-        <div className="flex flex-col gap-1.5">
+-          <span className="text-xs text-muted-foreground">{dimLabel} específico</span>
+-          <Combobox
+-            value={entity}
+-            onChange={setEntity}
+-            options={view.entityOptions}
+-            placeholder="(Top N automático)"
+-            searchPlaceholder={`Buscar ${dimLabel.toLowerCase()}...`}
+-            allLabel="(Top N automático)"
+-            emptyText="Nenhum item encontrado."
+-            className="w-60"
+-          />
+-        </div>
++      {/* ── Distribuições ────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
++        <Panel icon={<Layers className="h-4 w-4" />} title="Por Grupo Temático">
++          <Distribuicao items={over.porGrupo} />
++        </Panel>
++        <Panel icon={<MapPin className="h-4 w-4" />} title="Por Região Brasil">
++          <Distribuicao items={over.porRegiao} />
++        </Panel>
++      </div>
++      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
++        <Panel icon={<ClipboardCheck className="h-4 w-4" />} title="Por Forma de Cumprimento">
++          <Distribuicao items={over.porForma} />
++        </Panel>
++        <Panel icon={<PackageCheck className="h-4 w-4" />} title="Por Status do Abastecimento">
++          <Distribuicao items={over.porSabast} />
++        </Panel>
++      </div>
+ 
+-        <div className="flex flex-col gap-1.5">
+-          <span className="text-xs text-muted-foreground">Ano (ranking/pizza)</span>
+-          <select className={selectCn} value={year} onChange={(e) => setYear(e.target.value)}>
+-            <option value="">Todos os anos</option>
+-            {view.years.map((y) => (
+-              <option key={y} value={y}>
+-                {y}
+-              </option>
+-            ))}
+-          </select>
++      {/* ── Filtros ──────────────────────────────────────────────────────── */}
++      <Panel
++        icon={<Filter className="h-4 w-4" />}
++        title="Filtros"
++        subtitle="Regem os totais filtrados e a tabela abaixo (os gráficos acima são globais)"
++      >
++        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
++          {FILTROS_SELECT.map(({ key, lbl }) => (
++            <div key={key} className="space-y-1">
++              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
++                {lbl}
++              </label>
++              <select
++                className={selectCn}
++                value={filtros[key]}
++                onChange={(e) => setF(key, e.target.value)}
++              >
++                <option value="">Todos</option>
++                {over.opcoes[key].map((o) => (
++                  <option key={o.value} value={o.value}>
++                    {o.value}
++                  </option>
++                ))}
++              </select>
++            </div>
++          ))}
++          <div className="space-y-1">
++            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
++              CRM
++            </label>
++            <Combobox
++              value={filtros.crm}
++              onChange={(v) => setF("crm", v)}
++              options={over.opcoes.crm.map((o) => ({ value: o.value, count: o.count }))}
++              placeholder="Todos"
++              searchPlaceholder="Buscar CRM…"
++              allLabel="Todos"
++            />
++          </div>
++          <div className="space-y-1">
++            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
++              OAB
++            </label>
++            <Combobox
++              value={filtros.oab}
++              onChange={(v) => setF("oab", v)}
++              options={over.opcoes.oab.map((o) => ({ value: o.value, count: o.count }))}
++              placeholder="Todos"
++              searchPlaceholder="Buscar OAB…"
++              allLabel="Todos"
++            />
++          </div>
++          <div className="flex items-end">
++            <Button variant="outline" size="sm" onClick={limpar} disabled={!temFiltro} className="gap-1.5">
++              <FilterX className="h-3.5 w-3.5" />
++              Limpar Filtros
++            </Button>
++          </div>
+         </div>
+-      </div>
++      </Panel>
+ 
+-      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
+-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+-        <MetricCard label="Saídas totais" value={fmtBRL(view.totalGeral)} icon={<PackageOpen className="h-5 w-5" />} />
+-        <MetricCard
+-          label={DIM_PLURAL[dimension]}
+-          value={view.nEntities}
+-          icon={<Building2 className="h-5 w-5" />}
+-          description={`Distintos${year ? ` em ${year}` : ""}`}
+-        />
+-        <MetricCard label="Período coberto" value={view.periodLabel} icon={<Calendar className="h-5 w-5" />} />
+-        <MetricCard
+-          label="Maior item"
+-          value={view.maiorItem.length > 22 ? view.maiorItem.slice(0, 21) + "…" : view.maiorItem}
+-          icon={<Trophy className="h-5 w-5" />}
+-          description={`Por ${dimLabel.toLowerCase()}`}
+-        />
++      {/* ── Totais filtrados ─────────────────────────────────────────────── */}
++      <div className="flex items-center gap-2">
++        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
++          Totais Filtrados
++        </h3>
++        <span
++          className={
++            "text-[10px] font-bold rounded px-1.5 py-0.5 " +
++            (temFiltro
++              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
++              : "bg-primary/10 text-primary")
++          }
++        >
++          {temFiltro ? "FILTRADO" : "SEM FILTRO"}
++        </span>
++        {tabela.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
++      </div>
++      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
++        <MetricCard label="Valor Total de Saída" value={kpisFilt ? fmtBRL(kpisFilt.valor) : "—"} subtext="SISMAT" icon={<Coins className="h-4 w-4" />} />
++        <MetricCard label="Processos Únicos" value={kpisFilt?.processos ?? 0} subtext="por nº SEI" icon={<FileText className="h-4 w-4" />} />
++        <MetricCard label="Medicamentos" value={kpisFilt?.medicamentos ?? 0} subtext="distintos" icon={<Pill className="h-4 w-4" />} />
++        <MetricCard label="Total de Saídas" value={kpisFilt?.saidas ?? 0} subtext="linhas SISMAT" icon={<ArrowUpFromLine className="h-4 w-4" />} />
+       </div>
+ 
+-      {/* ── Evolução ───────────────────────────────────────────────────────── */}
++      {/* ── Tabela de processos com saídas ───────────────────────────────── */}
+       <Panel
+-        icon={<TrendingUp className="h-4 w-4" />}
+-        title={`Evolução ${period === "monthly" ? "mensal" : "anual"} das saídas por ${dimLabel.toLowerCase()}`}
++        icon={<FileText className="h-4 w-4" />}
++        title="Processos com Saídas"
+         subtitle={
+-          entity
+-            ? `Série de "${entity}" vs. total geral (linha tracejada)`
+-            : `Top ${topN} por valor + total geral (linha tracejada) · somente entregas (devoluções excluídas)`
++          tabela.data
++            ? `${tabela.data.total.toLocaleString("pt-BR")} registro(s)` +
++              (tabela.data.total > tabela.data.limite
++                ? ` — exibindo os ${tabela.data.limite} de maior valor`
++                : "")
++            : "Carregando…"
+         }
+       >
+-        <SismatEvolutionChart data={view.evoData} entities={view.entitiesToShow} periodType={period} />
+-      </Panel>
+-
+-      {/* ── Ranking + Pizza ────────────────────────────────────────────────── */}
+-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+-        <Panel
+-          icon={<Coins className="h-4 w-4" />}
+-          title={`Ranking por ${dimLabel.toLowerCase()}`}
+-          subtitle={`Valor total de saída${year ? ` — ano ${year}` : ""} · ${view.tableRows.length} itens`}
+-        >
+-          <div className="max-h-[360px] overflow-y-auto pr-1">
+-            <table className="w-full text-sm">
+-              <thead className="sticky top-0 bg-card">
+-                <tr className="border-b border-border text-xs text-muted-foreground">
+-                  <th className="text-left py-2 font-medium">
+-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("name")}>
+-                      {dimLabel} <ArrowUpDown className="h-3 w-3" />
+-                    </button>
+-                  </th>
+-                  <th className="text-right py-2 font-medium">
+-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("valor")}>
+-                      Valor <ArrowUpDown className="h-3 w-3" />
+-                    </button>
++        <div className="overflow-auto max-h-[440px] rounded-md border border-border">
++          <table className="w-full text-xs border-collapse">
++            <thead>
++              <tr>
++                {COLUNAS_TABELA.map((c) => (
++                  <th
++                    key={c.key}
++                    className="sticky top-0 z-10 bg-primary text-primary-foreground text-left font-semibold px-3 py-2 whitespace-nowrap"
++                  >
++                    {c.lbl}
+                   </th>
+-                  <th className="text-right py-2 font-medium w-14">%</th>
+-                </tr>
+-              </thead>
+-              <tbody>
+-                {tableRowsSorted.map((r, i) => (
+-                  <tr key={r.name} className="border-b border-border/50">
+-                    <td className="py-2 pr-2">
+-                      <div className="flex items-center gap-2 min-w-0">
+-                        <span
+-                          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+-                          style={{ backgroundColor: colorAt(i) }}
+-                        />
+-                        <span className="truncate" title={r.name}>
+-                          {r.name}
+-                        </span>
+-                      </div>
+-                    </td>
+-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">
+-                      <div>{fmtBRL(r.valor)}</div>
+-                      <div className="h-1 mt-1 rounded bg-muted overflow-hidden">
+-                        <div
+-                          className="h-full rounded"
+-                          style={{ width: `${(r.valor / maxTabela) * 100}%`, backgroundColor: colorAt(i) }}
+-                        />
+-                      </div>
+-                    </td>
+-                    <td className="py-2 text-right tabular-nums text-muted-foreground">{r.pct.toFixed(1)}%</td>
+-                  </tr>
+                 ))}
+-              </tbody>
+-            </table>
+-          </div>
+-        </Panel>
+-
+-        <Panel
+-          icon={<Coins className="h-4 w-4" />}
+-          title="Distribuição (Top 10)"
+-          subtitle={`Participação nas saídas${year ? ` — ano ${year}` : ""}`}
+-        >
+-          <SismatPieChart data={view.pieData} grandTotal={view.grandFiltered} />
+-        </Panel>
+-      </div>
++              </tr>
++            </thead>
++            <tbody>
++              {(tabela.data?.rows ?? []).map((r, i) => (
++                <tr key={`${r.sei}-${i}`} className="border-b border-border/50 hover:bg-accent/40">
++                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate" title={r.sei}>{r.sei}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[260px] truncate" title={r.material}>{r.material}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap text-right font-semibold tabular-nums text-primary">{fmtBRL(r.valor)}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.crm}>{r.crm}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.oab}>{r.oab}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate" title={r.grupo}>{r.grupo}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.regiao}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.uf}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.forma}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.modal}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.sabast}</td>
++                  <td className="px-3 py-1.5 whitespace-nowrap">{r.status}</td>
++                </tr>
++              ))}
++              {tabela.data && tabela.data.rows.length === 0 && (
++                <tr>
++                  <td colSpan={COLUNAS_TABELA.length} className="px-3 py-6 text-center text-muted-foreground">
++                    Nenhum registro para os filtros selecionados.
++                  </td>
++                </tr>
++              )}
++            </tbody>
++          </table>
++        </div>
++      </Panel>
+     </div>
+   );
+ }
+diff --git a/hooks/useSismatSaidasMetrics.ts b/hooks/useSismatSaidasMetrics.ts
+deleted file mode 100644
+index 4870483..0000000
+--- a/hooks/useSismatSaidasMetrics.ts
++++ /dev/null
+@@ -1,25 +0,0 @@
+-"use client";
+-
+-import { useQuery } from "@tanstack/react-query";
+-import type { SismatPeriodo } from "@/lib/sismat-metrics";
+-import type { SismatSaidasMetricsData, SismatSaidaDimensao } from "@/lib/sismat-saidas-metrics";
+-
+-/**
+- * Carrega as métricas de saídas SISMAT para uma (dimensão × período).
+- * Cache longo (1h): base de referência, muda pouco.
+- */
+-export function useSismatSaidasMetrics(dimension: SismatSaidaDimensao, period: SismatPeriodo) {
+-  return useQuery<SismatSaidasMetricsData>({
+-    queryKey: ["sismat-saidas-metrics", dimension, period],
+-    queryFn: async () => {
+-      const params = new URLSearchParams({ dimension, period });
+-      const res = await fetch(`/api/sismat/saidas/metrics?${params.toString()}`);
+-      if (!res.ok) {
+-        throw new Error("Erro ao carregar métricas de saídas SISMAT");
+-      }
+-      return res.json();
+-    },
+-    staleTime: 60 * 60 * 1000,
+-    gcTime: 2 * 60 * 60 * 1000,
+-  });
+-}
+diff --git a/hooks/useSismatSaidasRedmine.ts b/hooks/useSismatSaidasRedmine.ts
+new file mode 100644
+index 0000000..99e37d3
+--- /dev/null
++++ b/hooks/useSismatSaidasRedmine.ts
+@@ -0,0 +1,53 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type {
++  SaidasRedmineOverview,
++  SaidasRedmineTabela,
++  SaidasRedmineFiltros,
++} from "@/lib/sismat-saidas-redmine-metrics";
++
++/**
++ * Agregados globais do cruzamento Saídas SISMAT × Redmine (gráficos estáticos
++ * + opções de filtro). Cache longo (1h): base de referência, muda pouco.
++ */
++export function useSaidasRedmineOverview() {
++  return useQuery<SaidasRedmineOverview>({
++    queryKey: ["sismat-saidas-redmine-overview"],
++    queryFn: async () => {
++      const res = await fetch("/api/sismat/saidas/redmine");
++      if (!res.ok) {
++        throw new Error("Erro ao carregar o cruzamento Saídas × Redmine");
++      }
++      return res.json();
++    },
++    staleTime: 60 * 60 * 1000,
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
++
++/**
++ * KPIs filtrados + primeiras 500 linhas da tabela, conforme os filtros ativos.
++ */
++export function useSaidasRedmineTabela(filtros: SaidasRedmineFiltros) {
++  const params = new URLSearchParams();
++  for (const [k, v] of Object.entries(filtros)) {
++    if (v) params.set(k, v);
++  }
++  const qs = params.toString();
++
++  return useQuery<SaidasRedmineTabela>({
++    queryKey: ["sismat-saidas-redmine-tabela", qs],
++    queryFn: async () => {
++      const res = await fetch(`/api/sismat/saidas/redmine/tabela${qs ? `?${qs}` : ""}`);
++      if (!res.ok) {
++        throw new Error("Erro ao filtrar o cruzamento Saídas × Redmine");
++      }
++      return res.json();
++    },
++    // mantém os dados anteriores enquanto o novo filtro carrega (sem "piscar")
++    placeholderData: (prev) => prev,
++    staleTime: 5 * 60 * 1000,
++    gcTime: 30 * 60 * 1000,
++  });
++}
+diff --git a/lib/sismat-estoque-metrics.ts b/lib/sismat-estoque-metrics.ts
+index 5fdd0ed..7535e45 100644
+--- a/lib/sismat-estoque-metrics.ts
++++ b/lib/sismat-estoque-metrics.ts
+@@ -1,6 +1,8 @@
+ import { db } from "@/lib/db";
+ import { TIPOS_AQUISICAO, type SismatPeriodo } from "@/lib/sismat-metrics";
+-import { PROG_SAIDA_AQUISICAO } from "@/lib/sismat-saidas-metrics";
++
++/** Programa Saúde que caracteriza saída efetiva (entrega ao destinatário). */
++const PROG_SAIDA_AQUISICAO = "DEMANDA JUDICIAL - Aquisição";
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+ // Métricas cruzadas Entradas × Saídas (inspirado no Relatório de Logística da
+diff --git a/lib/sismat-saidas-metrics.ts b/lib/sismat-saidas-metrics.ts
+deleted file mode 100644
+index 6693a2e..0000000
+--- a/lib/sismat-saidas-metrics.ts
++++ /dev/null
+@@ -1,111 +0,0 @@
+-import { db } from "@/lib/db";
+-import type { SismatPeriodo, SismatSeriesPoint, SismatTotalPoint } from "@/lib/sismat-metrics";
+-
+-// ─────────────────────────────────────────────────────────────────────────────
+-// Métricas do dashboard de Saídas SISMAT (entregas/baixas de material)
+-//
+-// Recorte de "saída efetiva": Programa Saúde = "DEMANDA JUDICIAL - Aquisição".
+-// Devoluções (1.540 linhas, ~R$ 288 mi) têm valor mas não são entrega ao
+-// destinatário — ficam fora, espelhando o recorte de aquisições das entradas.
+-// A série temporal usa dtBaixa (granularidade MENSAL — a base não tem dia).
+-// ─────────────────────────────────────────────────────────────────────────────
+-
+-export const SISMAT_SAIDA_DIMENSOES = ["material", "fornecedor", "uf", "tipoDestinatario"] as const;
+-export type SismatSaidaDimensao = (typeof SISMAT_SAIDA_DIMENSOES)[number];
+-
+-/** Programa Saúde que caracteriza saída efetiva (entrega). */
+-export const PROG_SAIDA_AQUISICAO = "DEMANDA JUDICIAL - Aquisição";
+-
+-export const SISMAT_SAIDA_DIM_LABELS: Record<SismatSaidaDimensao, string> = {
+-  material: "Material",
+-  fornecedor: "Fornecedor",
+-  uf: "UF",
+-  tipoDestinatario: "Tipo de destinatário",
+-};
+-
+-export interface SismatSaidasMetricsData {
+-  dimension: SismatSaidaDimensao;
+-  period: SismatPeriodo;
+-  series: SismatSeriesPoint[];
+-  totalsByPeriod: SismatTotalPoint[];
+-  years: number[];
+-  grandTotal: number;
+-  hasData: boolean;
+-}
+-
+-const DIM_FIELD: Record<SismatSaidaDimensao, "materialNome" | "fornecedor" | "uf" | "tipoDestinatario"> = {
+-  material: "materialNome",
+-  fornecedor: "fornecedor",
+-  uf: "uf",
+-  tipoDestinatario: "tipoDestinatario",
+-};
+-
+-function periodKey(d: Date, period: SismatPeriodo): string {
+-  const y = d.getUTCFullYear();
+-  if (period === "yearly") return String(y);
+-  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+-  return `${y}-${m}`;
+-}
+-
+-export async function getSismatSaidasMetrics(
+-  dimension: SismatSaidaDimensao,
+-  period: SismatPeriodo
+-): Promise<SismatSaidasMetricsData> {
+-  const field = DIM_FIELD[dimension];
+-
+-  const rows = await db.sismatSaida.findMany({
+-    where: {
+-      progSaude: PROG_SAIDA_AQUISICAO,
+-      dtBaixa: { not: null },
+-    },
+-    select: {
+-      dtBaixa: true,
+-      valorTotal: true,
+-      materialNome: true,
+-      fornecedor: true,
+-      uf: true,
+-      tipoDestinatario: true,
+-    },
+-  });
+-
+-  const seriesMap = new Map<string, number>();
+-  const totalMap = new Map<string, number>();
+-  const yearsSet = new Set<number>();
+-  let grandTotal = 0;
+-
+-  for (const r of rows) {
+-    if (!r.dtBaixa) continue;
+-    const val = r.valorTotal == null ? 0 : Number(r.valorTotal);
+-    const pk = periodKey(r.dtBaixa, period);
+-
+-    yearsSet.add(r.dtBaixa.getUTCFullYear());
+-    totalMap.set(pk, (totalMap.get(pk) ?? 0) + val);
+-    grandTotal += val;
+-
+-    const key = (r[field] ?? "").toString().trim();
+-    if (!key) continue;
+-    const sk = `${pk}\u0000${key}`;
+-    seriesMap.set(sk, (seriesMap.get(sk) ?? 0) + val);
+-  }
+-
+-  const series: SismatSeriesPoint[] = [];
+-  for (const [k, valor] of seriesMap) {
+-    const sep = k.indexOf("\u0000");
+-    series.push({ period: k.slice(0, sep), key: k.slice(sep + 1), valor });
+-  }
+-
+-  const totalsByPeriod: SismatTotalPoint[] = Array.from(totalMap, ([p, valor]) => ({
+-    period: p,
+-    valor,
+-  }));
+-
+-  return {
+-    dimension,
+-    period,
+-    series,
+-    totalsByPeriod,
+-    years: Array.from(yearsSet).sort((a, b) => a - b),
+-    grandTotal,
+-    hasData: rows.length > 0,
+-  };
+-}
+diff --git a/lib/sismat-saidas-redmine-metrics.ts b/lib/sismat-saidas-redmine-metrics.ts
+new file mode 100644
+index 0000000..fa33ece
+--- /dev/null
++++ b/lib/sismat-saidas-redmine-metrics.ts
+@@ -0,0 +1,211 @@
++import { db } from "@/lib/db";
++import { Prisma } from "@prisma/client";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Dashboard de Saídas — SISMAT × Redmine (por nº SEI)
++//
++// Cada saída do SISMAT carrega o nº SEI como ÚLTIMO TOKEN do campo
++// destinatario ("FULANO DE TAL 00737.001234/2020-11"). O token é extraído em
++// SQL e cruzado com sismat.RedmineSeiAtributos (1 linha por NUP, gerada pelo
++// scripts/import-redmine-sei.ts a partir da base Redmine), trazendo CRM, OAB,
++// Grupo Temático, Região, UF, Forma de Cumprimento, Modalidade, Status do
++// Abastecimento e Status Redmine para cada saída.
++//
++// Recorte: TODAS as linhas de SismatSaida (Aquisição + Devolução) — réplica do
++// dashboard_redmine_sismat.html de referência (43.550 saídas, R$ 10,82 bi).
++// Difere do recorte "só Aquisição" usado no comparativo E×S do Estoque.
++//
++// Saídas cujo último token não é um NUP válido (ex.: destinatário "… LTDA" de
++// devoluções) simplesmente não casam com o Redmine e aparecem com atributos
++// vazios — comportamento idêntico ao dashboard de referência.
++// ─────────────────────────────────────────────────────────────────────────────
++
++/** Último token do destinatario = nº SEI candidato ('' quando não há). */
++const SEI_EXPR = Prisma.sql`COALESCE(NULLIF(regexp_replace(btrim(s."destinatario"), '^.*\\s', ''), ''), '')`;
++
++/** SELECT base do cruzamento (LEFT JOIN — saída sem match fica com attrs ''). */
++const BASE_SELECT = Prisma.sql`
++  SELECT
++    COALESCE(s."valorTotal", 0)::float8      AS valor,
++    s."material"                             AS material,
++    ${SEI_EXPR}                              AS sei,
++    COALESCE(a."crm", '')                    AS crm,
++    COALESCE(a."oab", '')                    AS oab,
++    COALESCE(a."grupoTematico", '')          AS grupo,
++    COALESCE(a."regiaoBrasil", '')           AS regiao,
++    COALESCE(a."ufResidencia", '')           AS uf,
++    COALESCE(a."formaCumprimento", '')       AS forma,
++    COALESCE(a."modalidadeTratamento", '')   AS modal,
++    COALESCE(a."statusAbastecimento", '')    AS sabast,
++    COALESCE(a."statusRedmine", '')          AS status
++  FROM sismat."SismatSaida" s
++  LEFT JOIN sismat."RedmineSeiAtributos" a
++    ON a."sei" = NULLIF(regexp_replace(btrim(s."destinatario"), '^.*\\s', ''), '')
++`;
++
++// ── Tipos ─────────────────────────────────────────────────────────────────────
++
++export interface SaidaRedmineRow {
++  valor: number;
++  material: string;
++  sei: string;
++  crm: string;
++  oab: string;
++  grupo: string;
++  regiao: string;
++  uf: string;
++  forma: string;
++  modal: string;
++  sabast: string;
++  status: string;
++}
++
++export interface SaidasRedmineKpis {
++  valor: number;
++  processos: number; // SEIs distintos (token não-vazio)
++  medicamentos: number; // materiais distintos
++  saidas: number; // linhas
++}
++
++export interface RankItem {
++  l: string;
++  v: number;
++}
++
++export interface FiltroOpcao {
++  value: string;
++  count: number;
++}
++
++/** Campos filtráveis — equivalem às colunas de atributos do cruzamento. */
++export const SAIDAS_REDMINE_FILTROS = [
++  "grupo",
++  "regiao",
++  "uf",
++  "forma",
++  "modal",
++  "sabast",
++  "status",
++  "crm",
++  "oab",
++] as const;
++export type SaidasRedmineFiltro = (typeof SAIDAS_REDMINE_FILTROS)[number];
++export type SaidasRedmineFiltros = Partial<Record<SaidasRedmineFiltro, string>>;
++
++export interface SaidasRedmineOverview {
++  kpis: SaidasRedmineKpis;
++  topMed: RankItem[]; // Top 20 medicamentos por valor
++  porCrm: RankItem[]; // Top 15 CRM por valor
++  porOab: RankItem[]; // Top 15 OAB por valor
++  porGrupo: RankItem[];
++  porRegiao: RankItem[];
++  porForma: RankItem[];
++  porSabast: RankItem[];
++  opcoes: Record<SaidasRedmineFiltro, FiltroOpcao[]>;
++  hasData: boolean;
++}
++
++export interface SaidasRedmineTabela {
++  kpis: SaidasRedmineKpis; // sobre TODAS as linhas que casam com os filtros
++  total: number; // nº de linhas que casam
++  rows: SaidaRedmineRow[]; // primeiras `limite`, por valor desc
++  limite: number;
++}
++
++// ── Helpers de agregação ──────────────────────────────────────────────────────
++
++function kpisDe(rows: SaidaRedmineRow[]): SaidasRedmineKpis {
++  let valor = 0;
++  const seis = new Set<string>();
++  const meds = new Set<string>();
++  for (const r of rows) {
++    valor += r.valor;
++    if (r.sei) seis.add(r.sei);
++    if (r.material) meds.add(r.material);
++  }
++  return { valor, processos: seis.size, medicamentos: meds.size, saidas: rows.length };
++}
++
++function ranking(rows: SaidaRedmineRow[], campo: keyof SaidaRedmineRow, topN: number): RankItem[] {
++  const m = new Map<string, number>();
++  for (const r of rows) {
++    const k = r[campo] as string;
++    if (!k) continue;
++    m.set(k, (m.get(k) ?? 0) + r.valor);
++  }
++  return Array.from(m, ([l, v]) => ({ l, v }))
++    .sort((a, b) => b.v - a.v)
++    .slice(0, topN);
++}
++
++function opcoesDe(rows: SaidaRedmineRow[], campo: SaidasRedmineFiltro): FiltroOpcao[] {
++  const m = new Map<string, number>();
++  for (const r of rows) {
++    const k = r[campo];
++    if (!k) continue;
++    m.set(k, (m.get(k) ?? 0) + 1);
++  }
++  return Array.from(m, ([value, count]) => ({ value, count })).sort((a, b) =>
++    a.value.localeCompare(b.value, "pt-BR")
++  );
++}
++
++// ── Consultas ─────────────────────────────────────────────────────────────────
++
++/** Agregados globais (gráficos estáticos + opções de filtro). Cacheável. */
++export async function getSaidasRedmineOverview(): Promise<SaidasRedmineOverview> {
++  const rows = await db.$queryRaw<SaidaRedmineRow[]>(BASE_SELECT);
++
++  const opcoes = Object.fromEntries(
++    SAIDAS_REDMINE_FILTROS.map((f) => [f, opcoesDe(rows, f)])
++  ) as Record<SaidasRedmineFiltro, FiltroOpcao[]>;
++
++  return {
++    kpis: kpisDe(rows),
++    topMed: ranking(rows, "material", 20),
++    porCrm: ranking(rows, "crm", 15),
++    porOab: ranking(rows, "oab", 15),
++    porGrupo: ranking(rows, "grupo", 99),
++    porRegiao: ranking(rows, "regiao", 99),
++    porForma: ranking(rows, "forma", 99),
++    porSabast: ranking(rows, "sabast", 99),
++    opcoes,
++    hasData: rows.length > 0,
++  };
++}
++
++const FILTRO_COLUNA: Record<SaidasRedmineFiltro, Prisma.Sql> = {
++  grupo: Prisma.sql`a."grupoTematico"`,
++  regiao: Prisma.sql`a."regiaoBrasil"`,
++  uf: Prisma.sql`a."ufResidencia"`,
++  forma: Prisma.sql`a."formaCumprimento"`,
++  modal: Prisma.sql`a."modalidadeTratamento"`,
++  sabast: Prisma.sql`a."statusAbastecimento"`,
++  status: Prisma.sql`a."statusRedmine"`,
++  crm: Prisma.sql`a."crm"`,
++  oab: Prisma.sql`a."oab"`,
++};
++
++/** KPIs filtrados + primeiras `limite` linhas (por valor desc). */
++export async function getSaidasRedmineTabela(
++  filtros: SaidasRedmineFiltros,
++  limite = 500
++): Promise<SaidasRedmineTabela> {
++  const conds: Prisma.Sql[] = [];
++  for (const f of SAIDAS_REDMINE_FILTROS) {
++    const v = filtros[f];
++    if (v) conds.push(Prisma.sql`${FILTRO_COLUNA[f]} = ${v}`);
++  }
++  const where = conds.length ? Prisma.sql`WHERE ${Prisma.join(conds, " AND ")}` : Prisma.empty;
++
++  const rows = await db.$queryRaw<SaidaRedmineRow[]>(
++    Prisma.sql`${BASE_SELECT} ${where} ORDER BY s."valorTotal" DESC NULLS LAST`
++  );
++
++  return {
++    kpis: kpisDe(rows),
++    total: rows.length,
++    rows: rows.slice(0, limite),
++    limite,
++  };
++}
+diff --git a/package.json b/package.json
+index c77db3e..75050c5 100644
+--- a/package.json
++++ b/package.json
+@@ -13,7 +13,8 @@
+     "db:seed": "tsx prisma/seed.ts",
+     "import:sismat": "tsx scripts/import-sismat-entradas.ts",
+     "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts",
+-    "import:precos": "tsx scripts/import-comprasgov-precos.ts"
++    "import:precos": "tsx scripts/import-comprasgov-precos.ts",
++    "import:redmine-sei": "tsx scripts/import-redmine-sei.ts"
+   },
+   "dependencies": {
+     "@auth/prisma-adapter": "^2.11.2",
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 2011ea4..94173df 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -374,3 +374,33 @@ model ComprasGovPreco {
+   @@index([judicial])
+   @@schema("sismat")
+ }
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Redmine × SISMAT — atributos da demanda por nº SEI (NUP)
++// Tabela de apoio (1 linha por "NUP_SEI Principal") extraída da base Redmine
++// (baseRedmine_*.xlsx) pelo scripts/import-redmine-sei.ts. Alimenta o dashboard
++// de Saídas: cada saída do SISMAT é cruzada com estes atributos pelo nº SEI
++// embutido no final do campo destinatario ("FULANO DE TAL 00737.001234/2020-11").
++// Regra de consolidação: 1ª ocorrência NÃO-VAZIA de cada campo, na ordem do
++// arquivo (réplica do dashboard_redmine_sismat.html de referência).
++// ─────────────────────────────────────────────────────────────────────────────
++model RedmineSeiAtributos {
++  sei                  String   @id      // NUP_SEI Principal ("00737.001234/2020-11")
++
++  crm                  String?           // Nº CRM do prescritor (sem separador de milhar)
++  oab                  String?           // Nº OAB do advogado (sem separador de milhar)
++  grupoTematico        String?           // Grupo Temático (Medicamentos Gerais, Alto Impacto…)
++  regiaoBrasil         String?           // Região Brasil (Norte, Nordeste, …)
++  ufResidencia         String?           // UF_Residência do autor
++  formaCumprimento     String?           // Aquisição DJUD | Depósito Judicial | Entrega CEAF
++  modalidadeTratamento String?           // Contínuo | Único
++  statusAbastecimento  String?           // Abastecido | Desabastecido | Não Informado
++  statusRedmine        String?           // coluna `status` do Redmine (Em Análise COAJUD, …)
++
++  criadoEm             DateTime @default(now())
++
++  @@index([grupoTematico])
++  @@index([regiaoBrasil])
++  @@index([statusRedmine])
++  @@schema("sismat")
++}
+diff --git a/scripts/import-redmine-sei.ts b/scripts/import-redmine-sei.ts
+new file mode 100644
+index 0000000..153ed91
+--- /dev/null
++++ b/scripts/import-redmine-sei.ts
+@@ -0,0 +1,232 @@
++#!/usr/bin/env node
++
++/**
++ * Script de Importação: baseRedmine_*.xlsx → sismat.RedmineSeiAtributos
++ *
++ * Constrói a tabela de apoio "1 linha por NUP SEI" usada pelo dashboard de
++ * Saídas (cruzamento Redmine × SISMAT). NÃO altera a tabela Demanda.
++ *
++ * Regras (réplica fiel do dashboard_redmine_sismat.html de referência):
++ *   • Chave: coluna "NUP_SEI Principal".
++ *   • Consolidação: para cada campo, vale a 1ª ocorrência NÃO-VAZIA na ordem
++ *     do arquivo (o Redmine tem várias linhas por SEI; as posteriores só
++ *     preenchem o que ainda estiver vazio).
++ *   • Limpeza: "N/A"/"n/a"/"NA"/vazio → nulo; números inteiros do Excel viram
++ *     texto sem ".0"; CRM/OAB perdem o separador de milhar ("20.374" → "20374").
++ *   • UF = coluna "UF_Residência " (com espaço ao final no cabeçalho!) — é a
++ *     que bate com o dashboard de referência, não a coluna "UF".
++ *   • Status = coluna "status" do Redmine (não "Ponto de Controle").
++ *
++ * Uso:
++ *   npx tsx scripts/import-redmine-sei.ts --dry-run --file="/caminho/baseRedmine_17-03-2026.xlsx"
++ *   npx tsx scripts/import-redmine-sei.ts --truncate --confirm --file="/caminho/baseRedmine_17-03-2026.xlsx"
++ *
++ * (Caminhos com espaço: manter as aspas em volta do --file=.)
++ */
++
++const fs = require("fs");
++const path = require("path");
++const XLSX = require("xlsx");
++
++// ── Config ────────────────────────────────────────────────────────────────────
++
++const FILE_ARG = process.argv.find((a: string) => a.startsWith("--file="))?.slice("--file=".length);
++const XLSX_PATH = FILE_ARG || process.env.EXCEL_PATH || "";
++const SHEET_NAME = "Dados Redmine";
++const BATCH_SIZE = 1000;
++const DRY_RUN = process.argv.includes("--dry-run");
++const TRUNCATE = process.argv.includes("--truncate");
++const CONFIRM = process.argv.includes("--confirm");
++const LIMIT = parseInt(process.argv.find((a: string) => a.startsWith("--limit="))?.split("=")[1] || "0");
++
++// ── Colunas de origem (resolvidas por nome APARADO, tolerando espaços extras) ─
++
++const COL_SEI = "NUP_SEI Principal";
++const CAMPOS: { key: string; header: string; semPontos?: boolean }[] = [
++  { key: "crm", header: "Nº CRM", semPontos: true },
++  { key: "oab", header: "Nº OAB", semPontos: true },
++  { key: "grupoTematico", header: "Grupo Temático" },
++  { key: "regiaoBrasil", header: "Região Brasil" },
++  { key: "ufResidencia", header: "UF_Residência" }, // cabeçalho real tem espaço ao final
++  { key: "formaCumprimento", header: "Forma de Cumprimento" },
++  { key: "modalidadeTratamento", header: "Modalidade de Tratamento" },
++  { key: "statusAbastecimento", header: "Status do Abastecimento" },
++  { key: "statusRedmine", header: "status" },
++];
++
++// ── Limpeza ───────────────────────────────────────────────────────────────────
++
++/** null | número inteiro sem ".0" | texto aparado; "N/A" e afins viram null. */
++function limpa(v: unknown, semPontos = false): string | null {
++  if (v === null || v === undefined) return null;
++  let t: string;
++  if (typeof v === "number") {
++    t = Number.isInteger(v) ? String(v) : String(v);
++  } else {
++    t = String(v);
++  }
++  t = t.trim();
++  if (!t) return null;
++  const low = t.toLowerCase();
++  if (low === "n/a" || low === "na" || low === "none") return null;
++  if (semPontos) t = t.replace(/\./g, "");
++  return t || null;
++}
++
++// ── Leitura + consolidação por SEI ────────────────────────────────────────────
++
++interface SeiAttrs {
++  sei: string;
++  crm: string | null;
++  oab: string | null;
++  grupoTematico: string | null;
++  regiaoBrasil: string | null;
++  ufResidencia: string | null;
++  formaCumprimento: string | null;
++  modalidadeTratamento: string | null;
++  statusAbastecimento: string | null;
++  statusRedmine: string | null;
++}
++
++function lerConsolidado(): SeiAttrs[] {
++  if (!XLSX_PATH) {
++    console.error('❌ Informe o arquivo: --file="/caminho/baseRedmine_17-03-2026.xlsx" (ou EXCEL_PATH).');
++    process.exit(1);
++  }
++  if (!fs.existsSync(XLSX_PATH)) {
++    console.error(`❌ Arquivo não encontrado: ${XLSX_PATH}`);
++    process.exit(1);
++  }
++
++  console.log(`📄 Lendo ${path.basename(XLSX_PATH)} (planilha "${SHEET_NAME}")…`);
++  const wb = XLSX.readFile(XLSX_PATH);
++  const ws = wb.Sheets[SHEET_NAME];
++  if (!ws) {
++    console.error(`❌ Planilha "${SHEET_NAME}" não encontrada. Abas: ${wb.SheetNames.join(", ")}`);
++    process.exit(1);
++  }
++
++  const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: null });
++  if (!rows.length) {
++    console.error("❌ Planilha vazia.");
++    process.exit(1);
++  }
++
++  // Resolve cabeçalhos por nome aparado (o arquivo tem "UF_Residência " com espaço).
++  const chaves = Object.keys(rows[0]);
++  const resolve = (nome: string): string | null =>
++    chaves.find((k) => k.trim() === nome.trim()) ?? null;
++
++  const seiKey = resolve(COL_SEI);
++  if (!seiKey) {
++    console.error(`❌ Coluna "${COL_SEI}" não encontrada no cabeçalho.`);
++    process.exit(1);
++  }
++  const mapa = CAMPOS.map((c) => ({ ...c, coluna: resolve(c.header) }));
++  for (const c of mapa) {
++    if (!c.coluna) console.warn(`⚠️  Coluna "${c.header}" não encontrada — campo ${c.key} ficará vazio.`);
++  }
++
++  const porSei = new Map<string, SeiAttrs>();
++  const total = LIMIT ? Math.min(LIMIT, rows.length) : rows.length;
++
++  for (let i = 0; i < total; i++) {
++    const row = rows[i];
++    const sei = limpa(row[seiKey]);
++    if (!sei) continue;
++
++    let d = porSei.get(sei);
++    if (!d) {
++      d = {
++        sei,
++        crm: null,
++        oab: null,
++        grupoTematico: null,
++        regiaoBrasil: null,
++        ufResidencia: null,
++        formaCumprimento: null,
++        modalidadeTratamento: null,
++        statusAbastecimento: null,
++        statusRedmine: null,
++      };
++      porSei.set(sei, d);
++    }
++    for (const c of mapa) {
++      if (!c.coluna) continue;
++      const k = c.key as keyof Omit<SeiAttrs, "sei">;
++      if (d[k] === null) {
++        const v = limpa(row[c.coluna], c.semPontos);
++        if (v !== null) d[k] = v;
++      }
++    }
++  }
++
++  const lista = Array.from(porSei.values());
++
++  // Resumo
++  const pct = (n: number) => `${((n / lista.length) * 100).toFixed(1)}%`;
++  const cont = (k: keyof Omit<SeiAttrs, "sei">) => lista.filter((d) => d[k] !== null).length;
++  console.log("\n📊 Resumo do parsing:");
++  console.log(`   Linhas lidas .............. ${total}`);
++  console.log(`   SEIs distintos ............ ${lista.length}`);
++  for (const c of CAMPOS) {
++    const k = c.key as keyof Omit<SeiAttrs, "sei">;
++    const n = cont(k);
++    console.log(`   ${c.key.padEnd(22, ".")} ${String(n).padStart(6)} (${pct(n)})`);
++  }
++  const a = lista.find((d) => d.crm && d.oab);
++  if (a) {
++    console.log("\n🔎 Amostra (1º SEI com CRM e OAB):");
++    console.log(`   sei: ${a.sei} | crm: ${a.crm} | oab: ${a.oab}`);
++    console.log(`   grupo: ${a.grupoTematico} | região: ${a.regiaoBrasil} | UF: ${a.ufResidencia}`);
++    console.log(`   forma: ${a.formaCumprimento} | modal: ${a.modalidadeTratamento} | abastec: ${a.statusAbastecimento} | status: ${a.statusRedmine}`);
++  }
++  return lista;
++}
++
++// ── Main ──────────────────────────────────────────────────────────────────────
++
++async function main() {
++  console.log("🚀 Importador Redmine → sismat.RedmineSeiAtributos");
++  console.log(`🔧 Modo: ${DRY_RUN ? "DRY_RUN" : LIMIT ? `LIMIT ${LIMIT}` : "FULL"}${TRUNCATE ? " + TRUNCATE" : ""}\n`);
++
++  const lista = lerConsolidado();
++
++  if (DRY_RUN) {
++    console.log("\n✅ DRY_RUN concluído — nenhum dado gravado.");
++    return;
++  }
++  if (!LIMIT && !CONFIRM) {
++    console.log(
++      "\n⛔ Importação completa requer --confirm (ou use --limit=N para testar).\n" +
++        '   Ex.: npx tsx scripts/import-redmine-sei.ts --truncate --confirm --file="/caminho/base.xlsx"'
++    );
++    return;
++  }
++
++  // Prisma só é carregado quando vamos gravar (dry-run funciona sem DATABASE_URL).
++  const { PrismaClient } = require("@prisma/client");
++  const db = new PrismaClient();
++  try {
++    if (TRUNCATE) {
++      const n = await db.redmineSeiAtributos.deleteMany({});
++      console.log(`\n🧹 Tabela limpa (${n.count} registro(s) removido(s)).`);
++    }
++    console.log(`\n💾 Inserindo ${lista.length} registro(s) em lotes de ${BATCH_SIZE}…`);
++    let inseridos = 0;
++    for (let i = 0; i < lista.length; i += BATCH_SIZE) {
++      const lote = lista.slice(i, i + BATCH_SIZE);
++      await db.redmineSeiAtributos.createMany({ data: lote, skipDuplicates: true });
++      inseridos += lote.length;
++      process.stdout.write(`\r   ${inseridos}/${lista.length}`);
++    }
++    console.log(`\n\n✅ Importação concluída: ${inseridos} SEI(s).`);
++  } finally {
++    await db.$disconnect();
++  }
++}
++
++main().catch((err) => {
++  console.error("❌ Erro fatal:", err);
++  process.exit(1);
++});

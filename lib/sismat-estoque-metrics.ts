@@ -1,6 +1,8 @@
 import { db } from "@/lib/db";
 import { TIPOS_AQUISICAO, type SismatPeriodo } from "@/lib/sismat-metrics";
-import { PROG_SAIDA_AQUISICAO } from "@/lib/sismat-saidas-metrics";
+
+/** Programa Saúde que caracteriza saída efetiva (entrega ao destinatário). */
+const PROG_SAIDA_AQUISICAO = "DEMANDA JUDICIAL - Aquisição";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Métricas cruzadas Entradas × Saídas (inspirado no Relatório de Logística da
