@@ -27,7 +27,6 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
 
       for (const shortcut of shortcuts) {
         const ctrlMatch = shortcut.ctrl ? e.ctrlKey || e.metaKey : !e.ctrlKey && !e.metaKey;
-        const metaMatch = shortcut.meta ? e.metaKey || e.ctrlKey : true;
         const shiftMatch = shortcut.shift ? e.shiftKey : !e.shiftKey;
         const keyMatch = e.key === shortcut.key || e.key.toLowerCase() === shortcut.key.toLowerCase();
 
@@ -36,7 +35,7 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
 
         // Ctrl/Meta shortcuts funcionam mesmo em inputs
         if (shortcut.ctrl || shortcut.meta) {
-          if (!ctrlMatch && !metaMatch) continue;
+          if (!ctrlMatch) continue;
           e.preventDefault();
           shortcut.action();
           return;
