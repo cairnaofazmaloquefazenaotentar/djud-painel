@@ -515,7 +515,7 @@ export function SismatDashboard() {
           <SectionHeader
             icon={<ArrowUpFromLine className="h-4 w-4" />}
             title="Saídas"
-            subtitle="Entregas/baixas de material aos destinatários (SISMAT)"
+            subtitle="Saídas SISMAT cruzadas com a base Redmine por nº SEI — valores, prescritores (CRM) e advogados (OAB)"
           />
           <SismatSaidasView />
         </section>

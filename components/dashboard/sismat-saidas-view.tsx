@@ -1,170 +1,224 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { useSismatSaidasMetrics } from "@/hooks/useSismatSaidasMetrics";
-import type { SismatPeriodo } from "@/lib/sismat-metrics";
-import type { SismatSaidaDimensao } from "@/lib/sismat-saidas-metrics";
-import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
-import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
-import { fmtBRL, colorAt } from "./charts/sismat-format";
+import {
+  useSaidasRedmineOverview,
+  useSaidasRedmineTabela,
+} from "@/hooks/useSismatSaidasRedmine";
+import type {
+  RankItem,
+  SaidasRedmineFiltro,
+  SaidasRedmineFiltros,
+} from "@/lib/sismat-saidas-redmine-metrics";
 import { MetricCard } from "./metric-card";
-import { Panel, selectCn } from "./sismat-shared";
+import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
+import { fmtBRL, fmtBRLCompact, colorAt } from "./charts/sismat-format";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import {
-  PackageOpen,
-  Building2,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+import {
+  Coins,
+  FileText,
   Pill,
+  ArrowUpFromLine,
+  Stethoscope,
+  Scale,
+  Layers,
   MapPin,
-  Landmark,
-  TrendingUp,
-  Calendar,
-  Trophy,
+  ClipboardCheck,
+  PackageCheck,
+  Filter,
+  FilterX,
   Loader2,
   AlertTriangle,
-  ArrowUpDown,
-  Coins,
+  PackageOpen,
 } from "lucide-react";
 
-// ── Constantes de UI ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Saídas SISMAT × Redmine — réplica do dashboard_redmine_sismat.html:
+// KPIs globais, Top 20 medicamentos, Top 15 CRM/OAB, 4 distribuições,
+// filtros por atributo do Redmine e tabela dos processos com saídas.
+// Os gráficos são GLOBAIS (não refiltram); os filtros regem os KPIs
+// filtrados e a tabela — mesmo comportamento do dashboard de referência.
+// ─────────────────────────────────────────────────────────────────────────────
 
-const DIMENSOES: { value: SismatSaidaDimensao; label: string; icon: ReactNode }[] = [
-  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
-  { value: "fornecedor", label: "Fornecedor", icon: <Building2 className="h-3.5 w-3.5" /> },
-  { value: "uf", label: "UF", icon: <MapPin className="h-3.5 w-3.5" /> },
-  { value: "tipoDestinatario", label: "Tipo destinatário", icon: <Landmark className="h-3.5 w-3.5" /> },
-];
-const DIM_LABEL: Record<SismatSaidaDimensao, string> = {
-  material: "Material",
-  fornecedor: "Fornecedor",
-  uf: "UF",
-  tipoDestinatario: "Tipo de destinatário",
-};
-const DIM_PLURAL: Record<SismatSaidaDimensao, string> = {
-  material: "Materiais ativos",
-  fornecedor: "Fornecedores ativos",
-  uf: "UFs atendidas",
-  tipoDestinatario: "Tipos de destinatário",
-};
-const PERIODOS: { value: SismatPeriodo; label: string }[] = [
-  { value: "monthly", label: "Mensal" },
-  { value: "yearly", label: "Anual" },
-];
-const TOP_N_OPCOES = [4, 8, 10, 15];
+const selectCn =
+  "h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
-// ── Componente ────────────────────────────────────────────────────────────────
+/** Selects nativos (baixa cardinalidade); CRM e OAB usam Combobox pesquisável. */
+const FILTROS_SELECT: { key: SaidasRedmineFiltro; lbl: string }[] = [
+  { key: "grupo", lbl: "Grupo Temático" },
+  { key: "regiao", lbl: "Região Brasil" },
+  { key: "uf", lbl: "UF" },
+  { key: "forma", lbl: "Forma Cumprimento" },
+  { key: "modal", lbl: "Modalidade" },
+  { key: "sabast", lbl: "Status Abastec." },
+  { key: "status", lbl: "Status Redmine" },
+];
+
+const FILTROS_VAZIOS: Record<SaidasRedmineFiltro, string> = {
+  grupo: "",
+  regiao: "",
+  uf: "",
+  forma: "",
+  modal: "",
+  sabast: "",
+  status: "",
+  crm: "",
+  oab: "",
+};
+
+const COLUNAS_TABELA: { key: string; lbl: string }[] = [
+  { key: "sei", lbl: "SEI" },
+  { key: "material", lbl: "Medicamento" },
+  { key: "valor", lbl: "Valor (R$)" },
+  { key: "crm", lbl: "CRM" },
+  { key: "oab", lbl: "OAB" },
+  { key: "grupo", lbl: "Grupo Temático" },
+  { key: "regiao", lbl: "Região" },
+  { key: "uf", lbl: "UF" },
+  { key: "forma", lbl: "Forma Cumprimento" },
+  { key: "modal", lbl: "Modalidade" },
+  { key: "sabast", lbl: "Status Abastec." },
+  { key: "status", lbl: "Status Redmine" },
+];
+
+// ── Painel (mesmo visual das demais seções do SISMAT) ─────────────────────────
+
+function Panel({
+  icon,
+  title,
+  subtitle,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-6">
+      <div className="flex items-start gap-2 mb-1">
+        <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>
+        <div>
+          <h3 className="text-base font-semibold leading-tight">{title}</h3>
+          {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+        </div>
+      </div>
+      <div className="mt-4">{children}</div>
+    </div>
+  );
+}
+
+// ── Barras horizontais (rankings por valor) ───────────────────────────────────
+
+function HBarTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: { nome: string; valor: number } }>;
+}) {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs max-w-xs">
+      <p className="font-semibold text-foreground leading-snug">{d.nome}</p>
+      <p className="text-muted-foreground tabular-nums mt-1">{fmtBRL(d.valor)}</p>
+    </div>
+  );
+}
+
+function RankingBarChart({
+  items,
+  height,
+  maxLabel = 36,
+}: {
+  items: RankItem[];
+  height: number;
+  maxLabel?: number;
+}) {
+  const data = items.map((d) => ({
+    nome: d.l,
+    label: d.l.length > maxLabel ? d.l.slice(0, maxLabel - 1) + "…" : d.l,
+    valor: d.v,
+  }));
+  if (!data.length) {
+    return (
+      <div
+        className="flex items-center justify-center text-sm text-muted-foreground"
+        style={{ height }}
+      >
+        Sem dados para o ranking.
+      </div>
+    );
+  }
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, left: 4, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(var(--border))" opacity={0.25} />
+        <XAxis
+          type="number"
+          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+          tickFormatter={(v: number) => fmtBRLCompact(v)}
+        />
+        <YAxis
+          type="category"
+          dataKey="label"
+          width={Math.min(250, maxLabel * 7)}
+          tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+          interval={0}
+        />
+        <Tooltip content={<HBarTooltip />} cursor={{ fill: "hsl(var(--muted))", opacity: 0.25 }} />
+        <Bar dataKey="valor" radius={[0, 3, 3, 0]}>
+          {data.map((_, i) => (
+            <Cell key={i} fill={colorAt(i)} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ── Distribuições (pizza) ─────────────────────────────────────────────────────
+
+function Distribuicao({ items }: { items: RankItem[] }) {
+  const data: SismatPieDatum[] = items.map((d) => ({ name: d.l, valor: d.v }));
+  const total = items.reduce((s, d) => s + d.v, 0);
+  return <SismatPieChart data={data} grandTotal={total} />;
+}
+
+// ── Componente principal ──────────────────────────────────────────────────────
 
 export function SismatSaidasView() {
-  const [dimension, setDimension] = useState<SismatSaidaDimensao>("material");
-  const [period, setPeriod] = useState<SismatPeriodo>("monthly");
-  const [topN, setTopN] = useState(8);
-  const [entity, setEntity] = useState("");
-  const [year, setYear] = useState("");
-  const [sortField, setSortField] = useState<"name" | "valor">("valor");
-  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [filtros, setFiltros] = useState<Record<SaidasRedmineFiltro, string>>(FILTROS_VAZIOS);
 
-  const { data, isLoading, error } = useSismatSaidasMetrics(dimension, period);
-
-  const view = useMemo(() => {
-    if (!data) return null;
-    const { series, totalsByPeriod, years, grandTotal, hasData } = data;
-
-    const yearOf = (p: string) => Number(period === "monthly" ? p.slice(0, 4) : p);
-    const fy = year ? Number(year) : null;
-
-    const periods = totalsByPeriod
-      .map((t) => t.period)
-      .sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
-    const totalByPeriod: Record<string, number> = {};
-    totalsByPeriod.forEach((t) => (totalByPeriod[t.period] = t.valor));
-
-    const aggregateByEntity = (filterYear: number | null) => {
-      const m = new Map<string, number>();
-      for (const s of series) {
-        if (filterYear && yearOf(s.period) !== filterYear) continue;
-        m.set(s.key, (m.get(s.key) ?? 0) + s.valor);
-      }
-      return m;
-    };
-
-    const totalsAll = aggregateByEntity(null);
-    const entityOptions = Array.from(totalsAll.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([k]) => ({ value: k }));
-
-    const totalsFiltered = aggregateByEntity(fy);
-    const rankingSorted = Array.from(totalsFiltered.entries())
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, valor]) => ({ name, valor }));
-    const grandFiltered = rankingSorted.reduce((s, r) => s + r.valor, 0);
-    const tableRows = rankingSorted.map((r) => ({
-      ...r,
-      pct: grandFiltered ? (r.valor / grandFiltered) * 100 : 0,
-    }));
-
-    const top10 = rankingSorted.slice(0, 10);
-    const outrosSum = rankingSorted.slice(10).reduce((s, r) => s + r.valor, 0);
-    const pieData: SismatPieDatum[] = top10.map((r) => ({ name: r.name, valor: r.valor }));
-    if (outrosSum > 0) pieData.push({ name: "Outros", valor: outrosSum, isOutros: true });
-
-    const entitiesToShow = entity
-      ? [entity]
-      : Array.from(totalsAll.entries())
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, topN)
-          .map(([k]) => k);
-    const byEntity: Record<string, Record<string, number>> = {};
-    entitiesToShow.forEach((e) => (byEntity[e] = {}));
-    for (const s of series) {
-      if (byEntity[s.key]) byEntity[s.key][s.period] = (byEntity[s.key][s.period] ?? 0) + s.valor;
+  const filtrosAtivos = useMemo<SaidasRedmineFiltros>(() => {
+    const f: SaidasRedmineFiltros = {};
+    for (const [k, v] of Object.entries(filtros)) {
+      if (v) f[k as SaidasRedmineFiltro] = v;
     }
-    const evoData = periods.map((p) => {
-      const row: Record<string, string | number> = { period: p };
-      entitiesToShow.forEach((e) => (row[e] = byEntity[e][p] ?? 0));
-      row[SISMAT_TOTAL_KEY] = totalByPeriod[p] ?? 0;
-      return row;
-    });
+    return f;
+  }, [filtros]);
+  const temFiltro = Object.keys(filtrosAtivos).length > 0;
 
-    const totalGeral = fy
-      ? totalsByPeriod.filter((t) => yearOf(t.period) === fy).reduce((s, t) => s + t.valor, 0)
-      : grandTotal;
-    const periodLabel = fy
-      ? `Ano ${fy}`
-      : years.length
-        ? `${years[0]} – ${years[years.length - 1]}`
-        : "—";
+  const { data: over, isLoading, error } = useSaidasRedmineOverview();
+  const tabela = useSaidasRedmineTabela(filtrosAtivos);
 
-    return {
-      hasData,
-      years,
-      evoData,
-      entitiesToShow,
-      entityOptions,
-      tableRows,
-      pieData,
-      grandFiltered,
-      totalGeral,
-      nEntities: totalsFiltered.size,
-      periodLabel,
-      maiorItem: rankingSorted[0]?.name ?? "—",
-    };
-  }, [data, period, topN, entity, year]);
-
-  const dimLabel = DIM_LABEL[dimension];
-
-  const tableRowsSorted = useMemo(() => {
-    if (!view) return [];
-    return [...view.tableRows].sort((a, b) =>
-      sortField === "name" ? sortDir * a.name.localeCompare(b.name, "pt-BR") : sortDir * (a.valor - b.valor)
-    );
-  }, [view, sortField, sortDir]);
-
-  function toggleSort(field: "name" | "valor") {
-    if (sortField === field) setSortDir((d) => (d === 1 ? -1 : 1));
-    else {
-      setSortField(field);
-      setSortDir(field === "name" ? 1 : -1);
-    }
+  function setF(key: SaidasRedmineFiltro, value: string) {
+    setFiltros((prev) => ({ ...prev, [key]: value }));
+  }
+  function limpar() {
+    setFiltros(FILTROS_VAZIOS);
   }
 
   if (isLoading) {
@@ -180,7 +234,7 @@ export function SismatSaidasView() {
       <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-2">
         <div className="flex items-center gap-2 text-destructive">
           <AlertTriangle className="h-4 w-4" />
-          <span className="font-medium text-sm">Erro ao carregar as saídas do SISMAT</span>
+          <span className="font-medium text-sm">Erro ao carregar as saídas cruzadas com o Redmine</span>
         </div>
         <p className="text-xs text-muted-foreground">
           {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
@@ -189,198 +243,217 @@ export function SismatSaidasView() {
     );
   }
 
-  if (!view || !view.hasData) {
+  if (!over || !over.hasData) {
     return (
       <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
         <PackageOpen className="h-8 w-8 mx-auto text-muted-foreground" />
         <p className="text-sm font-medium">Nenhuma saída do SISMAT encontrada</p>
         <p className="text-xs text-muted-foreground">
-          Rode a importação: <code>npx tsx scripts/import-sismat-saidas.ts --truncate --confirm</code> após
-          aplicar o schema com <code>prisma db push</code>.
+          Após <code>npx prisma db push</code>, rode as importações:{" "}
+          <code>npm run import:sismat-saidas -- --truncate --confirm --file=&quot;…Saidas.xlsx&quot;</code>{" "}
+          e <code>npm run import:redmine-sei -- --truncate --confirm --file=&quot;…baseRedmine.xlsx&quot;</code>.
         </p>
       </div>
     );
   }
 
-  const maxTabela = Math.max(...tableRowsSorted.map((r) => r.valor), 1);
+  const kpisFilt = tabela.data?.kpis;
 
   return (
-    <div className="space-y-6">
-      {/* ── Controles ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-end gap-4 bg-card border border-border rounded-xl p-4 shadow-sm">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">Dimensão</span>
-          <div className="flex flex-wrap gap-1">
-            {DIMENSOES.map((d) => (
-              <Button
-                key={d.value}
-                size="sm"
-                variant={dimension === d.value ? "default" : "outline"}
-                onClick={() => {
-                  setDimension(d.value);
-                  setEntity("");
-                }}
-              >
-                {d.icon}
-                <span className="ml-1.5">{d.label}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">Período</span>
-          <div className="flex gap-1">
-            {PERIODOS.map((p) => (
-              <Button
-                key={p.value}
-                size="sm"
-                variant={period === p.value ? "default" : "outline"}
-                onClick={() => setPeriod(p.value)}
-              >
-                {p.label}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">Top N (evolução)</span>
-          <select
-            className={selectCn}
-            value={topN}
-            onChange={(e) => setTopN(Number(e.target.value))}
-            disabled={!!entity}
-          >
-            {TOP_N_OPCOES.map((n) => (
-              <option key={n} value={n}>
-                Top {n}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">{dimLabel} específico</span>
-          <Combobox
-            value={entity}
-            onChange={setEntity}
-            options={view.entityOptions}
-            placeholder="(Top N automático)"
-            searchPlaceholder={`Buscar ${dimLabel.toLowerCase()}...`}
-            allLabel="(Top N automático)"
-            emptyText="Nenhum item encontrado."
-            className="w-60"
-          />
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">Ano (ranking/pizza)</span>
-          <select className={selectCn} value={year} onChange={(e) => setYear(e.target.value)}>
-            <option value="">Todos os anos</option>
-            {view.years.map((y) => (
-              <option key={y} value={y}>
-                {y}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div className="space-y-4">
+      {/* ── KPIs globais ─────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <MetricCard label="Valor Total de Saída" value={fmtBRL(over.kpis.valor)} subtext="SISMAT" icon={<Coins className="h-4 w-4" />} />
+        <MetricCard label="Processos Únicos" value={over.kpis.processos} subtext="por nº SEI" icon={<FileText className="h-4 w-4" />} />
+        <MetricCard label="Medicamentos" value={over.kpis.medicamentos} subtext="distintos" icon={<Pill className="h-4 w-4" />} />
+        <MetricCard label="Total de Saídas" value={over.kpis.saidas} subtext="linhas SISMAT" icon={<ArrowUpFromLine className="h-4 w-4" />} />
       </div>
 
-      {/* ── KPIs ───────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Saídas totais" value={fmtBRL(view.totalGeral)} icon={<PackageOpen className="h-5 w-5" />} />
-        <MetricCard
-          label={DIM_PLURAL[dimension]}
-          value={view.nEntities}
-          icon={<Building2 className="h-5 w-5" />}
-          description={`Distintos${year ? ` em ${year}` : ""}`}
-        />
-        <MetricCard label="Período coberto" value={view.periodLabel} icon={<Calendar className="h-5 w-5" />} />
-        <MetricCard
-          label="Maior item"
-          value={view.maiorItem.length > 22 ? view.maiorItem.slice(0, 21) + "…" : view.maiorItem}
-          icon={<Trophy className="h-5 w-5" />}
-          description={`Por ${dimLabel.toLowerCase()}`}
-        />
-      </div>
-
-      {/* ── Evolução ───────────────────────────────────────────────────────── */}
+      {/* ── Top 20 medicamentos ──────────────────────────────────────────── */}
       <Panel
-        icon={<TrendingUp className="h-4 w-4" />}
-        title={`Evolução ${period === "monthly" ? "mensal" : "anual"} das saídas por ${dimLabel.toLowerCase()}`}
-        subtitle={
-          entity
-            ? `Série de "${entity}" vs. total geral (linha tracejada)`
-            : `Top ${topN} por valor + total geral (linha tracejada) · somente entregas (devoluções excluídas)`
-        }
+        icon={<Pill className="h-4 w-4" />}
+        title="Top 20 Medicamentos por Valor Total de Saída"
+        subtitle="Soma do valor das saídas SISMAT por material"
       >
-        <SismatEvolutionChart data={view.evoData} entities={view.entitiesToShow} periodType={period} />
+        <RankingBarChart items={over.topMed} height={560} maxLabel={38} />
       </Panel>
 
-      {/* ── Ranking + Pizza ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* ── Top CRM / OAB ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Panel
-          icon={<Coins className="h-4 w-4" />}
-          title={`Ranking por ${dimLabel.toLowerCase()}`}
-          subtitle={`Valor total de saída${year ? ` — ano ${year}` : ""} · ${view.tableRows.length} itens`}
+          icon={<Stethoscope className="h-4 w-4" />}
+          title="Top 15 por Número CRM"
+          subtitle="Prescritores com maior valor de saída (cruzamento Redmine por SEI)"
         >
-          <div className="max-h-[360px] overflow-y-auto pr-1">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card">
-                <tr className="border-b border-border text-xs text-muted-foreground">
-                  <th className="text-left py-2 font-medium">
-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("name")}>
-                      {dimLabel} <ArrowUpDown className="h-3 w-3" />
-                    </button>
-                  </th>
-                  <th className="text-right py-2 font-medium">
-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("valor")}>
-                      Valor <ArrowUpDown className="h-3 w-3" />
-                    </button>
-                  </th>
-                  <th className="text-right py-2 font-medium w-14">%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRowsSorted.map((r, i) => (
-                  <tr key={r.name} className="border-b border-border/50">
-                    <td className="py-2 pr-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: colorAt(i) }}
-                        />
-                        <span className="truncate" title={r.name}>
-                          {r.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-2 text-right tabular-nums whitespace-nowrap">
-                      <div>{fmtBRL(r.valor)}</div>
-                      <div className="h-1 mt-1 rounded bg-muted overflow-hidden">
-                        <div
-                          className="h-full rounded"
-                          style={{ width: `${(r.valor / maxTabela) * 100}%`, backgroundColor: colorAt(i) }}
-                        />
-                      </div>
-                    </td>
-                    <td className="py-2 text-right tabular-nums text-muted-foreground">{r.pct.toFixed(1)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RankingBarChart items={over.porCrm} height={360} maxLabel={18} />
         </Panel>
-
         <Panel
-          icon={<Coins className="h-4 w-4" />}
-          title="Distribuição (Top 10)"
-          subtitle={`Participação nas saídas${year ? ` — ano ${year}` : ""}`}
+          icon={<Scale className="h-4 w-4" />}
+          title="Top 15 por Número OAB"
+          subtitle="Advogados com maior valor de saída (cruzamento Redmine por SEI)"
         >
-          <SismatPieChart data={view.pieData} grandTotal={view.grandFiltered} />
+          <RankingBarChart items={over.porOab} height={360} maxLabel={18} />
         </Panel>
       </div>
+
+      {/* ── Distribuições ────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Panel icon={<Layers className="h-4 w-4" />} title="Por Grupo Temático">
+          <Distribuicao items={over.porGrupo} />
+        </Panel>
+        <Panel icon={<MapPin className="h-4 w-4" />} title="Por Região Brasil">
+          <Distribuicao items={over.porRegiao} />
+        </Panel>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Panel icon={<ClipboardCheck className="h-4 w-4" />} title="Por Forma de Cumprimento">
+          <Distribuicao items={over.porForma} />
+        </Panel>
+        <Panel icon={<PackageCheck className="h-4 w-4" />} title="Por Status do Abastecimento">
+          <Distribuicao items={over.porSabast} />
+        </Panel>
+      </div>
+
+      {/* ── Filtros ──────────────────────────────────────────────────────── */}
+      <Panel
+        icon={<Filter className="h-4 w-4" />}
+        title="Filtros"
+        subtitle="Regem os totais filtrados e a tabela abaixo (os gráficos acima são globais)"
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          {FILTROS_SELECT.map(({ key, lbl }) => (
+            <div key={key} className="space-y-1">
+              <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {lbl}
+              </label>
+              <select
+                className={selectCn}
+                value={filtros[key]}
+                onChange={(e) => setF(key, e.target.value)}
+              >
+                <option value="">Todos</option>
+                {over.opcoes[key].map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.value}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ))}
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              CRM
+            </label>
+            <Combobox
+              value={filtros.crm}
+              onChange={(v) => setF("crm", v)}
+              options={over.opcoes.crm.map((o) => ({ value: o.value, count: o.count }))}
+              placeholder="Todos"
+              searchPlaceholder="Buscar CRM…"
+              allLabel="Todos"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              OAB
+            </label>
+            <Combobox
+              value={filtros.oab}
+              onChange={(v) => setF("oab", v)}
+              options={over.opcoes.oab.map((o) => ({ value: o.value, count: o.count }))}
+              placeholder="Todos"
+              searchPlaceholder="Buscar OAB…"
+              allLabel="Todos"
+            />
+          </div>
+          <div className="flex items-end">
+            <Button variant="outline" size="sm" onClick={limpar} disabled={!temFiltro} className="gap-1.5">
+              <FilterX className="h-3.5 w-3.5" />
+              Limpar Filtros
+            </Button>
+          </div>
+        </div>
+      </Panel>
+
+      {/* ── Totais filtrados ─────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          Totais Filtrados
+        </h3>
+        <span
+          className={
+            "text-[10px] font-bold rounded px-1.5 py-0.5 " +
+            (temFiltro
+              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              : "bg-primary/10 text-primary")
+          }
+        >
+          {temFiltro ? "FILTRADO" : "SEM FILTRO"}
+        </span>
+        {tabela.isFetching && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <MetricCard label="Valor Total de Saída" value={kpisFilt ? fmtBRL(kpisFilt.valor) : "—"} subtext="SISMAT" icon={<Coins className="h-4 w-4" />} />
+        <MetricCard label="Processos Únicos" value={kpisFilt?.processos ?? 0} subtext="por nº SEI" icon={<FileText className="h-4 w-4" />} />
+        <MetricCard label="Medicamentos" value={kpisFilt?.medicamentos ?? 0} subtext="distintos" icon={<Pill className="h-4 w-4" />} />
+        <MetricCard label="Total de Saídas" value={kpisFilt?.saidas ?? 0} subtext="linhas SISMAT" icon={<ArrowUpFromLine className="h-4 w-4" />} />
+      </div>
+
+      {/* ── Tabela de processos com saídas ───────────────────────────────── */}
+      <Panel
+        icon={<FileText className="h-4 w-4" />}
+        title="Processos com Saídas"
+        subtitle={
+          tabela.data
+            ? `${tabela.data.total.toLocaleString("pt-BR")} registro(s)` +
+              (tabela.data.total > tabela.data.limite
+                ? ` — exibindo os ${tabela.data.limite} de maior valor`
+                : "")
+            : "Carregando…"
+        }
+      >
+        <div className="overflow-auto max-h-[440px] rounded-md border border-border">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr>
+                {COLUNAS_TABELA.map((c) => (
+                  <th
+                    key={c.key}
+                    className="sticky top-0 z-10 bg-primary text-primary-foreground text-left font-semibold px-3 py-2 whitespace-nowrap"
+                  >
+                    {c.lbl}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(tabela.data?.rows ?? []).map((r, i) => (
+                <tr key={`${r.sei}-${i}`} className="border-b border-border/50 hover:bg-accent/40">
+                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate" title={r.sei}>{r.sei}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[260px] truncate" title={r.material}>{r.material}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap text-right font-semibold tabular-nums text-primary">{fmtBRL(r.valor)}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.crm}>{r.crm}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.oab}>{r.oab}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate" title={r.grupo}>{r.grupo}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.regiao}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.uf}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.forma}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.modal}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.sabast}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{r.status}</td>
+                </tr>
+              ))}
+              {tabela.data && tabela.data.rows.length === 0 && (
+                <tr>
+                  <td colSpan={COLUNAS_TABELA.length} className="px-3 py-6 text-center text-muted-foreground">
+                    Nenhum registro para os filtros selecionados.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
     </div>
   );
 }
