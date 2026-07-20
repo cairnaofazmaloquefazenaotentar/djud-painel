@@ -92,7 +92,7 @@ const primaryNav = [
     label: "Preços",
     href: "/precos",
     icon: Coins,
-    description: "Preços praticados de medicamentos",
+    description: "Preços de medicamentos — ComprasGov e PMVG",
   },
 ];
 

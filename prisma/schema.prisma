@@ -376,6 +376,41 @@ model ComprasGovPreco {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SISMAT × PMVG — preço unitário pago (SISMAT) vs. preço PMVG vigente na data
+// de entrega (aba "Preços" › sub-aba PMVG). 1 linha por compra do SISMAT, já
+// pareada (fuzzy-match texto/fabricante, rank 1) com a foto mensal do PMVG
+// mais recente com competência ≤ à data de entrega.
+//   • pmvgPrecos: array com o preço de EMBALAGEM em cada alíquota do PMVG, na
+//     MESMA ordem de PMVG_COLS (lib/pmvg-metrics.ts). null = alíquota sem valor.
+//   • O preço PMVG unitário é derivado no cliente (embalagem ÷ qtdEmbalagem),
+//     como no dashboard de origem — nada de alíquota é escolhido no servidor.
+// ─────────────────────────────────────────────────────────────────────────────
+model SismatPmvg {
+  id              Int      @id @default(autoincrement())
+
+  material        String            // Material comprado (texto do SISMAT)
+  subMaterial     String            // Medicamento/princípio ativo pareado (PMVG)
+  fabricante      String            // Fabricante da compra
+  dtEntrega       DateTime          // Data de entrega (UTC, meia-noite) — eixo X
+  quantidade      Float             // Quantidade de unidades adquirida
+  valorUnitario   Decimal           // Preço unitário PAGO (R$) — eixo Y (pago)
+  valorTotal      Decimal           // Valor total da compra (R$)
+  score           Float             // Confiança do match texto/fabricante (0–100)
+  qtdEmbalagem    Float             // Unidades por embalagem estimadas (divisor do PMVG)
+  metodoQtd       String            // Heurística da qtd/emb.: leading_count | trailing_x | default_single
+  pmvgCompetencia DateTime?         // Competência do PMVG usado (1º dia do mês) — null se não encontrado
+  apresentacao    String?           // Texto da apresentação do PMVG pareado
+  pmvgPrecos      Json              // Preço de embalagem por alíquota (ordem de PMVG_COLS; null onde ausente)
+
+  criadoEm        DateTime @default(now())
+
+  @@index([material])
+  @@index([dtEntrega])
+  @@index([fabricante])
+  @@schema("sismat")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Redmine × SISMAT — atributos da demanda por nº SEI (NUP)
 // Tabela de apoio (1 linha por "NUP_SEI Principal") extraída da base Redmine
 // (baseRedmine_*.xlsx) pelo scripts/import-redmine-sei.ts. Alimenta o dashboard
