@@ -18,7 +18,9 @@ import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/chart
 import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
 import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
 import { SismatDashboard } from "@/components/dashboard/sismat-dashboard";
+import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
 import { useMetrics } from "@/hooks/useMetrics";
+import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
 import { Combobox } from "@/components/ui/combobox";
 import { FilterSelect } from "@/components/backoffice";
@@ -42,6 +44,7 @@ import {
   Landmark,
   Building2,
   Database,
+  Users,
 } from "lucide-react";
 
 const selectCn =
@@ -121,6 +124,10 @@ export default function DashboardPage() {
   };
 
   const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
+  const { data: autoresData, isLoading: autoresLoading } = useAutoresMetrics({
+    startDate: metricsFilters.startDate,
+    endDate:   metricsFilters.endDate,
+  });
 
   const handleReset = () => {
     setStartDate("");
@@ -332,6 +339,10 @@ export default function DashboardPage() {
                 <BarChart2 className="h-3.5 w-3.5 mr-1.5" />
                 Operacional
               </TabsTrigger>
+              <TabsTrigger value="autores">
+                <Users className="h-3.5 w-3.5 mr-1.5" />
+                Autores
+              </TabsTrigger>
             </TabsList>
 
             {/* ── Valores (item 2 — primeira aba, à esquerda) ───────────── */}
@@ -542,6 +553,23 @@ export default function DashboardPage() {
                   </Section>
                 )}
               </div>
+            </TabsContent>
+            {/* ── Autores ───────────────────────────────────────────────── */}
+            <TabsContent value="autores" className="space-y-6 mt-4">
+              <Section
+                icon={<Users className="h-4 w-4" />}
+                title="Evolução de Autores por Mês"
+                subtitle="Autores únicos, novos (primeira demanda no mês) e reincidentes (já tinham demanda anterior)"
+                full
+              >
+                {autoresLoading ? (
+                  <div className="flex justify-center py-12">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <AutoresTimelineChart data={autoresData ?? []} />
+                )}
+              </Section>
             </TabsContent>
           </Tabs>
         </div>

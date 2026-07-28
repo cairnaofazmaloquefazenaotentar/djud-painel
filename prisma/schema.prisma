@@ -159,6 +159,7 @@ model Demanda {
   objetoAcao                   String?          // Objeto da Ação (Medicamento - Oncológico, etc)
   principioAtivo               String?          // Princípio_Ativo / Medicamento (nome do medicamento)
   fornecedor                   String?          // Fornecedor/laboratório do medicamento (preenchido quando a base trouxer essa coluna)
+  autor                        String?          // Autor(a) da ação judicial (paciente/requerente)
   numeroProcesso               String?          // Ação Judicial Originário (ex: 5000904-02.2021.4.03.6006)
   dataEntradaDJUD              DateTime?        // Data de Entrada no DJUD
 
@@ -196,6 +197,7 @@ model Demanda {
   @@index([numeroExterno])
   @@index([regiaoBrasil])
   @@index([fornecedor])
+  @@index([autor])
   @@index([deletedAt])
   @@schema("public")
 }
