@@ -5,6 +5,7 @@ import { Inter, Merriweather, JetBrains_Mono } from "next/font/google";
 import { SessionProvider } from "next-auth/react";
 import { auth } from "@/lib/auth";
 import { QuerClientProvider } from "@/components/providers/query-client-provider";
+import { APP_BASE_PATH } from "@/lib/url";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -48,7 +49,7 @@ export default async function RootLayout({
       <body
         className={`${fontSans.variable} ${fontSerif.variable} ${fontMono.variable} h-full bg-background text-foreground antialiased`}
       >
-        <SessionProvider session={session}>
+        <SessionProvider session={session} basePath={`${APP_BASE_PATH}/api/auth`}>
           <QuerClientProvider>{children}</QuerClientProvider>
           <Toaster richColors position="top-right" />
         </SessionProvider>

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { FormInput } from "@/components/ui/form-input";
 import { FormSelect } from "@/components/ui/form-select";
 import { Loader2 } from "lucide-react";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 interface UserFormData {
@@ -41,7 +42,7 @@ export default function EditUserPage() {
   useEffect(() => {
     const loadOrganizations = async () => {
       try {
-        const res = await fetch("/api/organizations");
+        const res = await fetch(apiPath("/api/organizations"));
         if (res.ok) {
           const data = await res.json();
           setOrganizations(data.data || []);
@@ -56,7 +57,7 @@ export default function EditUserPage() {
     if (!isNew) {
       const loadUser = async () => {
         try {
-          const res = await fetch(`/api/users/${userId}`);
+          const res = await fetch(apiPath(`/api/users/${userId}`));
           if (res.ok) {
             const user = await res.json();
             form.reset({
@@ -80,7 +81,7 @@ export default function EditUserPage() {
     setSubmitting(true);
     try {
       const method = isNew ? "POST" : "PUT";
-      const url = isNew ? "/api/users" : `/api/users/${userId}`;
+      const url = apiPath(isNew ? "/api/users" : `/api/users/${userId}`);
 
       const res = await fetch(url, {
         method,

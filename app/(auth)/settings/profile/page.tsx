@@ -28,6 +28,7 @@ import {
   Info,
   Loader2,
 } from "lucide-react";
+import { apiPath } from "@/lib/url";
 
 // ── Dados de papel ────────────────────────────────────────────────────────────
 
@@ -93,7 +94,7 @@ export default function ProfilePage() {
     }
     setPwLoading(true);
     try {
-      const res = await fetch(`/api/users/${user?.id}/change-password`, {
+      const res = await fetch(apiPath(`/api/users/${user?.id}/change-password`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

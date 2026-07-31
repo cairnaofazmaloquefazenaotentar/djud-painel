@@ -9,6 +9,7 @@ import { Trash2, RotateCcw, AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 
 interface DeletedDemanda {
   id: string;
@@ -36,7 +37,7 @@ export default function LixeiraPage() {
     const fetchLixeira = async () => {
       setLoading(true);
       try {
-        const res = await fetch("/api/demandas/lixeira?pageSize=50");
+        const res = await fetch(apiPath("/api/demandas/lixeira?pageSize=50"));
         if (res.ok) {
           const data = await res.json();
           setDemandas(data.data);
@@ -55,7 +56,7 @@ export default function LixeiraPage() {
     }
     setRestoring(id);
     try {
-      const res = await fetch(`/api/demandas/${id}/restore`, { method: "POST" });
+      const res = await fetch(apiPath(`/api/demandas/${id}/restore`), { method: "POST" });
       if (res.ok) {
         setDemandas((prev) => prev.filter((d) => d.id !== id));
         toast.success(`Demanda "${numero}" restaurada com sucesso.`);

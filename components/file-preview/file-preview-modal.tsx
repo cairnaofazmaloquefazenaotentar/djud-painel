@@ -6,6 +6,7 @@ import { PDFViewer } from "./pdf-viewer";
 import { ImageViewer } from "./image-viewer";
 import { DocumentPreview } from "./document-preview";
 import { isPreviewable } from "@/lib/file-utils";
+import { apiPath } from "@/lib/url";
 import { useState, useEffect } from "react";
 
 interface FilePreviewModalProps {
@@ -42,7 +43,7 @@ export function FilePreviewModal({
         setLoading(true);
         setError(null);
         // URL para preview endpoint
-        setPreviewUrl(`/api/attachments/${attachmentId}/preview`);
+        setPreviewUrl(apiPath(`/api/attachments/${attachmentId}/preview`));
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Erro ao carregar preview"

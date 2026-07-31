@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { SismatMetricsData, SismatDimensao, SismatPeriodo } from "@/lib/sismat-metrics";
+import { apiPath } from "@/lib/url";
 
 /**
  * Carrega as métricas de gasto SISMAT para uma (dimensão × período).
@@ -18,7 +19,7 @@ export function useSismatMetrics(
     queryFn: async () => {
       const params = new URLSearchParams({ dimension, period });
       if (subMaterial) params.set("subMaterial", subMaterial);
-      const res = await fetch(`/api/sismat/metrics?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/sismat/metrics?${params.toString()}`));
       if (!res.ok) {
         throw new Error("Erro ao carregar métricas SISMAT");
       }
