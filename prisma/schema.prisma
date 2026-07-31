@@ -28,6 +28,7 @@ model User {
   demandasCriadas         Demanda[]  @relation("DemandaCriadoPor")
   demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
   attachments             Attachment[] @relation("UserAttachments")
+  relatoriosGerados       RelatorioGerado[]
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -440,4 +441,147 @@ model RedmineSeiAtributos {
   @@index([regiaoBrasil])
   @@index([statusRedmine])
   @@schema("sismat")
+}
+
+// ─── Bases de Preços ─────────────────────────────────────────────────────────
+
+model PrecoCmed {
+  id              String   @id @default(cuid())
+  substancia      String
+  substanciaNorm  String
+  produto         String
+  apresentacao    String
+  laboratorio     String?
+  cnpj            String?
+  codigoGgrem     String?
+  registro        String?
+  classeTerap     String?
+  tipoProduto     String?
+  regimePreco     String?
+  pfSemImpostos   Float?
+  pf0             Float?
+  pf12            Float?
+  pf17            Float?
+  pf18            Float?
+  pmvgSemImpostos Float
+  pmvg0           Float?
+  pmvg12          Float?
+  pmvg17          Float?
+  pmvg18          Float?
+  cap             Boolean  @default(false)
+  confaz87        Boolean  @default(false)
+  icms0           Boolean  @default(false)
+  comercializacao String?
+  tarja           String?
+  vigencia        DateTime @default(now())
+
+  @@index([substanciaNorm])
+  @@index([substancia])
+}
+
+model PrecoBps {
+  id              String    @id @default(cuid())
+  codigoCatmat    String
+  descricao       String
+  nomeNorm        String
+  unidade         String?
+  generico        Boolean?
+  preco           Float
+  qtd             Float
+  valorTotal      Float?
+  modalidade      String?
+  data            DateTime
+  uf              String?
+  municipio       String?
+  instituicao     String?
+  cnpjInstituicao String?
+  fabricante      String?
+  fornecedor      String?
+  cnpjFornecedor  String?
+  anoBase         Int
+
+  @@index([nomeNorm])
+  @@index([data])
+  @@index([uf])
+  @@index([anoBase])
+  @@index([codigoCatmat])
+}
+
+model PrecoSiasg {
+  id             String    @id @default(cuid())
+  codigoCatmat   String
+  descricao      String
+  nomeNorm       String
+  unidade        String?
+  unidadeNorm    String?
+  formaApres     String?
+  preco          Float
+  qtd            Float
+  valorTotal     Float?
+  modalidade     String?
+  data           DateTime
+  ano            Int
+  uf             String?
+  municipio      String?
+  orgaoSup       String?
+  orgao          String?
+  esfera         String?
+  fornecedor     String?
+  cnpjFornecedor String?
+  fabricante     String?
+  marca          String?
+  acaoJudicial   Boolean
+  classeAtc      String?
+  pdp            Boolean  @default(false)
+
+  @@index([nomeNorm])
+  @@index([acaoJudicial])
+  @@index([ano])
+  @@index([uf])
+  @@index([codigoCatmat])
+}
+
+model PrecoPncp {
+  id                  String    @id @default(cuid())
+  codItemCatalogo     String?
+  descricaoResumida   String
+  descricaoNorm       String
+  descricaoDetalhada  String?   @db.Text
+  unidade             String?
+  quantidade          Float?
+  valorUnitEstimado   Float?
+  valorUnitResultado  Float
+  valorTotal          Float?
+  modalidade          String?
+  codigoModalidade    String?
+  data                DateTime
+  uf                  String?
+  municipio           String?
+  orgao               String?
+  cnpjOrgao           String?
+  fornecedor          String?
+  cnpjFornecedor      String?
+  numeroControlePncp  String?
+
+  @@index([descricaoNorm])
+  @@index([data])
+  @@index([uf])
+  @@index([codItemCatalogo])
+}
+
+model RelatorioGerado {
+  id           String   @id @default(cuid())
+  tipo         String   // PESQUISA_PRECO | ARP | RISCO | EXECUTIVO
+  parametros   Json
+  nomeArquivo  String
+  tamanhoBytes Int?
+  geradoPorId  String
+  geradoPor    User     @relation(fields: [geradoPorId], references: [id], onDelete: Cascade)
+  criadoEm     DateTime @default(now())
+  emailEnviado Boolean  @default(false)
+  emailDest    String?
+
+  @@index([geradoPorId])
+  @@index([tipo])
+  @@index([criadoEm])
 }
