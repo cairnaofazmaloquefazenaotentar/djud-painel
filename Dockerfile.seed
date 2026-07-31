@@ -1,0 +1,11 @@
+# syntax=docker/dockerfile:1.7
+FROM djud-painel-builder AS seed
+
+RUN --mount=type=secret,id=djud_env,target=/run/secrets/djud_env \
+    --mount=type=secret,id=djud_seed,target=/run/secrets/djud_seed \
+    set -a && . /run/secrets/djud_env && set +a \
+    && SEED_ADMIN_PASSWORD="$(cat /run/secrets/djud_seed)" \
+    && export SEED_ADMIN_PASSWORD \
+    && DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/@pg-main:5432/@127.0.0.1:5432/')" \
+    && export DATABASE_URL \
+    && ./node_modules/.bin/tsx prisma/seed.ts
