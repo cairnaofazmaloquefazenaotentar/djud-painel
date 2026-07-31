@@ -477,6 +477,7 @@ model PrecoCmed {
 
   @@index([substanciaNorm])
   @@index([substancia])
+  @@schema("sismat")
 }
 
 model PrecoBps {
@@ -505,6 +506,7 @@ model PrecoBps {
   @@index([uf])
   @@index([anoBase])
   @@index([codigoCatmat])
+  @@schema("sismat")
 }
 
 model PrecoSiasg {
@@ -539,6 +541,7 @@ model PrecoSiasg {
   @@index([ano])
   @@index([uf])
   @@index([codigoCatmat])
+  @@schema("sismat")
 }
 
 model PrecoPncp {
@@ -567,6 +570,7 @@ model PrecoPncp {
   @@index([data])
   @@index([uf])
   @@index([codItemCatalogo])
+  @@schema("sismat")
 }
 
 model RelatorioGerado {
@@ -584,4 +588,5 @@ model RelatorioGerado {
   @@index([geradoPorId])
   @@index([tipo])
   @@index([criadoEm])
+  @@schema("public")
 }
