@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 import type { PmvgData } from "@/lib/pmvg-metrics";
 
 /**
@@ -13,7 +14,7 @@ export function usePmvgData() {
   return useQuery<PmvgData>({
     queryKey: ["pmvg-data"],
     queryFn: async () => {
-      const res = await fetch("/api/pmvg");
+      const res = await fetch(apiPath("/api/pmvg"));
       if (!res.ok) {
         throw new Error("Erro ao carregar a base SISMAT × PMVG");
       }

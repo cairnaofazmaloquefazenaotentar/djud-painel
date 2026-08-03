@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 
 export interface AutoresMesData {
   mes: Date;
@@ -30,7 +31,7 @@ export function useAutoresMetrics(options: UseAutoresMetricsOptions = {}) {
       if (options.startDate) params.append("startDate", options.startDate.toISOString());
       if (options.endDate)   params.append("endDate",   options.endDate.toISOString());
 
-      const res = await fetch(`/api/demandas/autores/metrics?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/demandas/autores/metrics?${params.toString()}`));
       if (!res.ok) throw new Error("Erro ao carregar métricas de autores");
 
       const raw = await res.json();
