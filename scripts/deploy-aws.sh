@@ -26,8 +26,8 @@ target_revision="$(git rev-parse origin/main)"
 deployed_revision="$(cat "$STATE_FILE" 2>/dev/null || git rev-parse HEAD)"
 local_revision="$(git rev-parse HEAD)"
 
-if [[ "$target_revision" != "$local_revision" ]] && git merge-base --is-ancestor "$target_revision" "$local_revision"; then
-  log "Atualizacao aguardando envio dos commits locais ao GitHub."
+if [[ "$target_revision" != "$local_revision" ]] && ! git merge-base --is-ancestor "$local_revision" "$target_revision"; then
+  log "Atualizacao bloqueada: repositorio local possui commits nao publicados ou historico divergente."
   exit 0
 fi
 
