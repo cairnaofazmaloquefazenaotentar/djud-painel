@@ -24,6 +24,12 @@ fi
 git fetch --quiet origin main
 target_revision="$(git rev-parse origin/main)"
 deployed_revision="$(cat "$STATE_FILE" 2>/dev/null || git rev-parse HEAD)"
+local_revision="$(git rev-parse HEAD)"
+
+if [[ "$target_revision" != "$local_revision" ]] && git merge-base --is-ancestor "$target_revision" "$local_revision"; then
+  log "Atualizacao aguardando envio dos commits locais ao GitHub."
+  exit 0
+fi
 
 if [[ "$target_revision" == "$deployed_revision" ]]; then
   log "Sem nova versao aprovada para publicar."
