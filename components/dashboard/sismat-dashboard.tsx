@@ -8,7 +8,9 @@ import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
 import { fmtBRL, colorAt, SISMAT_ENTRADA_COLOR, SISMAT_SAIDA_COLOR } from "./charts/sismat-format";
 import { MetricCard } from "./metric-card";
 import { SismatSaidasView } from "./sismat-saidas-view";
+import { SismatSaidasPuraView } from "./sismat-saidas-pura-view";
 import { SismatEstoqueView } from "./sismat-estoque-view";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import {
@@ -430,106 +432,50 @@ function SismatEntradasView() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wrapper do SISMAT: os checkboxes [Entradas] [Saídas] controlam quais seções
-// aparecem (cada base tem seu conjunto próprio de gráficos). Os gráficos
-// COMPARATIVOS entre as duas bases (fluxo E×S, saldo derivado acumulado e
-// saldo por material) ficam SEMPRE ao final da página, independentemente da
-// seleção — são o cruzamento inspirado no Relatório de Logística da CGLJUD.
+// Wrapper do SISMAT: 4 sub-abas navegáveis
+//   Entradas        → aquisições recebidas (SISMAT Entradas)
+//   Saídas          → entregas realizadas — KPIs e Top 20 medicamentos
+//   Saídas × Redmine→ cruzamento com Redmine por nº SEI (CRM, OAB, filtros)
+//   Entradas × Saídas → comparativo fluxo + saldo derivado acumulado
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SectionHeader({
-  icon,
-  title,
-  subtitle,
-}: {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 pt-2">
-      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        {icon}
-      </span>
-      <div>
-        <h2 className="text-lg font-semibold leading-tight">{title}</h2>
-        <p className="text-xs text-muted-foreground">{subtitle}</p>
-      </div>
-    </div>
-  );
-}
-
 export function SismatDashboard() {
-  const [showEntradas, setShowEntradas] = useState(true);
-  const [showSaidas, setShowSaidas] = useState(true);
-
   return (
-    <div className="space-y-6">
-      {/* ── Seleção de bases ─────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 bg-card border border-border rounded-xl p-4 shadow-sm">
-        <span className="text-xs text-muted-foreground">Bases exibidas</span>
-        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showEntradas}
-            onChange={(e) => setShowEntradas(e.target.checked)}
-            className="h-4 w-4 accent-primary cursor-pointer"
-          />
-          <ArrowDownToLine className="h-4 w-4" style={{ color: SISMAT_ENTRADA_COLOR }} />
+    <Tabs defaultValue="entradas" className="space-y-6">
+      <TabsList className="flex-wrap h-auto gap-1">
+        <TabsTrigger value="entradas" className="gap-1.5">
+          <ArrowDownToLine className="h-3.5 w-3.5" style={{ color: SISMAT_ENTRADA_COLOR }} />
           Entradas
-        </label>
-        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showSaidas}
-            onChange={(e) => setShowSaidas(e.target.checked)}
-            className="h-4 w-4 accent-primary cursor-pointer"
-          />
-          <ArrowUpFromLine className="h-4 w-4" style={{ color: SISMAT_SAIDA_COLOR }} />
+        </TabsTrigger>
+        <TabsTrigger value="saidas" className="gap-1.5">
+          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
           Saídas
-        </label>
-      </div>
+        </TabsTrigger>
+        <TabsTrigger value="saidas-redmine" className="gap-1.5">
+          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
+          Saídas × Redmine
+        </TabsTrigger>
+        <TabsTrigger value="entradas-saidas" className="gap-1.5">
+          <ArrowLeftRight className="h-3.5 w-3.5" />
+          Entradas × Saídas
+        </TabsTrigger>
+      </TabsList>
 
-      {!showEntradas && !showSaidas && (
-        <p className="text-sm text-muted-foreground px-1">
-          Nenhuma base selecionada — marque Entradas e/ou Saídas acima. O comparativo entre as duas
-          permanece disponível abaixo.
-        </p>
-      )}
+      <TabsContent value="entradas">
+        <SismatEntradasView />
+      </TabsContent>
 
-      {/* ── Seção Entradas ───────────────────────────────────────────────── */}
-      {showEntradas && (
-        <section className="space-y-4">
-          <SectionHeader
-            icon={<ArrowDownToLine className="h-4 w-4" />}
-            title="Entradas"
-            subtitle="Aquisições de material recebidas (SISMAT)"
-          />
-          <SismatEntradasView />
-        </section>
-      )}
+      <TabsContent value="saidas">
+        <SismatSaidasPuraView />
+      </TabsContent>
 
-      {/* ── Seção Saídas ─────────────────────────────────────────────────── */}
-      {showSaidas && (
-        <section className="space-y-4">
-          <SectionHeader
-            icon={<ArrowUpFromLine className="h-4 w-4" />}
-            title="Saídas"
-            subtitle="Saídas SISMAT cruzadas com a base Redmine por nº SEI — valores, prescritores (CRM) e advogados (OAB)"
-          />
-          <SismatSaidasView />
-        </section>
-      )}
+      <TabsContent value="saidas-redmine">
+        <SismatSaidasView />
+      </TabsContent>
 
-      {/* ── Comparativo E×S — sempre ao final da página ──────────────────── */}
-      <section className="space-y-4">
-        <SectionHeader
-          icon={<ArrowLeftRight className="h-4 w-4" />}
-          title="Entradas × Saídas"
-          subtitle="Comparativo entre as duas bases: fluxo por período, saldo derivado acumulado e saldo por material"
-        />
+      <TabsContent value="entradas-saidas">
         <SismatEstoqueView />
-      </section>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
