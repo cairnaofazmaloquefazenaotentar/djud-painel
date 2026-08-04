@@ -29,8 +29,12 @@ const BASE_SELECT = Prisma.sql`
     COALESCE(s."valorTotal", 0)::float8      AS valor,
     s."material"                             AS material,
     ${SEI_EXPR}                              AS sei,
-    COALESCE(a."crm", '')                    AS crm,
-    COALESCE(a."oab", '')                    AS oab,
+    CASE WHEN COALESCE(a."crm", '') = '' THEN ''
+         ELSE a."crm" || '/' || COALESCE(NULLIF(a."ufCrm", ''), 'NA')
+    END                                      AS crm,
+    CASE WHEN COALESCE(a."oab", '') = '' THEN ''
+         ELSE a."oab" || '/' || COALESCE(NULLIF(a."ufOab", ''), 'NA')
+    END                                      AS oab,
     COALESCE(a."grupoTematico", '')          AS grupo,
     COALESCE(a."regiaoBrasil", '')           AS regiao,
     COALESCE(a."ufResidencia", '')           AS uf,
@@ -182,8 +186,8 @@ const FILTRO_COLUNA: Record<SaidasRedmineFiltro, Prisma.Sql> = {
   modal: Prisma.sql`a."modalidadeTratamento"`,
   sabast: Prisma.sql`a."statusAbastecimento"`,
   status: Prisma.sql`a."statusRedmine"`,
-  crm: Prisma.sql`a."crm"`,
-  oab: Prisma.sql`a."oab"`,
+  crm: Prisma.sql`CASE WHEN COALESCE(a."crm", '') = '' THEN '' ELSE a."crm" || '/' || COALESCE(NULLIF(a."ufCrm", ''), 'NA') END`,
+  oab: Prisma.sql`CASE WHEN COALESCE(a."oab", '') = '' THEN '' ELSE a."oab" || '/' || COALESCE(NULLIF(a."ufOab", ''), 'NA') END`,
 };
 
 /** KPIs filtrados + primeiras `limite` linhas (por valor desc). */

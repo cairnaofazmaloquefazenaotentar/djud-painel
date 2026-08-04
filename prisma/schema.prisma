@@ -426,7 +426,9 @@ model RedmineSeiAtributos {
   sei                  String   @id      // NUP_SEI Principal ("00737.001234/2020-11")
 
   crm                  String?           // Nº CRM do prescritor (sem separador de milhar)
+  ufCrm                String?           // UF do CRM do prescritor
   oab                  String?           // Nº OAB do advogado (sem separador de milhar)
+  ufOab                String?           // UF da OAB do advogado
   grupoTematico        String?           // Grupo Temático (Medicamentos Gerais, Alto Impacto…)
   regiaoBrasil         String?           // Região Brasil (Norte, Nordeste, …)
   ufResidencia         String?           // UF_Residência do autor
