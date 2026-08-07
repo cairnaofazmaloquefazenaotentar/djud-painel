@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -68,9 +69,7 @@ export async function GET(request: NextRequest) {
       return { mes: r.mes, autoresUnicos: unicos, autoresNovos: novos, autoresReincidentes: reincidentes };
     });
 
-    return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=60" },
-    });
+    return jsonComVersao(request, ["demanda"], async () => data);
   } catch (error) {
     console.error("[autores/metrics] Erro:", error);
     const message = error instanceof Error ? error.message : "Erro ao obter métricas de autores";

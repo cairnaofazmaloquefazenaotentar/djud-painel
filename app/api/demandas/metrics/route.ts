@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { auth } from "@/lib/auth";
 import { getMetricsData } from "@/lib/metrics";
 import { filterMetricsSchema } from "@/lib/schemas";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -34,13 +35,7 @@ export async function GET(request: NextRequest) {
       organizacaoId: filters.organizacaoId,
     };
 
-    const metricsData = await getMetricsData(metricsFilters);
-
-    return NextResponse.json(metricsData, {
-      headers: {
-        "Cache-Control": "public, max-age=60", // Cache for 1 minute
-      },
-    });
+    return jsonComVersao(request, ["demanda"], () => getMetricsData(metricsFilters));
   } catch (error) {
     console.error("[metrics] Erro:", error);
     const message = error instanceof Error ? error.message : "Erro ao obter métricas";

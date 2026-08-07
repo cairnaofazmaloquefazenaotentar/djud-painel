@@ -1,0 +1,589 @@
+diff --git a/app/api/demandas/autores/metrics/route.ts b/app/api/demandas/autores/metrics/route.ts
+index 1f72fcf..dff7dee 100644
+--- a/app/api/demandas/autores/metrics/route.ts
++++ b/app/api/demandas/autores/metrics/route.ts
+@@ -3,6 +3,7 @@ export const runtime = "nodejs";
+ import { auth } from "@/lib/auth";
+ import { db } from "@/lib/db";
+ import { Prisma } from "@prisma/client";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ /**
+@@ -68,9 +69,7 @@ export async function GET(request: NextRequest) {
+       return { mes: r.mes, autoresUnicos: unicos, autoresNovos: novos, autoresReincidentes: reincidentes };
+     });
+ 
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=60" },
+-    });
++    return jsonComVersao(request, ["demanda"], async () => data);
+   } catch (error) {
+     console.error("[autores/metrics] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter métricas de autores";
+diff --git a/app/api/demandas/metrics/route.ts b/app/api/demandas/metrics/route.ts
+index 3792dab..d6ac7a9 100644
+--- a/app/api/demandas/metrics/route.ts
++++ b/app/api/demandas/metrics/route.ts
+@@ -3,6 +3,7 @@ export const runtime = "nodejs";
+ import { auth } from "@/lib/auth";
+ import { getMetricsData } from "@/lib/metrics";
+ import { filterMetricsSchema } from "@/lib/schemas";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ export async function GET(request: NextRequest) {
+@@ -34,13 +35,7 @@ export async function GET(request: NextRequest) {
+       organizacaoId: filters.organizacaoId,
+     };
+ 
+-    const metricsData = await getMetricsData(metricsFilters);
+-
+-    return NextResponse.json(metricsData, {
+-      headers: {
+-        "Cache-Control": "public, max-age=60", // Cache for 1 minute
+-      },
+-    });
++    return jsonComVersao(request, ["demanda"], () => getMetricsData(metricsFilters));
+   } catch (error) {
+     console.error("[metrics] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter métricas";
+diff --git a/app/api/demandas/principios-ativos/route.ts b/app/api/demandas/principios-ativos/route.ts
+index 3560001..0bf3dca 100644
+--- a/app/api/demandas/principios-ativos/route.ts
++++ b/app/api/demandas/principios-ativos/route.ts
+@@ -2,6 +2,7 @@ export const runtime = "nodejs";
+ 
+ import { auth } from "@/lib/auth";
+ import { db } from "@/lib/db";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextResponse } from "next/server";
+ 
+ /**
+@@ -38,7 +39,7 @@ function normalizar(raw: string): string | null {
+   return s;
+ }
+ 
+-export async function GET() {
++export async function GET(request: Request) {
+   try {
+     const session = await auth();
+     if (!session?.user) {
+@@ -75,10 +76,7 @@ export async function GET() {
+       (a, b) => b.count - a.count || a.value.localeCompare(b.value, "pt-BR"),
+     );
+ 
+-    return NextResponse.json(
+-      { items },
+-      { headers: { "Cache-Control": "public, max-age=3600" } }, // 1h: lista muda pouco
+-    );
++    return jsonComVersao(request, ["demanda"], async () => ({ items }));
+   } catch (error) {
+     console.error("[principios-ativos] Erro:", error);
+     const message =
+diff --git a/app/api/pmvg/route.ts b/app/api/pmvg/route.ts
+index 0e71c5f..f0c6fed 100644
+--- a/app/api/pmvg/route.ts
++++ b/app/api/pmvg/route.ts
+@@ -2,20 +2,17 @@ export const runtime = "nodejs";
+ 
+ import { auth } from "@/lib/auth";
+ import { getPmvgData } from "@/lib/pmvg-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextResponse } from "next/server";
+ 
+-export async function GET() {
++export async function GET(request: Request) {
+   try {
+     const session = await auth();
+     if (!session?.user) {
+       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+     }
+ 
+-    const data = await getPmvgData();
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base de referência muda pouco
+-    });
++    return jsonComVersao(request, ["sismatPmvg"], () => getPmvgData());
+   } catch (error) {
+     console.error("[pmvg] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter a base SISMAT × PMVG";
+diff --git a/app/api/precos/overview/route.ts b/app/api/precos/overview/route.ts
+index 933350e..7076aa0 100644
+--- a/app/api/precos/overview/route.ts
++++ b/app/api/precos/overview/route.ts
+@@ -2,20 +2,17 @@ export const runtime = "nodejs";
+ 
+ import { auth } from "@/lib/auth";
+ import { getPrecosOverview } from "@/lib/precos-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextResponse } from "next/server";
+ 
+-export async function GET() {
++export async function GET(request: Request) {
+   try {
+     const session = await auth();
+     if (!session?.user) {
+       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+     }
+ 
+-    const data = await getPrecosOverview();
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base histórica de referência muda pouco
+-    });
++    return jsonComVersao(request, ["comprasGovPreco"], () => getPrecosOverview());
+   } catch (error) {
+     console.error("[precos/overview] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter visão geral de preços";
+diff --git a/app/api/precos/serie/route.ts b/app/api/precos/serie/route.ts
+index a950ab9..c793b92 100644
+--- a/app/api/precos/serie/route.ts
++++ b/app/api/precos/serie/route.ts
+@@ -2,6 +2,7 @@ export const runtime = "nodejs";
+ 
+ import { auth } from "@/lib/auth";
+ import { getPrecosSerie } from "@/lib/precos-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ export async function GET(request: NextRequest) {
+@@ -22,11 +23,9 @@ export async function GET(request: NextRequest) {
+       );
+     }
+ 
+-    const data = await getPrecosSerie(material, unidade);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base histórica de referência muda pouco
+-    });
++    return jsonComVersao(request, ["comprasGovPreco"], () =>
++      getPrecosSerie(material, unidade)
++    );
+   } catch (error) {
+     console.error("[precos/serie] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter série de preços";
+diff --git a/app/api/sismat/estoque/route.ts b/app/api/sismat/estoque/route.ts
+index 98cfd0d..2313d88 100644
+--- a/app/api/sismat/estoque/route.ts
++++ b/app/api/sismat/estoque/route.ts
+@@ -3,6 +3,7 @@ export const runtime = "nodejs";
+ import { auth } from "@/lib/auth";
+ import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
+ import { getSismatEstoqueMetrics } from "@/lib/sismat-estoque-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ export async function GET(request: NextRequest) {
+@@ -17,11 +18,9 @@ export async function GET(request: NextRequest) {
+       ? (perRaw as SismatPeriodo)
+       : "monthly";
+ 
+-    const data = await getSismatEstoqueMetrics(period);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" },
+-    });
++    return jsonComVersao(request, ["sismatEntrada", "sismatSaida"], () =>
++      getSismatEstoqueMetrics(period)
++    );
+   } catch (error) {
+     console.error("[sismat/estoque] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter métricas de estoque SISMAT";
+diff --git a/app/api/sismat/metrics/route.ts b/app/api/sismat/metrics/route.ts
+index 8ad3812..a20d404 100644
+--- a/app/api/sismat/metrics/route.ts
++++ b/app/api/sismat/metrics/route.ts
+@@ -8,6 +8,7 @@ import {
+   type SismatDimensao,
+   type SismatPeriodo,
+ } from "@/lib/sismat-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ export async function GET(request: NextRequest) {
+@@ -29,11 +30,7 @@ export async function GET(request: NextRequest) {
+       ? (perRaw as SismatPeriodo)
+       : "monthly";
+ 
+-    const data = await getSismatMetrics(dimension, period);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base de referência muda pouco
+-    });
++    return jsonComVersao(request, ["sismatEntrada"], () => getSismatMetrics(dimension, period));
+   } catch (error) {
+     console.error("[sismat/metrics] Erro:", error);
+     const message = error instanceof Error ? error.message : "Erro ao obter métricas SISMAT";
+diff --git a/app/api/sismat/saidas/metrics/route.ts b/app/api/sismat/saidas/metrics/route.ts
+index 15c181a..871f2e0 100644
+--- a/app/api/sismat/saidas/metrics/route.ts
++++ b/app/api/sismat/saidas/metrics/route.ts
+@@ -7,6 +7,7 @@ import {
+   type SismatSaidasDimensao,
+ } from "@/lib/sismat-saidas-metrics";
+ import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ /**
+@@ -34,11 +35,9 @@ export async function GET(request: NextRequest) {
+       ? (perRaw as SismatPeriodo)
+       : "monthly";
+ 
+-    const data = await getSismatSaidasMetrics(dimension, period);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "public, max-age=3600" },
+-    });
++    return jsonComVersao(request, ["sismatSaida"], () =>
++      getSismatSaidasMetrics(dimension, period)
++    );
+   } catch (error) {
+     console.error("[sismat/saidas/metrics] Erro:", error);
+     const message =
+diff --git a/app/api/sismat/saidas/redmine/route.ts b/app/api/sismat/saidas/redmine/route.ts
+index 3801da6..a794697 100644
+--- a/app/api/sismat/saidas/redmine/route.ts
++++ b/app/api/sismat/saidas/redmine/route.ts
+@@ -2,6 +2,7 @@ export const runtime = "nodejs";
+ 
+ import { auth } from "@/lib/auth";
+ import { getSaidasRedmineOverview } from "@/lib/sismat-saidas-redmine-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextResponse } from "next/server";
+ 
+ /**
+@@ -9,18 +10,16 @@ import { NextResponse } from "next/server";
+  * Agregados globais do cruzamento Saídas SISMAT × Redmine (por nº SEI):
+  * KPIs, Top 20 medicamentos, Top 15 CRM/OAB, distribuições e opções de filtro.
+  */
+-export async function GET() {
++export async function GET(request: Request) {
+   try {
+     const session = await auth();
+     if (!session?.user) {
+       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+     }
+ 
+-    const data = await getSaidasRedmineOverview();
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "private, no-store" },
+-    });
++    return jsonComVersao(request, ["sismatSaida", "redmineSei"], () =>
++      getSaidasRedmineOverview()
++    );
+   } catch (error) {
+     console.error("[sismat/saidas/redmine] Erro:", error);
+     const message =
+diff --git a/app/api/sismat/saidas/redmine/tabela/route.ts b/app/api/sismat/saidas/redmine/tabela/route.ts
+index df6f3b8..f9d43fd 100644
+--- a/app/api/sismat/saidas/redmine/tabela/route.ts
++++ b/app/api/sismat/saidas/redmine/tabela/route.ts
+@@ -6,6 +6,7 @@ import {
+   SAIDAS_REDMINE_FILTROS,
+   type SaidasRedmineFiltros,
+ } from "@/lib/sismat-saidas-redmine-metrics";
++import { jsonComVersao } from "@/lib/data-version";
+ import { NextRequest, NextResponse } from "next/server";
+ 
+ /**
+@@ -27,11 +28,9 @@ export async function GET(request: NextRequest) {
+       if (v) filtros[f] = v;
+     }
+ 
+-    const data = await getSaidasRedmineTabela(filtros);
+-
+-    return NextResponse.json(data, {
+-      headers: { "Cache-Control": "private, no-store" },
+-    });
++    return jsonComVersao(request, ["sismatSaida", "redmineSei"], () =>
++      getSaidasRedmineTabela(filtros)
++    );
+   } catch (error) {
+     console.error("[sismat/saidas/redmine/tabela] Erro:", error);
+     const message =
+diff --git a/hooks/usePmvg.ts b/hooks/usePmvg.ts
+index 33af592..2f0edd2 100644
+--- a/hooks/usePmvg.ts
++++ b/hooks/usePmvg.ts
+@@ -19,7 +19,9 @@ export function usePmvgData() {
+       }
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000, // 1 hora
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/usePrecos.ts b/hooks/usePrecos.ts
+index 5205e9e..0718e73 100644
+--- a/hooks/usePrecos.ts
++++ b/hooks/usePrecos.ts
+@@ -18,7 +18,9 @@ export function usePrecosOverview() {
+       }
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000, // 1 hora
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+@@ -39,7 +41,9 @@ export function usePrecosSerie(material: string, unidade: string) {
+       return res.json();
+     },
+     enabled: !!material && !!unidade,
+-    staleTime: 60 * 60 * 1000, // 1 hora
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/usePrincipiosAtivos.ts b/hooks/usePrincipiosAtivos.ts
+index d9af366..558034d 100644
+--- a/hooks/usePrincipiosAtivos.ts
++++ b/hooks/usePrincipiosAtivos.ts
+@@ -21,7 +21,9 @@ export function usePrincipiosAtivos() {
+       const data = await res.json();
+       return data.items as PrincipioAtivoOption[];
+     },
+-    staleTime: 60 * 60 * 1000, // 1 hora
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/useSismatEstoque.ts b/hooks/useSismatEstoque.ts
+index 609e472..72ca193 100644
+--- a/hooks/useSismatEstoque.ts
++++ b/hooks/useSismatEstoque.ts
+@@ -17,7 +17,9 @@ export function useSismatEstoque(period: SismatPeriodo) {
+       }
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000,
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/useSismatMetrics.ts b/hooks/useSismatMetrics.ts
+index 3d27c5e..a674056 100644
+--- a/hooks/useSismatMetrics.ts
++++ b/hooks/useSismatMetrics.ts
+@@ -19,7 +19,9 @@ export function useSismatMetrics(dimension: SismatDimensao, period: SismatPeriod
+       }
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000, // 1 hora
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/useSismatSaidasMetrics.ts b/hooks/useSismatSaidasMetrics.ts
+index bd07bc1..604613d 100644
+--- a/hooks/useSismatSaidasMetrics.ts
++++ b/hooks/useSismatSaidasMetrics.ts
+@@ -19,7 +19,9 @@ export function useSismatSaidasMetrics(
+       if (!res.ok) throw new Error("Erro ao carregar métricas de saídas SISMAT");
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000,
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+diff --git a/hooks/useSismatSaidasRedmine.ts b/hooks/useSismatSaidasRedmine.ts
+index 99e37d3..b8e0e8a 100644
+--- a/hooks/useSismatSaidasRedmine.ts
++++ b/hooks/useSismatSaidasRedmine.ts
+@@ -21,7 +21,9 @@ export function useSaidasRedmineOverview() {
+       }
+       return res.json();
+     },
+-    staleTime: 60 * 60 * 1000,
++    // 30s: revalidação é um 304 barato (ETag por versão do dado em
++    // lib/data-version.ts), então import novo aparece quase de imediato.
++    staleTime: 30 * 1000,
+     gcTime: 2 * 60 * 60 * 1000,
+   });
+ }
+@@ -47,7 +49,7 @@ export function useSaidasRedmineTabela(filtros: SaidasRedmineFiltros) {
+     },
+     // mantém os dados anteriores enquanto o novo filtro carrega (sem "piscar")
+     placeholderData: (prev) => prev,
+-    staleTime: 5 * 60 * 1000,
++    staleTime: 30 * 1000,
+     gcTime: 30 * 60 * 1000,
+   });
+ }
+diff --git a/lib/data-version.ts b/lib/data-version.ts
+new file mode 100644
+index 0000000..36ab6c1
+--- /dev/null
++++ b/lib/data-version.ts
+@@ -0,0 +1,151 @@
++import { Prisma } from "@prisma/client";
++import { db } from "@/lib/db";
++import { NextResponse } from "next/server";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Cache condicional por VERSÃO DO DADO (não por relógio).
++//
++// O painel é alimentado por scripts de importação que rodam fora da aplicação
++// (truncate-and-replace de SismatEntrada, SismatSaida, RedmineSeiAtributos,
++// ComprasGovPreco, SismatPmvg). Sem um canal para avisar o front, headers do
++// tipo `max-age=3600` deixam o dashboard servindo dado velho por até uma hora
++// depois de cada import — e `public` ainda autoriza cache compartilhado a
++// guardar resposta de rota autenticada.
++//
++// Aqui a validade da resposta é amarrada ao dado: cada tabela carrega
++// `criadoEm @default(now())`, então todo import move o carimbo. A versão é o
++// md5 de (nome, contagem, maior carimbo) de cada fonte que a rota consome.
++//
++// O ganho vem da ORDEM: a consulta de versão é um count + max por tabela e
++// roda ANTES da agregação pesada. Se o ETag do cliente bate, a rota devolve
++// 304 sem corpo e sem nunca tocar nas dezenas de milhares de linhas.
++//
++// `private, no-cache` não é "não guarde" — é "guarde, mas revalide sempre".
++// Diferente de `no-store` (não guarde nada) e de `max-age` (não pergunte por
++// N segundos). O browser mantém a cópia e manda If-None-Match a cada uso.
++// ─────────────────────────────────────────────────────────────────────────────
++
++interface Fonte {
++  /** Tabela qualificada pelo schema Postgres (o projeto usa multiSchema). */
++  tabela: Prisma.Sql;
++  /**
++   * Colunas de carimbo consideradas na versão. `Demanda` também é editada pela
++   * UI, então `atualizadoEm` (@updatedAt) entra junto — sem ela, uma edição
++   * não invalidaria o cache. Exclusão física é coberta pela contagem.
++   */
++  colunas: readonly string[];
++}
++
++const FONTES = {
++  demanda: {
++    tabela: Prisma.sql`public."Demanda"`,
++    colunas: ["criadoEm", "atualizadoEm"],
++  },
++  sismatEntrada: {
++    tabela: Prisma.sql`sismat."SismatEntrada"`,
++    colunas: ["criadoEm"],
++  },
++  sismatSaida: {
++    tabela: Prisma.sql`sismat."SismatSaida"`,
++    colunas: ["criadoEm"],
++  },
++  redmineSei: {
++    tabela: Prisma.sql`sismat."RedmineSeiAtributos"`,
++    colunas: ["criadoEm"],
++  },
++  comprasGovPreco: {
++    tabela: Prisma.sql`sismat."ComprasGovPreco"`,
++    colunas: ["criadoEm"],
++  },
++  sismatPmvg: {
++    tabela: Prisma.sql`sismat."SismatPmvg"`,
++    colunas: ["criadoEm"],
++  },
++} as const satisfies Record<string, Fonte>;
++
++export type FonteDados = keyof typeof FONTES;
++
++/** Identificador SQL seguro. A lista é fechada aqui, mas a guarda torna a
++ *  injeção estruturalmente impossível mesmo se alguém editar FONTES sem cuidado. */
++function colunaSegura(nome: string): string {
++  if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(nome)) {
++    throw new Error(`Nome de coluna inválido em FONTES: ${nome}`);
++  }
++  return `"${nome}"`;
++}
++
++/**
++ * Versão agregada das fontes informadas — muda se, e somente se, alguma delas
++ * ganhou, perdeu ou atualizou linhas.
++ */
++export async function getDataVersion(fontes: readonly FonteDados[]): Promise<string> {
++  if (fontes.length === 0) return "sem-fontes";
++
++  const selects = fontes.map((nome) => {
++    const { tabela, colunas } = FONTES[nome];
++    const maxes = colunas.map((c) => `max(${colunaSegura(c)})`).join(", ");
++    // GREATEST ignora NULLs; só devolve NULL se todos forem NULL (tabela vazia).
++    const carimbo = Prisma.raw(`COALESCE(GREATEST(${maxes})::text, '-')`);
++    // ::text explícito — sem ele o Postgres não consegue inferir o tipo do
++    // parâmetro ao lado de um literal desconhecido e devolve 42P18.
++    return Prisma.sql`SELECT ${nome}::text || ':' || count(*)::text || ':' || ${carimbo} AS v FROM ${tabela}`;
++  });
++
++  const [row] = await db.$queryRaw<{ versao: string | null }[]>(
++    Prisma.sql`SELECT md5(string_agg(v, '|' ORDER BY v)) AS versao FROM (${Prisma.join(
++      selects,
++      " UNION ALL "
++    )}) t`
++  );
++
++  return row?.versao ?? "sem-versao";
++}
++
++const CACHE_CONTROL = "private, no-cache";
++
++function cabecalhos(etag: string | null): Record<string, string> {
++  return etag
++    ? { ETag: etag, "Cache-Control": CACHE_CONTROL }
++    : { "Cache-Control": CACHE_CONTROL };
++}
++
++/** Normaliza para comparar: remove o marcador fraco `W/` e as aspas. */
++function normalizaTag(tag: string): string {
++  return tag.trim().replace(/^W\//, "").replace(/^"|"$/g, "");
++}
++
++function clienteJaTem(header: string | null, etag: string): boolean {
++  if (!header) return false;
++  const alvo = normalizaTag(etag);
++  return header.split(",").some((t) => normalizaTag(t) === alvo);
++}
++
++/**
++ * Resposta JSON com revalidação condicional.
++ *
++ * `produzir` só é chamada quando a versão mudou — é onde mora a agregação cara,
++ * e ela é pulada inteira nos 304.
++ *
++ * Se o cálculo da versão falhar (tabela ausente, drift de schema), a rota segue
++ * respondendo normalmente, apenas sem ETag: degradar para "sempre fresco" é
++ * preferível a derrubar o dashboard.
++ */
++export async function jsonComVersao<T>(
++  request: Request,
++  fontes: readonly FonteDados[],
++  produzir: () => Promise<T>
++): Promise<NextResponse> {
++  let etag: string | null = null;
++  try {
++    etag = `W/"${await getDataVersion(fontes)}"`;
++  } catch (error) {
++    console.error("[data-version] falha ao calcular a versão; seguindo sem ETag:", error);
++  }
++
++  if (etag && clienteJaTem(request.headers.get("if-none-match"), etag)) {
++    return new NextResponse(null, { status: 304, headers: cabecalhos(etag) });
++  }
++
++  const data = await produzir();
++  return NextResponse.json(data, { headers: cabecalhos(etag) });
++}

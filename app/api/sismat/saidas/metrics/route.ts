@@ -7,6 +7,7 @@ import {
   type SismatSaidasDimensao,
 } from "@/lib/sismat-saidas-metrics";
 import { SISMAT_PERIODOS, type SismatPeriodo } from "@/lib/sismat-metrics";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -34,11 +35,9 @@ export async function GET(request: NextRequest) {
       ? (perRaw as SismatPeriodo)
       : "monthly";
 
-    const data = await getSismatSaidasMetrics(dimension, period);
-
-    return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=3600" },
-    });
+    return jsonComVersao(request, ["sismatSaida"], () =>
+      getSismatSaidasMetrics(dimension, period)
+    );
   } catch (error) {
     console.error("[sismat/saidas/metrics] Erro:", error);
     const message =

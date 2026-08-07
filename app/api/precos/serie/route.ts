@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { getPrecosSerie } from "@/lib/precos-metrics";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -22,11 +23,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = await getPrecosSerie(material, unidade);
-
-    return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base histórica de referência muda pouco
-    });
+    return jsonComVersao(request, ["comprasGovPreco"], () =>
+      getPrecosSerie(material, unidade)
+    );
   } catch (error) {
     console.error("[precos/serie] Erro:", error);
     const message = error instanceof Error ? error.message : "Erro ao obter série de preços";

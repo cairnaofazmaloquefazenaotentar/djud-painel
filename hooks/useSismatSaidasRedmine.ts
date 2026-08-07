@@ -21,7 +21,9 @@ export function useSaidasRedmineOverview() {
       }
       return res.json();
     },
-    staleTime: 60 * 60 * 1000,
+    // 30s: revalidação é um 304 barato (ETag por versão do dado em
+    // lib/data-version.ts), então import novo aparece quase de imediato.
+    staleTime: 30 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
 }
@@ -47,7 +49,7 @@ export function useSaidasRedmineTabela(filtros: SaidasRedmineFiltros) {
     },
     // mantém os dados anteriores enquanto o novo filtro carrega (sem "piscar")
     placeholderData: (prev) => prev,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 30 * 1000,
     gcTime: 30 * 60 * 1000,
   });
 }

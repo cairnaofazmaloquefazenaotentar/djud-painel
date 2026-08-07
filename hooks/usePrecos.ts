@@ -18,7 +18,9 @@ export function usePrecosOverview() {
       }
       return res.json();
     },
-    staleTime: 60 * 60 * 1000, // 1 hora
+    // 30s: revalidação é um 304 barato (ETag por versão do dado em
+    // lib/data-version.ts), então import novo aparece quase de imediato.
+    staleTime: 30 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
 }
@@ -39,7 +41,9 @@ export function usePrecosSerie(material: string, unidade: string) {
       return res.json();
     },
     enabled: !!material && !!unidade,
-    staleTime: 60 * 60 * 1000, // 1 hora
+    // 30s: revalidação é um 304 barato (ETag por versão do dado em
+    // lib/data-version.ts), então import novo aparece quase de imediato.
+    staleTime: 30 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
 }

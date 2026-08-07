@@ -19,7 +19,9 @@ export function useSismatSaidasMetrics(
       if (!res.ok) throw new Error("Erro ao carregar métricas de saídas SISMAT");
       return res.json();
     },
-    staleTime: 60 * 60 * 1000,
+    // 30s: revalidação é um 304 barato (ETag por versão do dado em
+    // lib/data-version.ts), então import novo aparece quase de imediato.
+    staleTime: 30 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
 }

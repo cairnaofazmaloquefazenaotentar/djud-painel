@@ -6,6 +6,7 @@ import {
   SAIDAS_REDMINE_FILTROS,
   type SaidasRedmineFiltros,
 } from "@/lib/sismat-saidas-redmine-metrics";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -27,11 +28,9 @@ export async function GET(request: NextRequest) {
       if (v) filtros[f] = v;
     }
 
-    const data = await getSaidasRedmineTabela(filtros);
-
-    return NextResponse.json(data, {
-      headers: { "Cache-Control": "private, no-store" },
-    });
+    return jsonComVersao(request, ["sismatSaida", "redmineSei"], () =>
+      getSaidasRedmineTabela(filtros)
+    );
   } catch (error) {
     console.error("[sismat/saidas/redmine/tabela] Erro:", error);
     const message =
