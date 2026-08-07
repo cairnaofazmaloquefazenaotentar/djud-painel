@@ -1,17 +1,29 @@
 #!/usr/bin/env node
 
 /**
- * Script de Importação: SISMAT_entradas.csv → schema Postgres "sismat" (tabela SismatEntrada)
+ * Script de Importação: base de entradas SISMAT → schema Postgres "sismat" (tabela SismatEntrada)
  *
- * Particularidades da base SISMAT (diferentes da base Redmine!):
- *   • Encoding ISO-8859-1 (Latin-1), NÃO UTF-8.
- *   • Separador ";" (padrão brasileiro), com campos entre aspas que podem conter ";"
- *     (ex.: a entidade HTML "&#8203;" contém ";") — por isso usamos um parser CSV
- *     que respeita aspas, não um split ingênuo.
- *   • Datas em ISO "YYYY-MM-DD" (não ambíguas) → new Date() direto.
- *   • Decimais em FORMATO INGLÊS (ponto decimal: "312.27", "3379933.72", "1e-05")
- *     → parseFloat direto. NÃO aplicar parsing brasileiro (que trataria "." como
- *     separador de milhar e destruiria os valores). Exibição em pt-BR (R$) fica na UI.
+ * Aceita DOIS formatos, detectados pela extensão do arquivo:
+ *
+ *   XLSX/XLSM — export atual do MicroStrategy (ex.: PDF_Entradas_-_NomesMicroStrategy.xlsx).
+ *     • Números e datas vêm NATIVOS do Excel (sem risco de locale).
+ *     • Datas: SheetJS com cellDates devolve Date no fuso LOCAL da máquina; normalizamos
+ *       para meia-noite UTC (mesma convenção do caminho CSV) — ver parseDateCell.
+ *     • Material SEM código prefixo ("VENETOCLAX 100MG COMPRIMIDO"); normalizeMaterial
+ *       já trata os dois casos, então materialNome continua cruzando com as saídas.
+ *
+ *   CSV — export legado do SISMAT.
+ *     • Encoding ISO-8859-1 (Latin-1), NÃO UTF-8.
+ *     • Separador ";" (padrão brasileiro), com campos entre aspas que podem conter ";"
+ *       (ex.: a entidade HTML "&#8203;" contém ";") — por isso usamos um parser CSV
+ *       que respeita aspas, não um split ingênuo.
+ *     • Datas em ISO "YYYY-MM-DD" (não ambíguas) → new Date() direto.
+ *     • Decimais em FORMATO INGLÊS (ponto decimal: "312.27", "3379933.72", "1e-05")
+ *       → parseFloat direto. NÃO aplicar parsing brasileiro (que trataria "." como
+ *       separador de milhar e destruiria os valores). Exibição em pt-BR (R$) fica na UI.
+ *
+ * Nos dois casos o mapeamento é POR NOME DE CABEÇALHO (não por índice), então uma
+ * reordenação de colunas no export não quebra a importação.
  *
  * Importa TODAS as movimentações cruas (espelho fiel). O recorte de "gastos"
  * (apenas aquisições) é aplicado na camada de consulta (lib/sismat-metrics.ts).
@@ -20,13 +32,15 @@
  *   npx tsx scripts/import-sismat-entradas.ts --dry-run                 (valida parsing; não toca o BD)
  *   npx tsx scripts/import-sismat-entradas.ts --limit=100               (importa 100 linhas)
  *   npx tsx scripts/import-sismat-entradas.ts --truncate --confirm      (limpa a tabela e importa tudo)
- *   npx tsx scripts/import-sismat-entradas.ts --file=/caminho/arq.csv   (arquivo específico)
+ *   npx tsx scripts/import-sismat-entradas.ts --file=/caminho/arq.xlsx  (arquivo específico)
  *
- * Fonte do arquivo (ordem de precedência): --file=... > env SISMAT_CSV > ./SISMAT_entradas.csv
+ * Fonte do arquivo (ordem de precedência):
+ *   --file=... > env SISMAT_ENTRADAS_XLSX > env SISMAT_CSV > ./SISMAT_entradas.csv
  */
 
 import * as fs from "fs";
 import * as path from "path";
+import * as XLSX from "xlsx";
 
 // ── Flags / config ──────────────────────────────────────────────────────────
 
@@ -39,10 +53,14 @@ const TRUNCATE = process.argv.includes("--truncate");
 const LIMIT = parseInt(arg("limit") || "0", 10);
 const BATCH_SIZE = 500;
 
-const CSV_PATH =
+const SRC_PATH =
   arg("file") ||
+  process.env.SISMAT_ENTRADAS_XLSX ||
   process.env.SISMAT_CSV ||
   path.join(process.cwd(), "SISMAT_entradas.csv");
+
+/** Planilha binária (SheetJS) vs. CSV de texto — decide o leitor em readTable(). */
+const IS_XLSX = [".xlsx", ".xlsm"].includes(path.extname(SRC_PATH).toLowerCase());
 
 // Tipos de movimentação considerados "aquisição" — apenas para o resumo do dry-run.
 // (O filtro efetivo de gastos vive em lib/sismat-metrics.ts.)
@@ -105,8 +123,20 @@ function sanitizeStr(value: unknown): string | null {
   return s || null;
 }
 
-/** Data ISO "YYYY-MM-DD" → Date (UTC). Texto inválido (ex.: "DEVOLUÇÃO DJ") → null. */
-function parseDateISO(value: unknown): Date | null {
+/**
+ * Data → Date fixado em meia-noite UTC. Cobre os dois formatos de origem:
+ *   • XLSX: SheetJS com cellDates devolve Date construído no fuso LOCAL da máquina
+ *     (em UTC+2, "02/01/2025" vira 2025-01-01T23:00Z — dia errado em UTC, e o
+ *     agrupamento por mês do dashboard usa getUTC*). Relemos o dia pelos getters
+ *     locais e reconstruímos em UTC, o que dá o mesmo resultado em qualquer fuso.
+ *   • CSV: string ISO "YYYY-MM-DD" → new Date() já interpreta como UTC.
+ * Texto inválido (ex.: "DEVOLUÇÃO DJ") → null.
+ */
+function parseDateCell(value: unknown): Date | null {
+  if (value instanceof Date) {
+    if (isNaN(value.getTime())) return null;
+    return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  }
   const s = sanitizeStr(value);
   if (!s) return null;
   const d = new Date(s);
@@ -201,8 +231,8 @@ interface SismatRow {
   tipoMovimentacao: string | null;
 }
 
-function mapRow(cells: string[], idx: Record<string, number>): SismatRow | null {
-  const g = (name: string): string => cells[idx[name]] ?? "";
+function mapRow(cells: unknown[], idx: Record<string, number>): SismatRow | null {
+  const g = (name: string): unknown => cells[idx[name]] ?? null;
   const materialRaw = sanitizeStr(g("Material"));
   if (!materialRaw) return null; // Material é obrigatório
 
@@ -210,8 +240,8 @@ function mapRow(cells: string[], idx: Record<string, number>): SismatRow | null 
     siafi: parseIntEN(g("SIAFI")),
     material: materialRaw,
     materialNome: normalizeMaterial(materialRaw),
-    dtArmazenamento: parseDateISO(g("Dt. Armaz.")),
-    dtValidade: parseDateISO(g("Dt. Validade")),
+    dtArmazenamento: parseDateCell(g("Dt. Armaz.")),
+    dtValidade: parseDateCell(g("Dt. Validade")),
     progSaude: sanitizeStr(g("Prog Saúde")),
     unidade: sanitizeStr(g("Unid")),
     quantidade: parseFloatEN(g("Quantidade")),
@@ -221,7 +251,7 @@ function mapRow(cells: string[], idx: Record<string, number>): SismatRow | null 
     fornecedor: sanitizeStr(g("Fornecedor")),
     contrato: sanitizeStr(g("Contrato")),
     empenhoDoc: sanitizeStr(g("Empenho/Doc")),
-    dtRecebimento: parseDateISO(g("Dt. Recebimento")),
+    dtRecebimento: parseDateCell(g("Dt. Recebimento")),
     notaFiscalDoc: sanitizeStr(g("Nota Fiscal/Doc")),
     statusArmazenamento: sanitizeStr(g("Status Armazenamento")),
     numeroOrdem: sanitizeStr(g("Nº de Ordem")),
@@ -233,24 +263,41 @@ function mapRow(cells: string[], idx: Record<string, number>): SismatRow | null 
 
 // ── Leitura + parsing do arquivo ─────────────────────────────────────────────
 
-function readRows(): SismatRow[] {
-  if (!fs.existsSync(CSV_PATH)) {
-    console.error(`❌ Arquivo não encontrado: ${CSV_PATH}`);
-    console.error(`   Use --file=/caminho/SISMAT_entradas.csv ou defina SISMAT_CSV.`);
-    process.exit(1);
+/** Lê o arquivo de origem como matriz crua (linha 0 = cabeçalho), seja XLSX ou CSV. */
+function readTable(): unknown[][] {
+  if (IS_XLSX) {
+    console.log("📖 Lendo XLSX (SheetJS, cellDates)...");
+    const wb = XLSX.readFile(SRC_PATH, { cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) {
+      console.error("❌ Planilha sem abas legíveis.");
+      process.exit(1);
+    }
+    // header:1 → arrays crus, para mapear pelo cabeçalho da linha 0 (mesma lógica do CSV)
+    return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null });
   }
 
   console.log("📖 Lendo CSV (decodificando ISO-8859-1 → UTF-8)...");
-  const buf = fs.readFileSync(CSV_PATH);
+  const buf = fs.readFileSync(SRC_PATH);
   const text = new TextDecoder("latin1").decode(buf); // ISO-8859-1
-  const table = parseCSV(text, ";");
+  return parseCSV(text, ";");
+}
 
-  if (table.length < 2) {
-    console.error("❌ CSV vazio ou sem linhas de dados.");
+function readRows(): SismatRow[] {
+  if (!fs.existsSync(SRC_PATH)) {
+    console.error(`❌ Arquivo não encontrado: ${SRC_PATH}`);
+    console.error(`   Use --file=/caminho/arquivo.xlsx (ou .csv) ou defina SISMAT_ENTRADAS_XLSX.`);
     process.exit(1);
   }
 
-  const header = table[0].map((h) => h.trim());
+  const table = readTable();
+
+  if (table.length < 2) {
+    console.error("❌ Arquivo vazio ou sem linhas de dados.");
+    process.exit(1);
+  }
+
+  const header = (table[0] || []).map((h) => (h == null ? "" : String(h).trim()));
   const idx: Record<string, number> = {};
   header.forEach((h, i) => (idx[h] = i));
 
@@ -258,14 +305,16 @@ function readRows(): SismatRow[] {
   if (faltando.length > 0) {
     console.error(`❌ Colunas ausentes no cabeçalho: ${faltando.join(", ")}`);
     console.error(`   Cabeçalho encontrado: ${header.join(" | ")}`);
+    console.error("   Verifique se o export do SISMAT mudou de estrutura.");
     process.exit(1);
   }
 
   const out: SismatRow[] = [];
   let ignoradas = 0;
   for (let r = 1; r < table.length; r++) {
-    const cells = table[r];
-    if (cells.length === 1 && cells[0].trim() === "") continue; // linha em branco
+    const cells = table[r] || [];
+    // linha em branco (CSV: [""] ; XLSX: array só de nulls)
+    if (cells.every((c) => c == null || String(c).trim() === "")) continue;
     const mapped = mapRow(cells, idx);
     if (!mapped) {
       ignoradas++;
@@ -315,7 +364,7 @@ function resumo(rows: SismatRow[]) {
 
 async function main() {
   console.log("🚀 Importador SISMAT → schema sismat.SismatEntrada");
-  console.log(`📄 Arquivo: ${CSV_PATH}`);
+  console.log(`📄 Arquivo: ${SRC_PATH}  [${IS_XLSX ? "XLSX" : "CSV"}]`);
   console.log(
     `🔧 Modo: ${DRY_RUN ? "DRY_RUN" : LIMIT ? `LIMIT ${LIMIT}` : "FULL"}${TRUNCATE ? " + TRUNCATE" : ""}\n`
   );
