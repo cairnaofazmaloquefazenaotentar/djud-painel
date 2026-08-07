@@ -19,7 +19,7 @@ export async function GET() {
     const data = await getSaidasRedmineOverview();
 
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=3600" },
+      headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
     console.error("[sismat/saidas/redmine] Erro:", error);

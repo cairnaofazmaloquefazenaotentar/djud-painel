@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     const data = await getSaidasRedmineTabela(filtros);
 
     return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=300" },
+      headers: { "Cache-Control": "private, no-store" },
     });
   } catch (error) {
     console.error("[sismat/saidas/redmine/tabela] Erro:", error);

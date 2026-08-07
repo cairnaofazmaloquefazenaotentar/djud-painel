@@ -1,0 +1,144 @@
+diff --git a/scripts/diag-saidas-redmine.ts b/scripts/diag-saidas-redmine.ts
+new file mode 100644
+index 0000000..b488ef4
+--- /dev/null
++++ b/scripts/diag-saidas-redmine.ts
+@@ -0,0 +1,138 @@
++#!/usr/bin/env node
++
++/**
++ * Diagnóstico (SOMENTE LEITURA) do cruzamento Saídas SISMAT × Redmine.
++ *
++ * Responde, em uma execução, por que os gráficos de CRM/OAB podem estar vazios:
++ *   1. A tabela RedmineSeiAtributos tem linhas? As colunas crm/ufCrm estão preenchidas?
++ *   2. O LEFT JOIN por nº SEI casa alguma coisa?
++ *   3. Se não casa: o problema é o formato do token extraído do destinatario?
++ *
++ * Não escreve nada no banco. Pode rodar em produção à vontade.
++ *
++ * Uso:
++ *   npx tsx scripts/diag-saidas-redmine.ts
++ */
++
++import { PrismaClient, Prisma } from "@prisma/client";
++
++const db = new PrismaClient({ log: ["error"] });
++
++/** Extração ingênua usada hoje em lib/sismat-saidas-redmine-metrics.ts. */
++const TOKEN_ATUAL = Prisma.sql`NULLIF(regexp_replace(btrim(s."destinatario"), '^.*\\s', ''), '')`;
++
++/** Extração canônica: NUP em qualquer posição da string. */
++const TOKEN_CANONICO = Prisma.sql`substring(s."destinatario" from '(\\d{5}\\.\\d{6}/\\d{4}-\\d{2})')`;
++
++const n = (v: unknown) => Number(v ?? 0);
++const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
++
++async function main() {
++  console.log("🔎 Diagnóstico: Saídas SISMAT × Redmine\n");
++
++  // ── 1. Tabela de atributos do Redmine ──────────────────────────────────────
++  const [attrs] = await db.$queryRaw<Record<string, unknown>[]>(Prisma.sql`
++    SELECT count(*)::int          AS linhas,
++           count("crm")::int      AS com_crm,
++           count("ufCrm")::int    AS com_ufcrm,
++           count("oab")::int      AS com_oab,
++           count("ufOab")::int    AS com_ufoab
++    FROM sismat."RedmineSeiAtributos"
++  `);
++  const linhasAttr = n(attrs.linhas);
++
++  console.log("1️⃣  sismat.RedmineSeiAtributos");
++  console.log(`   linhas .......... ${linhasAttr}`);
++  console.log(`   crm ............. ${n(attrs.com_crm)} (${pct(n(attrs.com_crm), linhasAttr)})`);
++  console.log(`   ufCrm ........... ${n(attrs.com_ufcrm)} (${pct(n(attrs.com_ufcrm), linhasAttr)})`);
++  console.log(`   oab ............. ${n(attrs.com_oab)} (${pct(n(attrs.com_oab), linhasAttr)})`);
++  console.log(`   ufOab ........... ${n(attrs.com_ufoab)} (${pct(n(attrs.com_ufoab), linhasAttr)})`);
++
++  if (linhasAttr === 0) {
++    console.log("\n   ⛔ VEREDITO: tabela vazia. O import do Redmine não gravou nada.");
++    console.log('      Rode: npx tsx scripts/import-redmine-sei.ts --truncate --confirm --file="…baseRedmine.xlsx"');
++    await db.$disconnect();
++    return;
++  }
++
++  const amostraSei = await db.$queryRaw<Record<string, unknown>[]>(Prisma.sql`
++    SELECT "sei", "crm", "ufCrm" FROM sismat."RedmineSeiAtributos" LIMIT 5
++  `);
++  console.log("   amostra de sei:");
++  amostraSei.forEach((r) =>
++    console.log(`      ${JSON.stringify(r.sei)} | crm=${JSON.stringify(r.crm)} | ufCrm=${JSON.stringify(r.ufCrm)}`)
++  );
++
++  // ── 2. O join casa? ────────────────────────────────────────────────────────
++  const [join] = await db.$queryRaw<Record<string, unknown>[]>(Prisma.sql`
++    SELECT count(*)::int                                        AS saidas,
++           count(*) FILTER (WHERE ${TOKEN_ATUAL} IS NOT NULL)::int AS com_token,
++           count(a."sei")::int                                  AS casaram,
++           count(a."crm")::int                                  AS casaram_com_crm
++    FROM sismat."SismatSaida" s
++    LEFT JOIN sismat."RedmineSeiAtributos" a ON a."sei" = ${TOKEN_ATUAL}
++  `);
++  const saidas = n(join.saidas);
++  const casaram = n(join.casaram);
++
++  console.log("\n2️⃣  LEFT JOIN por nº SEI (regex atual: último token do destinatario)");
++  console.log(`   saídas .......... ${saidas}`);
++  console.log(`   com token ....... ${n(join.com_token)} (${pct(n(join.com_token), saidas)})`);
++  console.log(`   casaram ......... ${casaram} (${pct(casaram, saidas)})`);
++  console.log(`   com crm ......... ${n(join.casaram_com_crm)} (${pct(n(join.casaram_com_crm), saidas)})`);
++
++  // ── 3. A regex canônica casaria mais? ──────────────────────────────────────
++  const [canon] = await db.$queryRaw<Record<string, unknown>[]>(Prisma.sql`
++    SELECT count(a."sei")::int AS casaram
++    FROM sismat."SismatSaida" s
++    LEFT JOIN sismat."RedmineSeiAtributos" a ON a."sei" = ${TOKEN_CANONICO}
++  `);
++  const casaramCanon = n(canon.casaram);
++
++  console.log("\n3️⃣  Mesma consulta com extração canônica do NUP (em qualquer posição)");
++  console.log(`   casaram ......... ${casaramCanon} (${pct(casaramCanon, saidas)})`);
++  console.log(`   ganho ........... ${casaramCanon - casaram} linha(s)`);
++
++  // ── 4. Amostra de destinatários que NÃO casam ──────────────────────────────
++  const orfaos = await db.$queryRaw<Record<string, unknown>[]>(Prisma.sql`
++    SELECT s."destinatario",
++           ${TOKEN_ATUAL}    AS token_atual,
++           ${TOKEN_CANONICO} AS token_canonico
++    FROM sismat."SismatSaida" s
++    LEFT JOIN sismat."RedmineSeiAtributos" a ON a."sei" = ${TOKEN_ATUAL}
++    WHERE a."sei" IS NULL
++    LIMIT 8
++  `);
++  if (orfaos.length) {
++    console.log("\n4️⃣  Amostra de saídas que NÃO casaram");
++    orfaos.forEach((r) => {
++      console.log(`   destinatario ... ${JSON.stringify(r.destinatario)}`);
++      console.log(`      token atual .... ${JSON.stringify(r.token_atual)}`);
++      console.log(`      token canônico . ${JSON.stringify(r.token_canonico)}`);
++    });
++  }
++
++  // ── Veredito ───────────────────────────────────────────────────────────────
++  console.log("\n📌 VEREDITO");
++  if (casaram === 0 && casaramCanon > 0) {
++    console.log("   O join está quebrado pelo formato do token, não pelos dados.");
++    console.log("   A extração canônica recupera o cruzamento — é o SEI_EXPR que precisa mudar.");
++  } else if (casaram === 0 && casaramCanon === 0) {
++    console.log("   Nenhuma saída casa por nenhuma das duas regex.");
++    console.log("   Os nº SEI do Redmine e do destinatario do SISMAT não estão no mesmo formato.");
++  } else if (n(join.casaram_com_crm) === 0) {
++    console.log("   O join casa, mas as linhas casadas têm crm nulo.");
++    console.log("   O import do Redmine rodou sem resolver a coluna \"Nº CRM\" — confira o arquivo usado.");
++  } else {
++    console.log("   Join e crm estão populados no banco. Se o gráfico segue vazio, é cache:");
++    console.log("   recarregue com Cmd+Shift+R (a rota responde com max-age=3600).");
++  }
++
++  await db.$disconnect();
++}
++
++main().catch(async (e) => {
++  console.error("❌", e);
++  await db.$disconnect();
++  process.exit(1);
++});
