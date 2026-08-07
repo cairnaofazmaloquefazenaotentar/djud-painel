@@ -44,7 +44,9 @@ const LIMIT = parseInt(process.argv.find((a: string) => a.startsWith("--limit=")
 const COL_SEI = "NUP_SEI Principal";
 const CAMPOS: { key: string; header: string; semPontos?: boolean }[] = [
   { key: "crm", header: "Nº CRM", semPontos: true },
+  { key: "ufCrm", header: "UF CRM" },
   { key: "oab", header: "Nº OAB", semPontos: true },
+  { key: "ufOab", header: "UF OAB" },
   { key: "grupoTematico", header: "Grupo Temático" },
   { key: "regiaoBrasil", header: "Região Brasil" },
   { key: "ufResidencia", header: "UF_Residência" }, // cabeçalho real tem espaço ao final
@@ -78,7 +80,9 @@ function limpa(v: unknown, semPontos = false): string | null {
 interface SeiAttrs {
   sei: string;
   crm: string | null;
+  ufCrm: string | null;
   oab: string | null;
+  ufOab: string | null;
   grupoTematico: string | null;
   regiaoBrasil: string | null;
   ufResidencia: string | null;
@@ -140,7 +144,9 @@ function lerConsolidado(): SeiAttrs[] {
       d = {
         sei,
         crm: null,
+        ufCrm: null,
         oab: null,
+        ufOab: null,
         grupoTematico: null,
         regiaoBrasil: null,
         ufResidencia: null,
