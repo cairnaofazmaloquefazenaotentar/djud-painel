@@ -1,59 +1,54 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { useSismatMetrics } from "@/hooks/useSismatMetrics";
-import type { SismatDimensao, SismatPeriodo } from "@/lib/sismat-metrics";
+import { useSismatSaidasMetrics } from "@/hooks/useSismatSaidasMetrics";
+import {
+  SISMAT_SAIDAS_DIMENSOES,
+  SISMAT_SAIDAS_DIM_LABELS,
+  type SismatSaidasDimensao,
+} from "@/lib/sismat-saidas-metrics";
+import type { SismatPeriodo } from "@/lib/sismat-metrics";
 import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
-import { fmtBRL, colorAt, SISMAT_ENTRADA_COLOR, SISMAT_SAIDA_COLOR } from "./charts/sismat-format";
+import { fmtBRL, colorAt } from "./charts/sismat-format";
 import { MetricCard } from "./metric-card";
-import { SismatSaidasView } from "./sismat-saidas-view";
-import { SismatSaidasPuraView } from "./sismat-saidas-pura-view";
-import { SismatEstoqueView } from "./sismat-estoque-view";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import {
   Coins,
-  Building2,
-  Factory,
-  Truck,
   Pill,
+  Truck,
+  Globe,
+  Users,
   TrendingUp,
   Calendar,
   Trophy,
   Loader2,
   AlertTriangle,
   ArrowUpDown,
-  ArrowDownToLine,
-  ArrowUpFromLine,
-  ArrowLeftRight,
+  PackageOpen,
 } from "lucide-react";
 
-// ── Constantes de UI (client-safe: não importa valores da lib server) ─────────
+// ── Constantes de UI ──────────────────────────────────────────────────────────
 
-const DIMENSOES: { value: SismatDimensao; label: string; icon: ReactNode }[] = [
-  { value: "fornecedor", label: "Fornecedor", icon: <Building2 className="h-3.5 w-3.5" /> },
-  { value: "fabricante", label: "Fabricante", icon: <Factory className="h-3.5 w-3.5" /> },
-  { value: "distribuidor", label: "Distribuidor", icon: <Truck className="h-3.5 w-3.5" /> },
-  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
+const DIMENSOES: { value: SismatSaidasDimensao; label: string; icon: ReactNode }[] = [
+  { value: "material",     label: "Material",          icon: <Pill className="h-3.5 w-3.5" /> },
+  { value: "fornecedor",   label: "Fornecedor",        icon: <Truck className="h-3.5 w-3.5" /> },
+  { value: "esfera",       label: "Esfera",            icon: <Globe className="h-3.5 w-3.5" /> },
+  { value: "destinatario", label: "Tipo Destinatário", icon: <Users className="h-3.5 w-3.5" /> },
 ];
-const DIM_LABEL: Record<SismatDimensao, string> = {
-  fornecedor: "Fornecedor",
-  fabricante: "Fabricante",
-  distribuidor: "Distribuidor",
-  material: "Material",
-};
+
 const PERIODOS: { value: SismatPeriodo; label: string }[] = [
   { value: "monthly", label: "Mensal" },
-  { value: "yearly", label: "Anual" },
+  { value: "yearly",  label: "Anual" },
 ];
+
 const TOP_N_OPCOES = [4, 8, 10, 15];
 
 const selectCn =
   "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
-// ── Painel (mesmo visual da Section do dashboard) ─────────────────────────────
+// ── Painel ────────────────────────────────────────────────────────────────────
 
 function Panel({
   icon,
@@ -82,8 +77,8 @@ function Panel({
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-function SismatEntradasView() {
-  const [dimension, setDimension] = useState<SismatDimensao>("fornecedor");
+export function SismatSaidasPuraView() {
+  const [dimension, setDimension] = useState<SismatSaidasDimensao>("material");
   const [period, setPeriod] = useState<SismatPeriodo>("monthly");
   const [topN, setTopN] = useState(8);
   const [entity, setEntity] = useState("");
@@ -91,7 +86,7 @@ function SismatEntradasView() {
   const [sortField, setSortField] = useState<"name" | "valor">("valor");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
-  const { data, isLoading, error } = useSismatMetrics(dimension, period);
+  const { data, isLoading, error } = useSismatSaidasMetrics(dimension, period);
 
   const view = useMemo(() => {
     if (!data) return null;
@@ -100,7 +95,6 @@ function SismatEntradasView() {
     const yearOf = (p: string) => Number(period === "monthly" ? p.slice(0, 4) : p);
     const fy = year ? Number(year) : null;
 
-    // Períodos ordenados (mensal = lexicográfico = cronológico; anual = numérico)
     const periods = totalsByPeriod
       .map((t) => t.period)
       .sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
@@ -116,13 +110,11 @@ function SismatEntradasView() {
       return m;
     };
 
-    // Sem filtro de ano → opções de entidade e seleção do Top N (gráfico de evolução)
     const totalsAll = aggregateByEntity(null);
     const entityOptions = Array.from(totalsAll.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([k]) => ({ value: k }));
 
-    // Com filtro de ano → KPIs, ranking e pizza
     const totalsFiltered = aggregateByEntity(fy);
     const rankingSorted = Array.from(totalsFiltered.entries())
       .sort((a, b) => b[1] - a[1])
@@ -139,7 +131,7 @@ function SismatEntradasView() {
     const pieData: SismatPieDatum[] = top10.map((r) => ({ name: r.name, valor: r.valor }));
     if (outrosSum > 0) pieData.push({ name: "Outros", valor: outrosSum, isOutros: true });
 
-    // Evolução: entidade selecionada OU Top N (sem filtro de ano — plota todos os períodos)
+    // Evolução
     const entitiesToShow = entity
       ? [entity]
       : Array.from(totalsAll.entries())
@@ -185,12 +177,14 @@ function SismatEntradasView() {
     };
   }, [data, period, topN, entity, year]);
 
-  const dimLabel = DIM_LABEL[dimension];
+  const dimLabel = SISMAT_SAIDAS_DIM_LABELS[dimension];
 
   const tableRowsSorted = useMemo(() => {
     if (!view) return [];
     return [...view.tableRows].sort((a, b) =>
-      sortField === "name" ? sortDir * a.name.localeCompare(b.name, "pt-BR") : sortDir * (a.valor - b.valor)
+      sortField === "name"
+        ? sortDir * a.name.localeCompare(b.name, "pt-BR")
+        : sortDir * (a.valor - b.valor)
     );
   }, [view, sortField, sortDir]);
 
@@ -217,7 +211,7 @@ function SismatEntradasView() {
       <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-2">
         <div className="flex items-center gap-2 text-destructive">
           <AlertTriangle className="h-4 w-4" />
-          <span className="font-medium text-sm">Erro ao carregar dados do SISMAT</span>
+          <span className="font-medium text-sm">Erro ao carregar dados de saídas do SISMAT</span>
         </div>
         <p className="text-xs text-muted-foreground">
           {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
@@ -229,11 +223,13 @@ function SismatEntradasView() {
   if (!view || !view.hasData) {
     return (
       <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
-        <Coins className="h-8 w-8 mx-auto text-muted-foreground" />
-        <p className="text-sm font-medium">Nenhum dado de aquisição do SISMAT encontrado</p>
+        <PackageOpen className="h-8 w-8 mx-auto text-muted-foreground" />
+        <p className="text-sm font-medium">Nenhuma saída do SISMAT encontrada</p>
         <p className="text-xs text-muted-foreground">
-          Rode a importação: <code>npx tsx scripts/import-sismat-entradas.ts --truncate --confirm</code> após
-          aplicar o schema com <code>prisma db push</code>.
+          Rode a importação:{" "}
+          <code>
+            npm run import:sismat-saidas -- --file=&quot;…Saidas.xlsx&quot; --truncate --confirm
+          </code>
         </p>
       </div>
     );
@@ -256,7 +252,7 @@ function SismatEntradasView() {
                 variant={dimension === d.value ? "default" : "outline"}
                 onClick={() => {
                   setDimension(d.value);
-                  setEntity(""); // limpa entidade ao trocar de dimensão
+                  setEntity("");
                 }}
               >
                 {d.icon}
@@ -331,14 +327,22 @@ function SismatEntradasView() {
 
       {/* ── KPIs ───────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard label="Gasto Total" value={fmtBRL(view.totalGeral)} icon={<Coins className="h-5 w-5" />} />
+        <MetricCard
+          label="Total de Saídas"
+          value={fmtBRL(view.totalGeral)}
+          icon={<Coins className="h-5 w-5" />}
+        />
         <MetricCard
           label={`${dimLabel}s ativos`}
           value={view.nEntities}
-          icon={<Building2 className="h-5 w-5" />}
+          icon={<Users className="h-5 w-5" />}
           description={`Distintos${year ? ` em ${year}` : ""}`}
         />
-        <MetricCard label="Período coberto" value={view.periodLabel} icon={<Calendar className="h-5 w-5" />} />
+        <MetricCard
+          label="Período coberto"
+          value={view.periodLabel}
+          icon={<Calendar className="h-5 w-5" />}
+        />
         <MetricCard
           label="Maior item"
           value={view.maiorItem.length > 22 ? view.maiorItem.slice(0, 21) + "…" : view.maiorItem}
@@ -350,7 +354,7 @@ function SismatEntradasView() {
       {/* ── Evolução ───────────────────────────────────────────────────────── */}
       <Panel
         icon={<TrendingUp className="h-4 w-4" />}
-        title={`Evolução ${period === "monthly" ? "mensal" : "anual"} dos gastos por ${dimLabel.toLowerCase()}`}
+        title={`Evolução ${period === "monthly" ? "mensal" : "anual"} das saídas por ${dimLabel.toLowerCase()}`}
         subtitle={
           entity
             ? `Série de "${entity}" vs. total geral (linha tracejada)`
@@ -376,12 +380,18 @@ function SismatEntradasView() {
               <thead className="sticky top-0 bg-card">
                 <tr className="border-b border-border text-xs text-muted-foreground">
                   <th className="text-left py-2 font-medium">
-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("name")}>
+                    <button
+                      className="inline-flex items-center gap-1 hover:text-foreground"
+                      onClick={() => toggleSort("name")}
+                    >
                       {dimLabel} <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
                   <th className="text-right py-2 font-medium">
-                    <button className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => toggleSort("valor")}>
+                    <button
+                      className="inline-flex items-center gap-1 hover:text-foreground"
+                      onClick={() => toggleSort("valor")}
+                    >
                       Valor <ArrowUpDown className="h-3 w-3" />
                     </button>
                   </th>
@@ -407,11 +417,16 @@ function SismatEntradasView() {
                       <div className="h-1 mt-1 rounded bg-muted overflow-hidden">
                         <div
                           className="h-full rounded"
-                          style={{ width: `${(r.valor / maxTabela) * 100}%`, backgroundColor: colorAt(i) }}
+                          style={{
+                            width: `${(r.valor / maxTabela) * 100}%`,
+                            backgroundColor: colorAt(i),
+                          }}
                         />
                       </div>
                     </td>
-                    <td className="py-2 text-right tabular-nums text-muted-foreground">{r.pct.toFixed(1)}%</td>
+                    <td className="py-2 text-right tabular-nums text-muted-foreground">
+                      {r.pct.toFixed(1)}%
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -421,61 +436,12 @@ function SismatEntradasView() {
 
         <Panel
           icon={<Coins className="h-4 w-4" />}
-          title={`Distribuição (Top 10)`}
-          subtitle={`Participação no gasto${year ? ` — ano ${year}` : ""}`}
+          title="Distribuição (Top 10)"
+          subtitle={`Participação no valor de saída${year ? ` — ano ${year}` : ""}`}
         >
           <SismatPieChart data={view.pieData} grandTotal={view.grandFiltered} />
         </Panel>
       </div>
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Wrapper do SISMAT: 4 sub-abas navegáveis
-//   Entradas        → aquisições recebidas (SISMAT Entradas)
-//   Saídas          → entregas realizadas — KPIs e Top 20 medicamentos
-//   Saídas × Redmine→ cruzamento com Redmine por nº SEI (CRM, OAB, filtros)
-//   Entradas × Saídas → comparativo fluxo + saldo derivado acumulado
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function SismatDashboard() {
-  return (
-    <Tabs defaultValue="entradas" className="space-y-6">
-      <TabsList className="flex-wrap h-auto gap-1">
-        <TabsTrigger value="entradas" className="gap-1.5">
-          <ArrowDownToLine className="h-3.5 w-3.5" style={{ color: SISMAT_ENTRADA_COLOR }} />
-          Entradas
-        </TabsTrigger>
-        <TabsTrigger value="saidas" className="gap-1.5">
-          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
-          Saídas
-        </TabsTrigger>
-        <TabsTrigger value="saidas-redmine" className="gap-1.5">
-          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
-          Saídas × Redmine
-        </TabsTrigger>
-        <TabsTrigger value="entradas-saidas" className="gap-1.5">
-          <ArrowLeftRight className="h-3.5 w-3.5" />
-          Entradas × Saídas
-        </TabsTrigger>
-      </TabsList>
-
-      <TabsContent value="entradas">
-        <SismatEntradasView />
-      </TabsContent>
-
-      <TabsContent value="saidas">
-        <SismatSaidasPuraView />
-      </TabsContent>
-
-      <TabsContent value="saidas-redmine">
-        <SismatSaidasView />
-      </TabsContent>
-
-      <TabsContent value="entradas-saidas">
-        <SismatEstoqueView />
-      </TabsContent>
-    </Tabs>
   );
 }
