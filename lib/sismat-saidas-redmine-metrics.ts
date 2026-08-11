@@ -247,7 +247,7 @@ function opcoesDe(rows: SaidaRedmineRow[], campo: SaidasRedmineFiltro): FiltroOp
  * Entidades com valor ≤ 0 são ignoradas.
  * Retorna 0 quando não há entidades.
  */
-function calcHhi(mapaValor: Map<string, number>): HhiResult {
+function calcHhi(mapaValor: Map<string, number>): Pick<HhiResult, "hhi" | "entidades"> {
   let total = 0;
   for (const v of mapaValor.values()) if (v > 0) total += v;
   if (total === 0) return { hhi: 0, entidades: 0 };
