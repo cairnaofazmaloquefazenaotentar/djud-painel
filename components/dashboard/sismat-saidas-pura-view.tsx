@@ -2,11 +2,13 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useSismatSaidasMetrics } from "@/hooks/useSismatSaidasMetrics";
+import { useSismatSaidasIndicadores } from "@/hooks/useSismatSaidasIndicadores";
 import {
   SISMAT_SAIDAS_DIMENSOES,
   SISMAT_SAIDAS_DIM_LABELS,
   type SismatSaidasDimensao,
 } from "@/lib/sismat-saidas-metrics";
+import type { PontoIndicador } from "@/lib/sismat-saidas-indicadores";
 import type { SismatPeriodo } from "@/lib/sismat-metrics";
 import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
@@ -14,6 +16,15 @@ import { fmtBRL, colorAt } from "./charts/sismat-format";
 import { MetricCard } from "./metric-card";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import {
   Coins,
   Pill,
@@ -27,6 +38,10 @@ import {
   AlertTriangle,
   ArrowUpDown,
   PackageOpen,
+  Scale,
+  BarChart2,
+  Flame,
+  X,
 } from "lucide-react";
 
 // ── Constantes de UI ──────────────────────────────────────────────────────────
@@ -47,6 +62,179 @@ const TOP_N_OPCOES = [4, 8, 10, 15];
 
 const selectCn =
   "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
+
+// ── Formatadores de indicadores ───────────────────────────────────────────────
+
+function fmtHhi(v: number) {
+  const d = v >= 100 ? 0 : v >= 1 ? 1 : v >= 0.01 ? 2 : 3;
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+
+function fmtInstab(v: number) {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtPct(v: number) {
+  return v.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + "%";
+}
+
+// ── Tooltip do gráfico de série temporal ──────────────────────────────────────
+
+function SerieTooltip({
+  active,
+  payload,
+  label,
+  fmt,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+  fmt: (v: number) => string;
+}) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
+      <p className="font-semibold text-foreground">{label}</p>
+      <p className="text-primary tabular-nums mt-0.5">{fmt(payload[0].value)}</p>
+    </div>
+  );
+}
+
+// ── Modal de série temporal ───────────────────────────────────────────────────
+
+function ModalSerie({
+  open,
+  onClose,
+  title,
+  subtitle,
+  serie,
+  fmt,
+  icon,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  serie: PontoIndicador[];
+  fmt: (v: number) => string;
+  icon?: ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3 border-b border-border">
+          <div className="flex items-start gap-2">
+            {icon && <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>}
+            <div>
+              <h2 className="text-base font-semibold leading-tight">{title}</h2>
+              {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 mt-0.5"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-6 py-5">
+          {serie.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+              Sem dados suficientes para gerar a série temporal.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={serie} margin={{ top: 4, right: 16, left: 4, bottom: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <XAxis
+                  dataKey="mes"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  angle={-45}
+                  textAnchor="end"
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickFormatter={fmt}
+                  width={72}
+                />
+                <Tooltip content={<SerieTooltip fmt={fmt} />} />
+                <Line
+                  type="monotone"
+                  dataKey="valor"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: "hsl(var(--primary))" }}
+                  activeDot={{ r: 5 }}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Card de indicador clicável ────────────────────────────────────────────────
+
+function IndicadorCard({
+  icon,
+  label,
+  value,
+  subtext,
+  serie,
+  fmt,
+  modalTitle,
+  modalSubtitle,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  subtext?: string;
+  serie: PontoIndicador[];
+  fmt: (v: number) => string;
+  modalTitle: string;
+  modalSubtitle?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        className="text-left w-full rounded-lg border border-border bg-card p-4 hover:border-primary/50 hover:bg-accent/30 transition-colors cursor-pointer group"
+        onClick={() => setOpen(true)}
+        title="Clique para ver a evolução temporal"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>
+          <TrendingUp className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors flex-shrink-0 mt-0.5" />
+        </div>
+        <div className="mt-3">
+          <p className="text-2xl font-bold tabular-nums text-foreground leading-none">{value}</p>
+          <p className="text-xs font-medium text-foreground/80 mt-1.5 leading-snug">{label}</p>
+          {subtext && <p className="text-[11px] text-muted-foreground mt-0.5">{subtext}</p>}
+        </div>
+      </button>
+      <ModalSerie
+        open={open}
+        onClose={() => setOpen(false)}
+        title={modalTitle}
+        subtitle={modalSubtitle}
+        serie={serie}
+        fmt={fmt}
+        icon={icon}
+      />
+    </>
+  );
+}
 
 // ── Painel ────────────────────────────────────────────────────────────────────
 
@@ -87,6 +275,7 @@ export function SismatSaidasPuraView() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const { data, isLoading, error } = useSismatSaidasMetrics(dimension, period);
+  const { data: indicadores } = useSismatSaidasIndicadores();
 
   const view = useMemo(() => {
     if (!data) return null;
@@ -350,6 +539,47 @@ export function SismatSaidasPuraView() {
           description={`Por ${dimLabel.toLowerCase()}`}
         />
       </div>
+
+      {/* ── Indicadores estruturais ────────────────────────────────────────── */}
+      {indicadores?.hasData && (
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+            Indicadores estruturais — clique para ver evolução temporal
+          </h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <IndicadorCard
+              icon={<Scale className="h-4 w-4" />}
+              label="HHI de Materiais"
+              value={fmtHhi(indicadores.hhi.recente)}
+              subtext={`${indicadores.hhi.entidades.toLocaleString("pt-BR")} materiais · último trimestre`}
+              serie={indicadores.hhi.serie}
+              fmt={fmtHhi}
+              modalTitle="HHI de Materiais"
+              modalSubtitle="Índice de Herfindahl-Hirschman (0–10.000) com janela móvel de 3 meses, ponderado pelo valor das saídas por material. Alto = concentrado; baixo = diversificado."
+            />
+            <IndicadorCard
+              icon={<BarChart2 className="h-4 w-4" />}
+              label="Instabilidade do Ranking"
+              value={fmtInstab(indicadores.rankInstab.recente)}
+              subtext={`distância ponderada · ${indicadores.rankInstab.entidades.toLocaleString("pt-BR")} materiais · último trimestre`}
+              serie={indicadores.rankInstab.serie}
+              fmt={fmtInstab}
+              modalTitle="Instabilidade do Ranking de Materiais"
+              modalSubtitle="Distância ponderada de rank entre trimestres consecutivos: Σ |rank(i,M) − rank(i,M-1)| × share(i,M). Zero = ranking idêntico; maior = mais volatilidade."
+            />
+            <IndicadorCard
+              icon={<Flame className="h-4 w-4" />}
+              label="Proporção para Incineração"
+              value={fmtPct(indicadores.incineracao.recente)}
+              subtext={`${fmtBRL(indicadores.incineracao.valorIncineracao)} de ${fmtBRL(indicadores.incineracao.valorTotal)} · último trimestre`}
+              serie={indicadores.incineracao.serie}
+              fmt={fmtPct}
+              modalTitle="Proporção de Saídas para Incineração"
+              modalSubtitle="% do valor enviado à Pioneira Saneamento ou Sistema Nova Ambiental (janela móvel de 3 meses)."
+            />
+          </div>
+        </div>
+      )}
 
       {/* ── Evolução ───────────────────────────────────────────────────────── */}
       <Panel
