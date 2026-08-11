@@ -42,7 +42,7 @@ const LIMIT = parseInt(process.argv.find((a: string) => a.startsWith("--limit=")
 // ── Colunas de origem (resolvidas por nome APARADO, tolerando espaços extras) ─
 
 const COL_SEI = "NUP_SEI Principal";
-const CAMPOS: { key: string; header: string; semPontos?: boolean }[] = [
+const CAMPOS: { key: string; header: string; semPontos?: boolean; numerico?: boolean }[] = [
   { key: "crm", header: "Nº CRM", semPontos: true },
   { key: "ufCrm", header: "UF CRM" },
   { key: "oab", header: "Nº OAB", semPontos: true },
@@ -54,6 +54,8 @@ const CAMPOS: { key: string; header: string; semPontos?: boolean }[] = [
   { key: "modalidadeTratamento", header: "Modalidade de Tratamento" },
   { key: "statusAbastecimento", header: "Status do Abastecimento" },
   { key: "statusRedmine", header: "status" },
+  { key: "autor", header: "Autor(a)" },
+  { key: "trfRegiao", header: "TRF Região", numerico: true },
 ];
 
 // ── Limpeza ───────────────────────────────────────────────────────────────────
@@ -75,6 +77,14 @@ function limpa(v: unknown, semPontos = false): string | null {
   return t || null;
 }
 
+/** Converte valor para inteiro; retorna null se não for número válido. */
+function limpaInt(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v).replace(",", "."));
+  if (isNaN(n)) return null;
+  return Math.round(n);
+}
+
 // ── Leitura + consolidação por SEI ────────────────────────────────────────────
 
 interface SeiAttrs {
@@ -90,6 +100,8 @@ interface SeiAttrs {
   modalidadeTratamento: string | null;
   statusAbastecimento: string | null;
   statusRedmine: string | null;
+  autor: string | null;
+  trfRegiao: number | null;
 }
 
 function lerConsolidado(): SeiAttrs[] {
@@ -154,15 +166,25 @@ function lerConsolidado(): SeiAttrs[] {
         modalidadeTratamento: null,
         statusAbastecimento: null,
         statusRedmine: null,
+        autor: null,
+        trfRegiao: null,
       };
       porSei.set(sei, d);
     }
     for (const c of mapa) {
       if (!c.coluna) continue;
-      const k = c.key as keyof Omit<SeiAttrs, "sei">;
-      if (d[k] === null) {
-        const v = limpa(row[c.coluna], c.semPontos);
-        if (v !== null) d[k] = v;
+      if (c.numerico) {
+        // campo numérico (trfRegiao): trata separadamente para satisfazer o tipo
+        if (d.trfRegiao === null && c.key === "trfRegiao") {
+          const n = limpaInt(row[c.coluna]);
+          if (n !== null) d.trfRegiao = n;
+        }
+      } else {
+        const k = c.key as keyof Omit<SeiAttrs, "sei" | "trfRegiao">;
+        if (d[k] === null) {
+          const v = limpa(row[c.coluna], c.semPontos);
+          if (v !== null) d[k] = v;
+        }
       }
     }
   }
@@ -186,6 +208,7 @@ function lerConsolidado(): SeiAttrs[] {
     console.log(`   sei: ${a.sei} | crm: ${a.crm} | oab: ${a.oab}`);
     console.log(`   grupo: ${a.grupoTematico} | região: ${a.regiaoBrasil} | UF: ${a.ufResidencia}`);
     console.log(`   forma: ${a.formaCumprimento} | modal: ${a.modalidadeTratamento} | abastec: ${a.statusAbastecimento} | status: ${a.statusRedmine}`);
+    console.log(`   autor: ${a.autor} | trf: ${a.trfRegiao}`);
   }
   return lista;
 }

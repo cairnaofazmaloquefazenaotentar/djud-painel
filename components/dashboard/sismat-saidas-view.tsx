@@ -9,6 +9,10 @@ import type {
   RankItem,
   SaidasRedmineFiltro,
   SaidasRedmineFiltros,
+  HhiResult,
+  MediaResult,
+  CoberturaIndicador,
+  PontoSerie,
 } from "@/lib/sismat-saidas-redmine-metrics";
 import { MetricCard } from "./metric-card";
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
@@ -24,6 +28,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   Cell,
+  LineChart,
+  Line,
 } from "recharts";
 import {
   Coins,
@@ -41,14 +47,17 @@ import {
   Loader2,
   AlertTriangle,
   PackageOpen,
+  BarChart2,
+  TrendingUp,
+  X,
+  Users,
+  Landmark,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Saídas SISMAT × Redmine — réplica do dashboard_redmine_sismat.html:
-// KPIs globais, Top 20 medicamentos, Top 15 CRM/OAB, 4 distribuições,
+// KPIs globais, indicadores HHI + médias, Top 15 CRM/OAB, 4 distribuições,
 // filtros por atributo do Redmine e tabela dos processos com saídas.
-// Os gráficos são GLOBAIS (não refiltram); os filtros regem os KPIs
-// filtrados e a tabela — mesmo comportamento do dashboard de referência.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const selectCn =
@@ -119,7 +128,7 @@ function Panel({
   );
 }
 
-// ── Barras horizontais (rankings por valor) ───────────────────────────────────
+// ── Tooltip customizado para o BarChart horizontal ────────────────────────────
 
 function HBarTooltip({
   active,
@@ -137,6 +146,8 @@ function HBarTooltip({
     </div>
   );
 }
+
+// ── Barras horizontais (rankings por valor) ───────────────────────────────────
 
 function RankingBarChart({
   items,
@@ -195,6 +206,201 @@ function Distribuicao({ items }: { items: RankItem[] }) {
   const data: SismatPieDatum[] = items.map((d) => ({ name: d.l, valor: d.v }));
   const total = items.reduce((s, d) => s + d.v, 0);
   return <SismatPieChart data={data} grandTotal={total} />;
+}
+
+// ── Modal de série temporal ───────────────────────────────────────────────────
+
+interface TooltipSerie {
+  active?: boolean;
+  payload?: Array<{ value: number }>;
+  label?: string;
+  fmt?: (v: number) => string;
+}
+
+function SerieTooltip({ active, payload, label, fmt }: TooltipSerie) {
+  if (!active || !payload?.length) return null;
+  const v = payload[0].value;
+  return (
+    <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs">
+      <p className="font-semibold text-foreground">{label}</p>
+      <p className="text-primary tabular-nums mt-0.5">{fmt ? fmt(v) : v.toFixed(4)}</p>
+    </div>
+  );
+}
+
+function ModalSerie({
+  open,
+  onClose,
+  title,
+  subtitle,
+  serie,
+  fmt,
+  icon,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  serie: PontoSerie[];
+  fmt?: (v: number) => string;
+  icon?: ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-3 border-b border-border">
+          <div className="flex items-start gap-2">
+            {icon && <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>}
+            <div>
+              <h2 className="text-base font-semibold leading-tight">{title}</h2>
+              {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 mt-0.5"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        {/* Gráfico */}
+        <div className="px-6 py-5">
+          {serie.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">
+              Sem dados com data de baixa registrada para gerar a série temporal.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={serie} margin={{ top: 4, right: 16, left: 4, bottom: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                <XAxis
+                  dataKey="mes"
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  angle={-45}
+                  textAnchor="end"
+                  interval="preserveStartEnd"
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+                  tickFormatter={(v: number) => fmt ? fmt(v) : v.toFixed(3)}
+                  width={72}
+                />
+                <Tooltip content={<SerieTooltip fmt={fmt} />} />
+                <Line
+                  type="monotone"
+                  dataKey="valor"
+                  stroke="hsl(var(--primary))"
+                  strokeWidth={2}
+                  dot={{ r: 3, fill: "hsl(var(--primary))" }}
+                  activeDot={{ r: 5 }}
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Formatadores ──────────────────────────────────────────────────────────────
+
+/**
+ * Formata HHI na escala 0–10.000 com precisão adaptativa:
+ *   ≥ 100  → inteiro          (ex: 3.650)
+ *   ≥ 1    → 1 decimal        (ex: 12,4)
+ *   ≥ 0,01 → 2 decimais       (ex: 0,34)
+ *   < 0,01 → 3 decimais       (ex: 0,003)
+ */
+function fmtHhi(v: number) {
+  const decimais = v >= 100 ? 0 : v >= 1 ? 1 : v >= 0.01 ? 2 : 3;
+  return v.toLocaleString("pt-BR", {
+    minimumFractionDigits: decimais,
+    maximumFractionDigits: decimais,
+  });
+}
+
+/** Formata HHI para exibição no card. */
+function hhiLabel(r: HhiResult) {
+  return fmtHhi(r.hhi);
+}
+
+// ── Indicadores HHI + médias (cards clicáveis com popup) ─────────────────────
+
+/** Formata cobertura como "X de Y (Z%)" */
+function fmtCobertura(c: CoberturaIndicador, campo: string): string {
+  const pct = c.linhasRedmine > 0
+    ? ((c.linhasComChave / c.linhasRedmine) * 100).toLocaleString("pt-BR", { maximumFractionDigits: 0 })
+    : "—";
+  return `${c.linhasComChave.toLocaleString("pt-BR")} de ${c.linhasRedmine.toLocaleString("pt-BR")} ${campo} (${pct}%)`;
+}
+
+function IndicadorCard({
+  icon,
+  label,
+  value,
+  subtext,
+  cobertura,
+  campoCob,
+  serie,
+  modalTitle,
+  modalSubtitle,
+  fmt,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  subtext?: string;
+  cobertura?: CoberturaIndicador;
+  campoCob?: string;
+  serie: PontoSerie[];
+  modalTitle: string;
+  modalSubtitle?: string;
+  fmt?: (v: number) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        className="text-left w-full rounded-lg border border-border bg-card p-4 hover:border-primary/50 hover:bg-accent/30 transition-colors cursor-pointer group"
+        onClick={() => setOpen(true)}
+        title="Clique para ver a evolução temporal"
+      >
+        <div className="flex items-start justify-between gap-2">
+          <span className="text-primary mt-0.5 flex-shrink-0">{icon}</span>
+          <TrendingUp className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-primary/60 transition-colors flex-shrink-0 mt-0.5" />
+        </div>
+        <div className="mt-3">
+          <p className="text-2xl font-bold tabular-nums text-foreground leading-none">{value}</p>
+          <p className="text-xs font-medium text-foreground/80 mt-1.5 leading-snug">{label}</p>
+          {subtext && <p className="text-[11px] text-muted-foreground mt-0.5">{subtext}</p>}
+          {cobertura && campoCob && (
+            <p className="text-[11px] text-muted-foreground/70 mt-1 leading-snug">
+              {fmtCobertura(cobertura, campoCob)}
+            </p>
+          )}
+        </div>
+      </button>
+      <ModalSerie
+        open={open}
+        onClose={() => setOpen(false)}
+        title={modalTitle}
+        subtitle={modalSubtitle}
+        serie={serie}
+        fmt={fmt}
+        icon={icon}
+      />
+    </>
+  );
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
@@ -269,14 +475,74 @@ export function SismatSaidasView() {
         <MetricCard label="Total de Saídas" value={over.kpis.saidas} subtext="linhas SISMAT" icon={<ArrowUpFromLine className="h-4 w-4" />} />
       </div>
 
-      {/* ── Top 20 medicamentos ──────────────────────────────────────────── */}
-      <Panel
-        icon={<Pill className="h-4 w-4" />}
-        title="Top 20 Medicamentos por Valor Total de Saída"
-        subtitle="Soma do valor das saídas SISMAT por material"
-      >
-        <RankingBarChart items={over.topMed} height={560} maxLabel={38} />
-      </Panel>
+      {/* ── Indicadores HHI + médias (clicáveis) ─────────────────────────── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+          Indicadores de Concentração e Custo — clique para ver evolução temporal
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+          <IndicadorCard
+            icon={<Scale className="h-4 w-4" />}
+            label="HHI Advogados (OAB)"
+            value={hhiLabel(over.hhiOabRecente)}
+            subtext={`${over.hhiOabRecente.entidades.toLocaleString("pt-BR")} advogados · último trimestre`}
+            cobertura={over.hhiOabRecente}
+            campoCob="c/ OAB"
+            serie={over.hhiOabSerie}
+            modalTitle="Índice de Herfindahl — Advogados (OAB)"
+            modalSubtitle="HHI com janela móvel de 3 meses, ponderado pelo valor das saídas SISMAT por nº OAB/UF"
+            fmt={fmtHhi}
+          />
+          <IndicadorCard
+            icon={<Stethoscope className="h-4 w-4" />}
+            label="HHI Médicos (CRM)"
+            value={hhiLabel(over.hhiCrmRecente)}
+            subtext={`${over.hhiCrmRecente.entidades.toLocaleString("pt-BR")} médicos · último trimestre`}
+            cobertura={over.hhiCrmRecente}
+            campoCob="c/ CRM"
+            serie={over.hhiCrmSerie}
+            modalTitle="Índice de Herfindahl — Médicos (CRM)"
+            modalSubtitle="HHI com janela móvel de 3 meses, ponderado pelo valor das saídas SISMAT por nº CRM/UF"
+            fmt={fmtHhi}
+          />
+          <IndicadorCard
+            icon={<Landmark className="h-4 w-4" />}
+            label="HHI Tribunais (TRF)"
+            value={hhiLabel(over.hhiTribunalRecente)}
+            subtext={`${over.hhiTribunalRecente.entidades.toLocaleString("pt-BR")} tribunais · último trimestre`}
+            cobertura={over.hhiTribunalRecente}
+            campoCob="c/ TRF"
+            serie={over.hhiTribunalSerie}
+            modalTitle="Índice de Herfindahl — Tribunais (TRF)"
+            modalSubtitle="HHI com janela móvel de 3 meses, ponderado pelo valor das saídas SISMAT por região TRF"
+            fmt={fmtHhi}
+          />
+          <IndicadorCard
+            icon={<BarChart2 className="h-4 w-4" />}
+            label="Valor Médio / Processo"
+            value={fmtBRL(over.valorMedioProcessoRecente.valor)}
+            subtext="por processo Redmine · último trimestre"
+            cobertura={over.valorMedioProcessoRecente}
+            campoCob="c/ Redmine"
+            serie={over.valorMedioProcessoSerie}
+            modalTitle="Valor Médio de Saída por Processo"
+            modalSubtitle="Média com janela móvel de 3 meses do valor total de saídas SISMAT por processo (SEI) do Redmine"
+            fmt={(v) => fmtBRL(v)}
+          />
+          <IndicadorCard
+            icon={<Users className="h-4 w-4" />}
+            label="Valor Médio / Paciente"
+            value={fmtBRL(over.valorMedioPacienteRecente.valor)}
+            subtext="por autor(a) no Redmine · último trimestre"
+            cobertura={over.valorMedioPacienteRecente}
+            campoCob="c/ autor"
+            serie={over.valorMedioPacienteSerie}
+            modalTitle="Valor Médio de Saída por Paciente"
+            modalSubtitle="Média com janela móvel de 3 meses do valor total de saídas SISMAT por autor(a)/requerente do Redmine"
+            fmt={(v) => fmtBRL(v)}
+          />
+        </div>
+      </div>
 
       {/* ── Top CRM / OAB ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
