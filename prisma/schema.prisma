@@ -436,12 +436,15 @@ model RedmineSeiAtributos {
   modalidadeTratamento String?           // Contínuo | Único
   statusAbastecimento  String?           // Abastecido | Desabastecido | Não Informado
   statusRedmine        String?           // coluna `status` do Redmine (Em Análise COAJUD, …)
+  autor                String?           // Autor(a) da ação judicial (paciente/requerente) — coluna "Autor(a)"
+  trfRegiao            Int?              // Região TRF (1–6) — coluna "TRF Região"
 
   criadoEm             DateTime @default(now())
 
   @@index([grupoTematico])
   @@index([regiaoBrasil])
   @@index([statusRedmine])
+  @@index([trfRegiao])
   @@schema("sismat")
 }
 
