@@ -30,7 +30,9 @@ export async function GET(request: NextRequest) {
       ? (perRaw as SismatPeriodo)
       : "monthly";
 
-    return jsonComVersao(request, ["sismatEntrada"], () => getSismatMetrics(dimension, period));
+    const subMaterial = sp.get("subMaterial") ?? undefined;
+
+    return jsonComVersao(request, ["sismatEntrada"], () => getSismatMetrics(dimension, period, subMaterial));
   } catch (error) {
     console.error("[sismat/metrics] Erro:", error);
     const message = error instanceof Error ? error.message : "Erro ao obter métricas SISMAT";

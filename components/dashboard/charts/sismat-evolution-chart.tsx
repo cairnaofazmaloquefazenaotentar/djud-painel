@@ -24,6 +24,8 @@ interface SismatEvolutionChartProps {
   showTotal?: boolean;
   /** "monthly" → rótulo "mmm/aa"; "yearly" → o próprio ano. */
   periodType: "monthly" | "yearly";
+  /** Rótulo da linha tracejada de total. Default: "Total geral". */
+  totalLabel?: string;
 }
 
 function periodLabel(p: string, type: "monthly" | "yearly"): string {
@@ -34,29 +36,36 @@ function periodLabel(p: string, type: "monthly" | "yearly"): string {
   return d.toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
 }
 
-type TooltipEntry = { value?: number; name?: string; dataKey?: string | number; color?: string };
+type TooltipEntry = {
+  value?: string | number | (string | number)[];
+  name?: string | number;
+  dataKey?: string | number;
+  color?: string;
+};
 
 function EvolutionTooltip({
   active,
   payload,
   label,
+  totalLabel,
 }: {
   active?: boolean;
   payload?: TooltipEntry[];
   label?: string;
+  totalLabel: string;
 }) {
   if (!active || !payload?.length) return null;
   const rows = payload
-    .filter((p) => (p.value || 0) > 0)
-    .sort((a, b) => (b.value || 0) - (a.value || 0));
+    .filter((p) => Number(p.value || 0) > 0)
+    .sort((a, b) => Number(b.value || 0) - Number(a.value || 0));
   if (!rows.length) return null;
   return (
     <div className="bg-background/95 backdrop-blur-md border border-border rounded-lg px-3 py-2 shadow-lg text-xs max-w-xs">
       <p className="font-semibold text-foreground mb-1">{label}</p>
       {rows.map((p) => (
         <p key={String(p.dataKey)} className="flex justify-between gap-4" style={{ color: p.color }}>
-          <span className="truncate">{p.name === SISMAT_TOTAL_KEY ? "Total geral" : p.name}</span>
-          <span className="font-medium tabular-nums whitespace-nowrap">{fmtBRL(p.value || 0)}</span>
+          <span className="truncate">{p.name === SISMAT_TOTAL_KEY ? totalLabel : p.name}</span>
+          <span className="font-medium tabular-nums whitespace-nowrap">{fmtBRL(Number(p.value) || 0)}</span>
         </p>
       ))}
     </div>
@@ -68,6 +77,7 @@ export function SismatEvolutionChart({
   entities,
   showTotal = true,
   periodType,
+  totalLabel = "Total geral",
 }: SismatEvolutionChartProps) {
   if (!data.length || !entities.length) {
     return (
@@ -110,8 +120,20 @@ export function SismatEvolutionChart({
             axisLine={{ stroke: "hsl(var(--border))" }}
             tickLine={{ stroke: "hsl(var(--border))" }}
           />
-          <Tooltip content={<EvolutionTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
+          <Tooltip
+            content={({ active, payload, label }) => (
+              <EvolutionTooltip
+                active={active}
+                payload={payload as TooltipEntry[]}
+                label={label}
+                totalLabel={totalLabel}
+              />
+            )}
+          />
+          <Legend
+            wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+            formatter={(value) => (value === SISMAT_TOTAL_KEY ? totalLabel : value)}
+          />
           {entities.map((e, i) => (
             <Line
               key={e}

@@ -9,12 +9,14 @@ import type { SismatPeriodo } from "@/lib/sismat-metrics";
 
 export function useSismatSaidasMetrics(
   dimension: SismatSaidasDimensao,
-  period: SismatPeriodo
+  period: SismatPeriodo,
+  subMaterial?: string
 ) {
   return useQuery<SismatSaidasMetricsData>({
-    queryKey: ["sismat-saidas-metrics", dimension, period],
+    queryKey: ["sismat-saidas-metrics", dimension, period, subMaterial ?? ""],
     queryFn: async () => {
       const params = new URLSearchParams({ dimension, period });
+      if (subMaterial) params.set("subMaterial", subMaterial);
       const res = await fetch(`/api/sismat/saidas/metrics?${params.toString()}`);
       if (!res.ok) throw new Error("Erro ao carregar métricas de saídas SISMAT");
       return res.json();
