@@ -35,8 +35,10 @@ export async function GET(request: NextRequest) {
       ? (perRaw as SismatPeriodo)
       : "monthly";
 
+    const subMaterial = sp.get("subMaterial") ?? undefined;
+
     return jsonComVersao(request, ["sismatSaida"], () =>
-      getSismatSaidasMetrics(dimension, period)
+      getSismatSaidasMetrics(dimension, period, subMaterial)
     );
   } catch (error) {
     console.error("[sismat/saidas/metrics] Erro:", error);

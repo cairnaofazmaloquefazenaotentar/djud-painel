@@ -8,11 +8,16 @@ import type { SismatMetricsData, SismatDimensao, SismatPeriodo } from "@/lib/sis
  * Cache longo (1h): a base é de referência e muda pouco. Cada combinação
  * de dimensão/período é cacheada separadamente pela queryKey.
  */
-export function useSismatMetrics(dimension: SismatDimensao, period: SismatPeriodo) {
+export function useSismatMetrics(
+  dimension: SismatDimensao,
+  period: SismatPeriodo,
+  subMaterial?: string
+) {
   return useQuery<SismatMetricsData>({
-    queryKey: ["sismat-metrics", dimension, period],
+    queryKey: ["sismat-metrics", dimension, period, subMaterial ?? ""],
     queryFn: async () => {
       const params = new URLSearchParams({ dimension, period });
+      if (subMaterial) params.set("subMaterial", subMaterial);
       const res = await fetch(`/api/sismat/metrics?${params.toString()}`);
       if (!res.ok) {
         throw new Error("Erro ao carregar métricas SISMAT");
