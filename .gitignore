@@ -48,6 +48,9 @@ next-env.d.ts
 *.csv
 !docs/modelos-carga/*.csv
 
+# dumps de banco (restauracao local; nunca versionar)
+*.sql
+
 # backups de importacao (CSV dump antes do replace)
 /backups
 __pycache__/

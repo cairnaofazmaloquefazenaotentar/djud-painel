@@ -6,6 +6,7 @@ npm-debug.log*
 .djud-db-pass.tmp
 *.xlsx
 *.csv
+*.sql
 coverage
 build
 logs
