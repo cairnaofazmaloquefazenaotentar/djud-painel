@@ -28,6 +28,7 @@ model User {
   demandasCriadas         Demanda[]  @relation("DemandaCriadoPor")
   demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
   attachments             Attachment[] @relation("UserAttachments")
+  relatoriosGerados       RelatorioGerado[]
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -159,6 +160,7 @@ model Demanda {
   objetoAcao                   String?          // Objeto da Ação (Medicamento - Oncológico, etc)
   principioAtivo               String?          // Princípio_Ativo / Medicamento (nome do medicamento)
   fornecedor                   String?          // Fornecedor/laboratório do medicamento (preenchido quando a base trouxer essa coluna)
+  autor                        String?          // Autor(a) da ação judicial (paciente/requerente)
   numeroProcesso               String?          // Ação Judicial Originário (ex: 5000904-02.2021.4.03.6006)
   dataEntradaDJUD              DateTime?        // Data de Entrada no DJUD
 
@@ -196,6 +198,7 @@ model Demanda {
   @@index([numeroExterno])
   @@index([regiaoBrasil])
   @@index([fornecedor])
+  @@index([autor])
   @@index([deletedAt])
   @@schema("public")
 }
@@ -373,4 +376,222 @@ model ComprasGovPreco {
   @@index([dtCompra])
   @@index([judicial])
   @@schema("sismat")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SISMAT × PMVG — preço unitário pago (SISMAT) vs. preço PMVG vigente na data
+// de entrega (aba "Preços" › sub-aba PMVG). 1 linha por compra do SISMAT, já
+// pareada (fuzzy-match texto/fabricante, rank 1) com a foto mensal do PMVG
+// mais recente com competência ≤ à data de entrega.
+//   • pmvgPrecos: array com o preço de EMBALAGEM em cada alíquota do PMVG, na
+//     MESMA ordem de PMVG_COLS (lib/pmvg-metrics.ts). null = alíquota sem valor.
+//   • O preço PMVG unitário é derivado no cliente (embalagem ÷ qtdEmbalagem),
+//     como no dashboard de origem — nada de alíquota é escolhido no servidor.
+// ─────────────────────────────────────────────────────────────────────────────
+model SismatPmvg {
+  id              Int      @id @default(autoincrement())
+
+  material        String            // Material comprado (texto do SISMAT)
+  subMaterial     String            // Medicamento/princípio ativo pareado (PMVG)
+  fabricante      String            // Fabricante da compra
+  dtEntrega       DateTime          // Data de entrega (UTC, meia-noite) — eixo X
+  quantidade      Float             // Quantidade de unidades adquirida
+  valorUnitario   Decimal           // Preço unitário PAGO (R$) — eixo Y (pago)
+  valorTotal      Decimal           // Valor total da compra (R$)
+  score           Float             // Confiança do match texto/fabricante (0–100)
+  qtdEmbalagem    Float             // Unidades por embalagem estimadas (divisor do PMVG)
+  metodoQtd       String            // Heurística da qtd/emb.: leading_count | trailing_x | default_single
+  pmvgCompetencia DateTime?         // Competência do PMVG usado (1º dia do mês) — null se não encontrado
+  apresentacao    String?           // Texto da apresentação do PMVG pareado
+  pmvgPrecos      Json              // Preço de embalagem por alíquota (ordem de PMVG_COLS; null onde ausente)
+
+  criadoEm        DateTime @default(now())
+
+  @@index([material])
+  @@index([dtEntrega])
+  @@index([fabricante])
+  @@schema("sismat")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Redmine × SISMAT — atributos da demanda por nº SEI (NUP)
+// Tabela de apoio (1 linha por "NUP_SEI Principal") extraída da base Redmine
+// (baseRedmine_*.xlsx) pelo scripts/import-redmine-sei.ts. Alimenta o dashboard
+// de Saídas: cada saída do SISMAT é cruzada com estes atributos pelo nº SEI
+// embutido no final do campo destinatario ("FULANO DE TAL 00737.001234/2020-11").
+// Regra de consolidação: 1ª ocorrência NÃO-VAZIA de cada campo, na ordem do
+// arquivo (réplica do dashboard_redmine_sismat.html de referência).
+// ─────────────────────────────────────────────────────────────────────────────
+model RedmineSeiAtributos {
+  sei                  String   @id      // NUP_SEI Principal ("00737.001234/2020-11")
+
+  crm                  String?           // Nº CRM do prescritor (sem separador de milhar)
+  ufCrm                String?           // UF do CRM do prescritor
+  oab                  String?           // Nº OAB do advogado (sem separador de milhar)
+  ufOab                String?           // UF da OAB do advogado
+  grupoTematico        String?           // Grupo Temático (Medicamentos Gerais, Alto Impacto…)
+  regiaoBrasil         String?           // Região Brasil (Norte, Nordeste, …)
+  ufResidencia         String?           // UF_Residência do autor
+  formaCumprimento     String?           // Aquisição DJUD | Depósito Judicial | Entrega CEAF
+  modalidadeTratamento String?           // Contínuo | Único
+  statusAbastecimento  String?           // Abastecido | Desabastecido | Não Informado
+  statusRedmine        String?           // coluna `status` do Redmine (Em Análise COAJUD, …)
+  autor                String?           // Autor(a) da ação judicial (paciente/requerente) — coluna "Autor(a)"
+  trfRegiao            Int?              // Região TRF (1–6) — coluna "TRF Região"
+
+  criadoEm             DateTime @default(now())
+
+  @@index([grupoTematico])
+  @@index([regiaoBrasil])
+  @@index([statusRedmine])
+  @@index([trfRegiao])
+  @@schema("sismat")
+}
+
+// ─── Bases de Preços ─────────────────────────────────────────────────────────
+
+model PrecoCmed {
+  id              String   @id @default(cuid())
+  substancia      String
+  substanciaNorm  String
+  produto         String
+  apresentacao    String
+  laboratorio     String?
+  cnpj            String?
+  codigoGgrem     String?
+  registro        String?
+  classeTerap     String?
+  tipoProduto     String?
+  regimePreco     String?
+  pfSemImpostos   Float?
+  pf0             Float?
+  pf12            Float?
+  pf17            Float?
+  pf18            Float?
+  pmvgSemImpostos Float
+  pmvg0           Float?
+  pmvg12          Float?
+  pmvg17          Float?
+  pmvg18          Float?
+  cap             Boolean  @default(false)
+  confaz87        Boolean  @default(false)
+  icms0           Boolean  @default(false)
+  comercializacao String?
+  tarja           String?
+  vigencia        DateTime @default(now())
+
+  @@index([substanciaNorm])
+  @@index([substancia])
+  @@schema("public")
+}
+
+model PrecoBps {
+  id              String    @id @default(cuid())
+  codigoCatmat    String
+  descricao       String
+  nomeNorm        String
+  unidade         String?
+  generico        Boolean?
+  preco           Float
+  qtd             Float
+  valorTotal      Float?
+  modalidade      String?
+  data            DateTime
+  uf              String?
+  municipio       String?
+  instituicao     String?
+  cnpjInstituicao String?
+  fabricante      String?
+  fornecedor      String?
+  cnpjFornecedor  String?
+  anoBase         Int
+
+  @@index([nomeNorm])
+  @@index([data])
+  @@index([uf])
+  @@index([anoBase])
+  @@index([codigoCatmat])
+  @@schema("public")
+}
+
+model PrecoSiasg {
+  id             String    @id @default(cuid())
+  codigoCatmat   String
+  descricao      String
+  nomeNorm       String
+  unidade        String?
+  unidadeNorm    String?
+  formaApres     String?
+  preco          Float
+  qtd            Float
+  valorTotal     Float?
+  modalidade     String?
+  data           DateTime
+  ano            Int
+  uf             String?
+  municipio      String?
+  orgaoSup       String?
+  orgao          String?
+  esfera         String?
+  fornecedor     String?
+  cnpjFornecedor String?
+  fabricante     String?
+  marca          String?
+  acaoJudicial   Boolean
+  classeAtc      String?
+  pdp            Boolean  @default(false)
+
+  @@index([nomeNorm])
+  @@index([acaoJudicial])
+  @@index([ano])
+  @@index([uf])
+  @@index([codigoCatmat])
+  @@schema("public")
+}
+
+model PrecoPncp {
+  id                  String    @id @default(cuid())
+  codItemCatalogo     String?
+  descricaoResumida   String
+  descricaoNorm       String
+  descricaoDetalhada  String?   @db.Text
+  unidade             String?
+  quantidade          Float?
+  valorUnitEstimado   Float?
+  valorUnitResultado  Float
+  valorTotal          Float?
+  modalidade          String?
+  codigoModalidade    String?
+  data                DateTime
+  uf                  String?
+  municipio           String?
+  orgao               String?
+  cnpjOrgao           String?
+  fornecedor          String?
+  cnpjFornecedor      String?
+  numeroControlePncp  String?
+
+  @@index([descricaoNorm])
+  @@index([data])
+  @@index([uf])
+  @@index([codItemCatalogo])
+  @@schema("public")
+}
+
+model RelatorioGerado {
+  id           String   @id @default(cuid())
+  tipo         String   // PESQUISA_PRECO | ARP | RISCO | EXECUTIVO
+  parametros   Json
+  nomeArquivo  String
+  tamanhoBytes Int?
+  geradoPorId  String
+  geradoPor    User     @relation(fields: [geradoPorId], references: [id], onDelete: Cascade)
+  criadoEm     DateTime @default(now())
+  emailEnviado Boolean  @default(false)
+  emailDest    String?
+
+  @@index([geradoPorId])
+  @@index([tipo])
+  @@index([criadoEm])
+  @@schema("public")
 }

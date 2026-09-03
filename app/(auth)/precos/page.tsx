@@ -1,16 +1,16 @@
 "use client";
 
 import { PageHeader } from "@/components/layout/page-header";
-import { PrecosView } from "@/components/dashboard/precos-view";
+import { PrecosTabs } from "@/components/dashboard/precos-tabs";
 
 export default function PrecosPage() {
   return (
     <div className="space-y-8">
       <PageHeader
         title="Preços de Medicamentos"
-        description="Comparativo dos preços praticados em compras públicas (base ComprasGov 2018–2025) — compras judiciais vs. administrativas, por medicamento e unidade de fornecimento"
+        description="Comparativos de preços de medicamentos — ComprasGov (preços praticados em compras públicas 2018–2025, judiciais vs. administrativas) e SISMAT × PMVG (preço pago vs. teto regulatório vigente na data de entrega)"
       />
-      <PrecosView />
+      <PrecosTabs />
     </div>
   );
 }

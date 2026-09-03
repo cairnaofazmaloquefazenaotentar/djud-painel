@@ -21,7 +21,7 @@ const db = new PrismaClient();
 
 const EXCEL_PATH =
   process.env.EXCEL_PATH ||
-  "C:\\Users\\Avell\\OneDrive\\Documentos\\DOUTORADO\\Possíveis Artigos para publicação - depois do ENMC com o profs Marcelo e Gentil\\Artigo_Judicialização_PNCP\\Base_Locoust5000\\baseRedmine_17-03-2026.xlsx";
+  "C:\\Users\\gbuch\\OneDrive\\DESID\\DJUD\\teams Abel\\baseRedmine_17-03-2026.xlsx";
 
 const SHEET_NAME = "Dados Redmine";
 const BATCH_SIZE = 500;
@@ -158,6 +158,7 @@ async function main() {
             row["Fornecedor"] || row["Laboratório"] || row["Laboratorio"] ||
             row["Empresa"] || row["Fabricante"] || row["Detentor do Registro"] || row["fornecedor"]
           );
+          const autor = sanitizeString(row["Autor(a)"] || row["Autor"] || row["autor"]);
           const dataEntradaDJUD = parseDate(row["Data de Entrada_DJUD"] || row["dataEntradaDJUD"]);
           // Valor do depósito judicial (só preenchido em demandas de Cumprimento de Ordem Judicial)
           const valorEstimado = parseValorBR(row["Valor do Depósito (em reais)"] || row["valorEstimado"]);
@@ -183,6 +184,7 @@ async function main() {
             objetoAcao,
             principioAtivo,
             fornecedor,
+            autor,
             dataEntradaDJUD,
             valorEstimado,
             criadoEm,

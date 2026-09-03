@@ -70,7 +70,8 @@ function periodKey(d: Date, period: SismatPeriodo): string {
 
 export async function getSismatMetrics(
   dimension: SismatDimensao,
-  period: SismatPeriodo
+  period: SismatPeriodo,
+  subMaterial?: string
 ): Promise<SismatMetricsData> {
   const field = DIM_FIELD[dimension];
 
@@ -80,6 +81,7 @@ export async function getSismatMetrics(
     where: {
       tipoMovimentacao: { in: [...TIPOS_AQUISICAO] },
       dtRecebimento: { not: null },
+      ...(subMaterial ? { material: subMaterial } : {}),
     },
     select: {
       dtRecebimento: true,

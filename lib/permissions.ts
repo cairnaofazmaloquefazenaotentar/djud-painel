@@ -34,6 +34,13 @@ export const rolePermissions: Record<UserRole, string[]> = {
     "export:csv",
     "export:xlsx",
     "export:png",
+    // Preços
+    "precos:pesquisar",
+    "bases:importar",
+    // Relatórios
+    "relatorios:gerar",
+    "relatorios:executivo",
+    "relatorios:excluir",
   ],
   MANAGER: [
     // Dashboard
@@ -50,12 +57,19 @@ export const rolePermissions: Record<UserRole, string[]> = {
     "export:csv",
     "export:xlsx",
     "export:png",
+    // Preços
+    "precos:pesquisar",
+    // Relatórios
+    "relatorios:gerar",
+    "relatorios:executivo",
   ],
   OPERATOR: [
     // Dashboard
     "dashboard:read",
     // Demandas (read-only)
     "demandas:read",
+    // Relatórios (apenas executivo)
+    "relatorios:executivo",
   ],
 };
 

@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextResponse } from "next/server";
 
 /**
@@ -38,7 +39,7 @@ function normalizar(raw: string): string | null {
   return s;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const session = await auth();
     if (!session?.user) {
@@ -75,10 +76,7 @@ export async function GET() {
       (a, b) => b.count - a.count || a.value.localeCompare(b.value, "pt-BR"),
     );
 
-    return NextResponse.json(
-      { items },
-      { headers: { "Cache-Control": "public, max-age=3600" } }, // 1h: lista muda pouco
-    );
+    return jsonComVersao(request, ["demanda"], async () => ({ items }));
   } catch (error) {
     console.error("[principios-ativos] Erro:", error);
     const message =

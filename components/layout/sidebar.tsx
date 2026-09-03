@@ -20,6 +20,8 @@ import {
   UserCircle,
   Trash2,
   HelpCircle,
+  Search,
+  BarChart3,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -89,10 +91,16 @@ const primaryNav = [
     description: "Gestão de demandas",
   },
   {
-    label: "Preços",
-    href: "/precos",
-    icon: Coins,
-    description: "Preços praticados de medicamentos",
+    label: "Pesquisa de Preço",
+    href: "/pesquisa-preco",
+    icon: Search,
+    description: "Consulta de preços",
+  },
+  {
+    label: "Relatórios",
+    href: "/relatorios",
+    icon: BarChart3,
+    description: "Relatórios gerenciais",
   },
 ];
 

@@ -1,0 +1,1947 @@
+diff --git a/app/(auth)/precos/page.tsx b/app/(auth)/precos/page.tsx
+index 09e000b..8dcafa4 100644
+--- a/app/(auth)/precos/page.tsx
++++ b/app/(auth)/precos/page.tsx
+@@ -1,16 +1,16 @@
+ "use client";
+ 
+ import { PageHeader } from "@/components/layout/page-header";
+-import { PrecosView } from "@/components/dashboard/precos-view";
++import { PrecosTabs } from "@/components/dashboard/precos-tabs";
+ 
+ export default function PrecosPage() {
+   return (
+     <div className="space-y-8">
+       <PageHeader
+         title="Preços de Medicamentos"
+-        description="Comparativo dos preços praticados em compras públicas (base ComprasGov 2018–2025) — compras judiciais vs. administrativas, por medicamento e unidade de fornecimento"
++        description="Comparativos de preços de medicamentos — ComprasGov (preços praticados em compras públicas 2018–2025, judiciais vs. administrativas) e SISMAT × PMVG (preço pago vs. teto regulatório vigente na data de entrega)"
+       />
+-      <PrecosView />
++      <PrecosTabs />
+     </div>
+   );
+ }
+diff --git a/app/api/pmvg/route.ts b/app/api/pmvg/route.ts
+new file mode 100644
+index 0000000..0e71c5f
+--- /dev/null
++++ b/app/api/pmvg/route.ts
+@@ -0,0 +1,24 @@
++export const runtime = "nodejs";
++
++import { auth } from "@/lib/auth";
++import { getPmvgData } from "@/lib/pmvg-metrics";
++import { NextResponse } from "next/server";
++
++export async function GET() {
++  try {
++    const session = await auth();
++    if (!session?.user) {
++      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
++    }
++
++    const data = await getPmvgData();
++
++    return NextResponse.json(data, {
++      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base de referência muda pouco
++    });
++  } catch (error) {
++    console.error("[pmvg] Erro:", error);
++    const message = error instanceof Error ? error.message : "Erro ao obter a base SISMAT × PMVG";
++    return NextResponse.json({ error: message }, { status: 500 });
++  }
++}
+diff --git a/components/dashboard/charts/pmvg-box-plot.tsx b/components/dashboard/charts/pmvg-box-plot.tsx
+new file mode 100644
+index 0000000..7f40f7f
+--- /dev/null
++++ b/components/dashboard/charts/pmvg-box-plot.tsx
+@@ -0,0 +1,107 @@
++"use client";
++
++import type { DistributionStats } from "./pmvg-format";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Box plot mínimo (SVG puro) da diferença percentual pago-vs-PMVG. Caixa de Q1
++// a Q3, mediana ao centro, bigodes até o menor/maior valor dentro de 1,5×IQR e
++// linha pontilhada em 0% (pago = PMVG). Escala horizontal compartilhada entre
++// todas as linhas (computeBoxDomain). Portado do dashboard de origem.
++// ─────────────────────────────────────────────────────────────────────────────
++
++export interface BoxDomain {
++  lo: number;
++  hi: number;
++}
++
++/** Domínio horizontal comum a todas as alíquotas (inclui sempre o 0%). */
++export function computeBoxDomain(groups: DistributionStats[]): BoxDomain {
++  const withData = groups.filter((g) => g.n >= 1);
++  if (!withData.length) return { lo: -1, hi: 1 };
++  const lo = Math.min(0, ...withData.map((g) => (g.whiskerLow !== null ? g.whiskerLow : (g.median ?? 0))));
++  const hi = Math.max(0, ...withData.map((g) => (g.whiskerHigh !== null ? g.whiskerHigh : (g.median ?? 0))));
++  const span = hi - lo || 1;
++  const pad = span * 0.08;
++  return { lo: lo - pad, hi: hi + pad };
++}
++
++export function PmvgBoxPlot({
++  stats,
++  domain,
++  width = 220,
++  height = 22,
++}: {
++  stats: DistributionStats;
++  domain: BoxDomain;
++  width?: number;
++  height?: number;
++}) {
++  const g = stats;
++  if (!g.n || g.q1 === null || g.whiskerLow === null || g.whiskerHigh === null || g.q3 === null) {
++    return <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="block" />;
++  }
++
++  const xScale = (v: number) => ((v - domain.lo) / (domain.hi - domain.lo)) * width;
++  const midY = height / 2;
++  const boxStroke = "var(--primary)";
++  const boxFill = "color-mix(in oklch, var(--primary) 15%, transparent)";
++  const whiskerStroke = "var(--muted-foreground)";
++
++  return (
++    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="block">
++      {/* linha do 0% */}
++      <line
++        x1={xScale(0)}
++        x2={xScale(0)}
++        y1={1}
++        y2={height - 1}
++        stroke="var(--muted-foreground)"
++        strokeWidth={1}
++        strokeDasharray="2 2"
++        opacity={0.7}
++      />
++      {/* bigode */}
++      <line
++        x1={xScale(g.whiskerLow)}
++        x2={xScale(g.whiskerHigh)}
++        y1={midY}
++        y2={midY}
++        stroke={whiskerStroke}
++        strokeWidth={1}
++      />
++      {[g.whiskerLow, g.whiskerHigh].map((v, i) => (
++        <line
++          key={i}
++          x1={xScale(v)}
++          x2={xScale(v)}
++          y1={midY - 4}
++          y2={midY + 4}
++          stroke={whiskerStroke}
++          strokeWidth={1}
++        />
++      ))}
++      {/* caixa Q1–Q3 */}
++      <rect
++        x={xScale(g.q1)}
++        y={2}
++        width={Math.max(xScale(g.q3) - xScale(g.q1), 1)}
++        height={height - 4}
++        rx={2}
++        fill={boxFill}
++        stroke={boxStroke}
++        strokeWidth={1}
++      />
++      {/* mediana */}
++      {g.median !== null && (
++        <line
++          x1={xScale(g.median)}
++          x2={xScale(g.median)}
++          y1={1}
++          y2={height - 1}
++          stroke={boxStroke}
++          strokeWidth={2}
++        />
++      )}
++    </svg>
++  );
++}
+diff --git a/components/dashboard/charts/pmvg-format.ts b/components/dashboard/charts/pmvg-format.ts
+new file mode 100644
+index 0000000..3ecae2b
+--- /dev/null
++++ b/components/dashboard/charts/pmvg-format.ts
+@@ -0,0 +1,164 @@
++import type { PmvgRow } from "@/lib/pmvg-metrics";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Helpers puros da sub-aba PMVG — formatação, ordenação das alíquotas, cálculo
++// pago-vs-PMVG por linha e estatísticas de distribuição. Portados 1:1 do
++// dashboard SISMAT × PMVG de origem para manter os números idênticos.
++// ─────────────────────────────────────────────────────────────────────────────
++
++/** Vermelho = pago acima do PMVG (sobrepreço) · Azul = pago abaixo (economia). */
++export const PMVG_RED = "#dc2626";
++export const PMVG_BLUE = "#2563eb";
++
++export const QTY_METHOD_LABEL: Record<string, string> = {
++  leading_count: 'contagem no texto (ex: "CX 40 FR")',
++  trailing_x: 'sufixo "X n" no texto',
++  default_single: "assumido 1 (padrão ANVISA)",
++};
++
++export function fmtMoney(v: number | null | undefined): string {
++  if (v === null || v === undefined || isNaN(v)) return "—";
++  return v.toLocaleString("pt-BR", {
++    style: "currency",
++    currency: "BRL",
++    maximumFractionDigits: 2,
++  });
++}
++
++export function fmtNum(v: number | null | undefined, digits = 1): string {
++  if (v === null || v === undefined || isNaN(v)) return "—";
++  return v.toLocaleString("pt-BR", { maximumFractionDigits: digits });
++}
++
++export function fmtPct(v: number | null | undefined): string {
++  if (v === null || v === undefined || isNaN(v)) return "—";
++  return (v >= 0 ? "+" : "") + v.toLocaleString("pt-BR", { maximumFractionDigits: 1 }) + "%";
++}
++
++export function fmtDate(iso: string | null | undefined): string {
++  if (!iso) return "—";
++  const [y, m, d] = iso.split("-");
++  return `${d}/${m}/${y}`;
++}
++
++export type BadgeTone = "good" | "warning" | "critical";
++export function scoreBadgeTone(sc: number | null | undefined): BadgeTone {
++  if (sc === null || sc === undefined) return "critical";
++  if (sc >= 80) return "good";
++  if (sc >= 60) return "warning";
++  return "critical";
++}
++
++// ── Ordem de exibição das alíquotas ──────────────────────────────────────────
++// "Sem Impostos" faz mais sentido logo acima de "0%" do que por último. Guarda
++// os índices ORIGINAIS de cols (o índice que indexa row.p); só a ordem muda.
++export function buildPmvgOrder(cols: string[]): number[] {
++  const idxs = cols.map((_, i) => i);
++  const semIdx = cols.indexOf("PMVG Sem Impostos");
++  const zeroIdx = cols.indexOf("PMVG 0%");
++  if (semIdx === -1 || zeroIdx === -1) return idxs;
++  const rest = idxs.filter((i) => i !== semIdx);
++  const zeroPos = rest.indexOf(zeroIdx);
++  return [...rest.slice(0, zeroPos), semIdx, ...rest.slice(zeroPos)];
++}
++
++// ── Cálculo pago-vs-PMVG por linha ───────────────────────────────────────────
++// Como o PMVG é publicado por embalagem e o SISMAT compra por unidade, o preço
++// de embalagem é dividido pela quantidade de unidades da embalagem (qp).
++export interface PmvgRowCalc extends PmvgRow {
++  pmvgPack: number | null; // preço de embalagem na alíquota escolhida
++  pmvgUnit: number | null; // PMVG unitário estimado = pmvgPack / qp
++  diffUnit: number | null; // pago − PMVG (unitário)
++  diffPct: number | null; // (diffUnit / pmvgUnit) × 100
++  diffTotal: number | null; // diffUnit × quantidade
++  pmvgTotal: number | null; // pmvgUnit × quantidade
++}
++
++export function withPmvgCalcs(baseRows: PmvgRow[], pmvgIdx: number): PmvgRowCalc[] {
++  return baseRows.map((r) => {
++    const pmvgPack = r.p[pmvgIdx] ?? null;
++    const pmvgUnit = pmvgPack !== null && r.qp ? pmvgPack / r.qp : null;
++    const diffUnit = pmvgUnit !== null && r.vu !== null ? r.vu - pmvgUnit : null;
++    const diffPct = diffUnit !== null && pmvgUnit ? (diffUnit / pmvgUnit) * 100 : null;
++    const diffTotal = diffUnit !== null && r.q !== null ? diffUnit * r.q : null;
++    const pmvgTotal = pmvgUnit !== null && r.q !== null ? pmvgUnit * r.q : null;
++    return { ...r, pmvgPack, pmvgUnit, diffUnit, diffPct, diffTotal, pmvgTotal };
++  });
++}
++
++// ── Estatística: média, desvio padrão amostral, percentil, box plot ──────────
++export function mean(arr: number[]): number {
++  return arr.reduce((a, b) => a + b, 0) / arr.length;
++}
++
++export function stddev(arr: number[], m?: number): number | null {
++  if (arr.length < 2) return null;
++  const mm = m === undefined ? mean(arr) : m;
++  const variance = arr.reduce((s, v) => s + (v - mm) * (v - mm), 0) / (arr.length - 1);
++  return Math.sqrt(variance);
++}
++
++export function percentile(sortedArr: number[], p: number): number | null {
++  if (!sortedArr.length) return null;
++  const idx = (sortedArr.length - 1) * p;
++  const lo = Math.floor(idx);
++  const hi = Math.ceil(idx);
++  if (lo === hi) return sortedArr[lo];
++  return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
++}
++
++export interface DistributionStats {
++  n: number;
++  mean: number | null;
++  std: number | null;
++  min: number | null;
++  max: number | null;
++  q1: number | null;
++  median: number | null;
++  q3: number | null;
++  whiskerLow: number | null;
++  whiskerHigh: number | null;
++}
++
++export function distributionStats(vals: number[]): DistributionStats {
++  const n = vals.length;
++  if (!n) {
++    return {
++      n: 0,
++      mean: null,
++      std: null,
++      min: null,
++      max: null,
++      q1: null,
++      median: null,
++      q3: null,
++      whiskerLow: null,
++      whiskerHigh: null,
++    };
++  }
++  const sorted = vals.slice().sort((a, b) => a - b);
++  const m = mean(vals);
++  const sd = stddev(vals, m);
++  const q1 = percentile(sorted, 0.25) as number;
++  const median = percentile(sorted, 0.5);
++  const q3 = percentile(sorted, 0.75) as number;
++  const iqr = q3 - q1;
++  const lowBound = q1 - 1.5 * iqr;
++  const highBound = q3 + 1.5 * iqr;
++  const withinLow = sorted.filter((v) => v >= lowBound);
++  const withinHigh = sorted.filter((v) => v <= highBound);
++  const whiskerLow = withinLow.length ? withinLow[0] : sorted[0];
++  const whiskerHigh = withinHigh.length ? withinHigh[withinHigh.length - 1] : sorted[sorted.length - 1];
++  return {
++    n,
++    mean: m,
++    std: sd,
++    min: sorted[0],
++    max: sorted[sorted.length - 1],
++    q1,
++    median,
++    q3,
++    whiskerLow,
++    whiskerHigh,
++  };
++}
+diff --git a/components/dashboard/charts/pmvg-rank-chart.tsx b/components/dashboard/charts/pmvg-rank-chart.tsx
+new file mode 100644
+index 0000000..0194eed
+--- /dev/null
++++ b/components/dashboard/charts/pmvg-rank-chart.tsx
+@@ -0,0 +1,107 @@
++"use client";
++
++import {
++  BarChart,
++  Bar,
++  XAxis,
++  YAxis,
++  Tooltip,
++  LabelList,
++  ResponsiveContainer,
++  Cell,
++} from "recharts";
++import { fmtMoney, PMVG_RED, PMVG_BLUE } from "./pmvg-format";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Ranking de materiais por diferença total (pago − PMVG), em coluna única.
++// A barra usa o módulo da diferença (comprimento) e a cor indica o sentido:
++// vermelho = sobrepreço · azul = economia. O rótulo mostra o valor com sinal.
++// ─────────────────────────────────────────────────────────────────────────────
++
++export interface RankDatum {
++  material: string;
++  diff: number; // diferença total com sinal (R$)
++}
++
++interface ChartDatum extends RankDatum {
++  mag: number; // |diff| — comprimento da barra
++  label: string; // R$ com sinal — rótulo à direita
++}
++
++const truncar = (s: string, n = 26) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
++
++const RankTooltip = ({
++  active,
++  payload,
++}: {
++  active?: boolean;
++  payload?: Array<{ payload: ChartDatum }>;
++}) => {
++  if (!active || !payload?.length) return null;
++  const d = payload[0].payload;
++  return (
++    <div className="bg-background/95 border border-primary/40 rounded-lg px-3 py-2 shadow-lg backdrop-blur-sm max-w-xs">
++      <p className="text-xs font-medium text-foreground break-words">{d.material}</p>
++      <p className="text-sm font-semibold" style={{ color: d.diff >= 0 ? PMVG_RED : PMVG_BLUE }}>
++        {fmtMoney(d.diff)}
++      </p>
++    </div>
++  );
++};
++
++export function PmvgRankChart({
++  data,
++  color,
++  emptyText = "Nenhum item com os filtros atuais.",
++}: {
++  /** Itens já ordenados (maior primeiro). */
++  data: RankDatum[];
++  color: string;
++  emptyText?: string;
++}) {
++  if (!data.length) {
++    return <p className="text-xs text-muted-foreground py-6 text-center">{emptyText}</p>;
++  }
++
++  const chartData: ChartDatum[] = data.map((d) => ({
++    ...d,
++    mag: Math.abs(d.diff),
++    label: fmtMoney(d.diff),
++  }));
++
++  const height = chartData.length * 30 + 16;
++
++  return (
++    <ResponsiveContainer width="100%" height={height}>
++      <BarChart
++        layout="vertical"
++        data={chartData}
++        margin={{ top: 4, right: 96, bottom: 4, left: 4 }}
++        barCategoryGap={6}
++      >
++        <XAxis type="number" hide />
++        <YAxis
++          type="category"
++          dataKey="material"
++          width={190}
++          tick={{ fontSize: 11 }}
++          tickFormatter={(v: string) => truncar(v)}
++          interval={0}
++          axisLine={false}
++          tickLine={false}
++        />
++        <Tooltip content={<RankTooltip />} cursor={{ fill: "color-mix(in oklch, var(--muted) 60%, transparent)" }} />
++        <Bar dataKey="mag" radius={[0, 4, 4, 0]} isAnimationActive={false}>
++          {chartData.map((_, i) => (
++            <Cell key={i} fill={color} />
++          ))}
++          <LabelList
++            dataKey="label"
++            position="right"
++            style={{ fontSize: 11, fill: "var(--foreground)" }}
++          />
++        </Bar>
++      </BarChart>
++    </ResponsiveContainer>
++  );
++}
+diff --git a/components/dashboard/charts/pmvg-timeseries-chart.tsx b/components/dashboard/charts/pmvg-timeseries-chart.tsx
+new file mode 100644
+index 0000000..26eb80a
+--- /dev/null
++++ b/components/dashboard/charts/pmvg-timeseries-chart.tsx
+@@ -0,0 +1,137 @@
++"use client";
++
++import { useMemo } from "react";
++import {
++  ComposedChart,
++  Line,
++  Scatter,
++  XAxis,
++  YAxis,
++  CartesianGrid,
++  Tooltip,
++  ResponsiveContainer,
++} from "recharts";
++import type { PmvgRowCalc } from "./pmvg-format";
++import { fmtMoney, fmtDate, PMVG_RED, PMVG_BLUE } from "./pmvg-format";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Série temporal de UM material: pago unitário (pontos vermelhos) sobre o PMVG
++// unitário aplicável na data (linha azul). Reproduz o gráfico do dashboard de
++// origem, em Recharts. As datas viram timestamp para o eixo X numérico.
++// ─────────────────────────────────────────────────────────────────────────────
++
++interface Ponto {
++  ts: number;
++  d: string;
++  vu: number | null;
++  pmvgUnit: number | null;
++}
++
++const DIA_MS = 24 * 3600 * 1000;
++
++function fmtDataCurta(ts: number): string {
++  return new Date(ts).toLocaleDateString("pt-BR", { month: "short", year: "2-digit" });
++}
++
++function fmtMoneyEixo(v: number): string {
++  const abs = Math.abs(v);
++  if (abs >= 1_000_000) return `R$ ${(v / 1_000_000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mi`;
++  if (abs >= 10_000) return `R$ ${(v / 1_000).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} mil`;
++  if (abs >= 100) return `R$ ${v.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}`;
++  return `R$ ${v.toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`;
++}
++
++const TsTooltip = ({
++  active,
++  payload,
++}: {
++  active?: boolean;
++  payload?: Array<{ payload: Ponto }>;
++}) => {
++  if (!active || !payload?.length) return null;
++  const p = payload[0].payload;
++  return (
++    <div className="bg-background/95 border border-primary/40 rounded-lg px-3 py-2 shadow-lg backdrop-blur-sm">
++      <p className="text-xs text-muted-foreground">{fmtDate(p.d)}</p>
++      <p className="text-sm">
++        <span style={{ color: PMVG_RED }}>Pago:</span>{" "}
++        <span className="font-semibold text-foreground">{fmtMoney(p.vu)}</span>
++      </p>
++      <p className="text-sm">
++        <span style={{ color: PMVG_BLUE }}>PMVG:</span>{" "}
++        <span className="font-semibold text-foreground">{fmtMoney(p.pmvgUnit)}</span>
++      </p>
++    </div>
++  );
++};
++
++export function PmvgTimeSeriesChart({ rows }: { rows: PmvgRowCalc[] }) {
++  const { data, xDomain, yMax } = useMemo(() => {
++    const det = rows
++      .filter((r) => r.d)
++      .slice()
++      .sort((a, b) => a.d.localeCompare(b.d))
++      .map<Ponto>((r) => ({
++        ts: new Date(r.d + "T00:00:00Z").getTime(),
++        d: r.d,
++        vu: r.vu,
++        pmvgUnit: r.pmvgUnit,
++      }));
++
++    const tempos = det.map((p) => p.ts);
++    const minT = Math.min(...tempos);
++    const maxT = Math.max(...tempos);
++    const padT = Math.max((maxT - minT) * 0.04, 3 * DIA_MS);
++
++    const vals: number[] = [];
++    det.forEach((p) => {
++      if (p.vu !== null) vals.push(p.vu);
++      if (p.pmvgUnit !== null) vals.push(p.pmvgUnit);
++    });
++
++    return {
++      data: det,
++      xDomain: [minT - padT, maxT + padT] as [number, number],
++      yMax: Math.max(1, ...vals),
++    };
++  }, [rows]);
++
++  if (!data.length) {
++    return <p className="text-xs text-muted-foreground py-6 text-center">Nenhum item com os filtros atuais.</p>;
++  }
++
++  return (
++    <ResponsiveContainer width="100%" height={330}>
++      <ComposedChart data={data} margin={{ top: 12, right: 16, bottom: 8, left: 8 }}>
++        <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
++        <XAxis
++          type="number"
++          dataKey="ts"
++          domain={xDomain}
++          tickFormatter={fmtDataCurta}
++          tick={{ fontSize: 11 }}
++          tickCount={6}
++          scale="time"
++        />
++        <YAxis
++          type="number"
++          domain={[0, yMax * 1.05]}
++          tickFormatter={fmtMoneyEixo}
++          tick={{ fontSize: 11 }}
++          width={78}
++        />
++        <Tooltip content={<TsTooltip />} cursor={{ strokeDasharray: "3 3" }} />
++        <Line
++          type="linear"
++          dataKey="pmvgUnit"
++          stroke={PMVG_BLUE}
++          strokeWidth={2}
++          dot={{ r: 3, fill: PMVG_BLUE, strokeWidth: 0 }}
++          connectNulls
++          isAnimationActive={false}
++        />
++        <Scatter dataKey="vu" fill={PMVG_RED} isAnimationActive={false} />
++      </ComposedChart>
++    </ResponsiveContainer>
++  );
++}
+diff --git a/components/dashboard/pmvg-view.tsx b/components/dashboard/pmvg-view.tsx
+new file mode 100644
+index 0000000..ea3e903
+--- /dev/null
++++ b/components/dashboard/pmvg-view.tsx
+@@ -0,0 +1,709 @@
++"use client";
++
++import { useMemo, useState } from "react";
++import { usePmvgData } from "@/hooks/usePmvg";
++import { Panel, selectCn } from "@/components/dashboard/sismat-shared";
++import { MetricCard } from "@/components/dashboard/metric-card";
++import { Button } from "@/components/ui/button";
++import {
++  Table,
++  TableBody,
++  TableCell,
++  TableHead,
++  TableHeader,
++  TableRow,
++} from "@/components/ui/table";
++import { PmvgRankChart } from "@/components/dashboard/charts/pmvg-rank-chart";
++import { PmvgTimeSeriesChart } from "@/components/dashboard/charts/pmvg-timeseries-chart";
++import { PmvgBoxPlot, computeBoxDomain } from "@/components/dashboard/charts/pmvg-box-plot";
++import {
++  fmtMoney,
++  fmtNum,
++  fmtPct,
++  fmtDate,
++  scoreBadgeTone,
++  QTY_METHOD_LABEL,
++  buildPmvgOrder,
++  withPmvgCalcs,
++  distributionStats,
++  PMVG_RED,
++  PMVG_BLUE,
++  type PmvgRowCalc,
++  type BadgeTone,
++} from "@/components/dashboard/charts/pmvg-format";
++import {
++  AlertTriangle,
++  BarChart2,
++  Coins,
++  Download,
++  Gauge,
++  Loader2,
++  Scale,
++  SlidersHorizontal,
++  TrendingUp,
++} from "lucide-react";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Sub-aba "PMVG" — preço unitário pago no SISMAT vs. PMVG vigente na entrega.
++// Base pequena carregada de uma vez; todos os filtros e cálculos rodam aqui,
++// reproduzindo o dashboard SISMAT × PMVG de origem. Estado de filtro em useState;
++// tudo o mais é derivado (sem effects).
++// ─────────────────────────────────────────────────────────────────────────────
++
++const TONE_CLASS: Record<BadgeTone, string> = {
++  good: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
++  warning: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
++  critical: "bg-destructive/15 text-destructive",
++};
++
++function ScoreBadge({ value }: { value: number | null }) {
++  const tone = scoreBadgeTone(value);
++  return (
++    <span className={`inline-flex rounded-md px-1.5 py-0.5 text-xs font-medium ${TONE_CLASS[tone]}`}>
++      {value === null ? "—" : fmtNum(value, 0)}
++    </span>
++  );
++}
++
++type SortKey =
++  | "m" | "sm" | "f" | "d" | "q" | "vu" | "pmvgUnit"
++  | "diffUnit" | "diffPct" | "pmvgPack" | "qp" | "qm" | "pd" | "sc";
++
++interface Coluna {
++  key: SortKey;
++  label: string;
++  type?: "date" | "num" | "money" | "pct" | "score" | "qm";
++  wrap?: boolean;
++}
++
++const TABLE_COLUMNS: Coluna[] = [
++  { key: "m", label: "Material (SISMAT)", wrap: true },
++  { key: "sm", label: "Medicamento (PMVG)", wrap: true },
++  { key: "f", label: "Fabricante", wrap: true },
++  { key: "d", label: "Entrega", type: "date" },
++  { key: "q", label: "Qtd", type: "num" },
++  { key: "vu", label: "Valor unit. pago", type: "money" },
++  { key: "pmvgUnit", label: "PMVG unit. (estim.)", type: "money" },
++  { key: "diffUnit", label: "Diferença unitária", type: "money" },
++  { key: "diffPct", label: "Diferença %", type: "pct" },
++  { key: "pmvgPack", label: "PMVG embalagem (bruto)", type: "money" },
++  { key: "qp", label: "Qtd/emb.", type: "num" },
++  { key: "qm", label: "Método", type: "qm" },
++  { key: "pd", label: "Data PMVG usada", type: "date" },
++  { key: "sc", label: "Score", type: "score" },
++];
++
++const NEAR_COLUMNS: Coluna[] = [
++  { key: "m", label: "Material (SISMAT)", wrap: true },
++  { key: "sm", label: "Medicamento (PMVG)", wrap: true },
++  { key: "f", label: "Fabricante", wrap: true },
++  { key: "d", label: "Entrega", type: "date" },
++  { key: "vu", label: "Valor unit. pago", type: "money" },
++  { key: "pmvgUnit", label: "PMVG unit. (nesta alíquota)", type: "money" },
++  { key: "diffPct", label: "Diferença %", type: "pct" },
++];
++
++function renderCell(r: PmvgRowCalc, col: Coluna) {
++  const v = r[col.key] as unknown;
++  if (col.type === "money") return fmtMoney(v as number | null);
++  if (col.type === "pct") return fmtPct(v as number | null);
++  if (col.type === "num") return fmtNum(v as number | null, 0);
++  if (col.type === "date") return fmtDate(v as string | null);
++  if (col.type === "qm") return QTY_METHOD_LABEL[v as string] || (v as string) || "—";
++  if (col.type === "score") return <ScoreBadge value={r.sc} />;
++  return v === null || v === undefined ? "—" : String(v);
++}
++
++function signClass(v: number | null | undefined) {
++  if (v === null || v === undefined) return "";
++  return v >= 0 ? "text-destructive" : "text-blue-600 dark:text-blue-400";
++}
++
++export function PmvgView() {
++  const { data, isLoading, error } = usePmvgData();
++
++  // ── Estado dos filtros (useState) ─────────────────────────────────────────
++  const [pmvgIdxState, setPmvgIdxState] = useState<number>(-1); // -1 = default "PMVG 0%"
++  const [minScore, setMinScore] = useState(70);
++  const [dateFrom, setDateFrom] = useState(""); // "" = limite inferior da base
++  const [dateTo, setDateTo] = useState(""); // "" = limite superior da base
++  const [selMaterials, setSelMaterials] = useState<string[]>([]);
++  const [selFabricantes, setSelFabricantes] = useState<string[]>([]);
++  const [onlyPmvg, setOnlyPmvg] = useState(true);
++  const [topN, setTopN] = useState(10);
++  const [tableSearch, setTableSearch] = useState("");
++  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "diffUnit", dir: -1 });
++  const [nearIdxState, setNearIdxState] = useState<number | null>(null);
++  const [nearThreshold, setNearThreshold] = useState(5);
++
++  const cols = data?.cols ?? [];
++  const pmvgOrder = useMemo(() => buildPmvgOrder(cols), [cols]);
++  const defaultPmvgIdx = cols.indexOf("PMVG 0%");
++  const pmvgIdx = pmvgIdxState >= 0 ? pmvgIdxState : defaultPmvgIdx >= 0 ? defaultPmvgIdx : 0;
++
++  const dMin = data?.dataMin ?? "";
++  const dMax = data?.dataMax ?? "";
++  const fromEff = dateFrom || dMin;
++  const toEff = dateTo || dMax;
++
++  // ── Filtro base (score, data, material, fabricante) ───────────────────────
++  const baseRows = useMemo(() => {
++    if (!data) return [];
++    const mats = new Set(selMaterials);
++    const fabs = new Set(selFabricantes);
++    return data.rows.filter((r) => {
++      if (r.sc === null || r.sc < minScore) return false;
++      if (r.d && fromEff && r.d < fromEff) return false;
++      if (r.d && toEff && r.d > toEff) return false;
++      if (mats.size && !mats.has(r.m)) return false;
++      if (fabs.size && !fabs.has(r.f)) return false;
++      return true;
++    });
++  }, [data, minScore, fromEff, toEff, selMaterials, selFabricantes]);
++
++  // ── Linhas com cálculo pago-vs-PMVG na alíquota escolhida ─────────────────
++  const filtered = useMemo(() => {
++    let out = withPmvgCalcs(baseRows, pmvgIdx);
++    if (onlyPmvg) out = out.filter((r) => r.pmvgUnit !== null);
++    return out;
++  }, [baseRows, pmvgIdx, onlyPmvg]);
++
++  const comPmvg = useMemo(() => filtered.filter((r) => r.pmvgUnit !== null), [filtered]);
++
++  // ── KPIs ──────────────────────────────────────────────────────────────────
++  const kpis = useMemo(() => {
++    const totalPago = comPmvg.reduce((s, r) => s + (r.vt || 0), 0);
++    const totalPmvg = comPmvg.reduce((s, r) => s + (r.pmvgTotal || 0), 0);
++    const diff = totalPago - totalPmvg;
++    const diffPct = totalPmvg ? (diff / totalPmvg) * 100 : 0;
++    const diffPctVals = comPmvg.map((r) => r.diffPct).filter((v): v is number => v !== null && isFinite(v));
++    const dstats = distributionStats(diffPctVals);
++    let extra: string;
++    if (dstats.n >= 2) extra = `desvio padrão da diferença % por item: ${fmtNum(dstats.std, 1)}pp (n=${dstats.n})`;
++    else if (dstats.n === 1) extra = "apenas 1 item no filtro — sem desvio padrão";
++    else extra = "sem itens com PMVG encontrado no filtro atual";
++    return { totalPago, totalPmvg, diff, diffPct, extra };
++  }, [comPmvg]);
++
++  // ── Ranking por material (soma da diferença total) ────────────────────────
++  const ranking = useMemo(() => {
++    const byMat = new Map<string, number>();
++    for (const r of comPmvg) byMat.set(r.m, (byMat.get(r.m) || 0) + (r.diffTotal || 0));
++    const arr = Array.from(byMat, ([material, diff]) => ({ material, diff }));
++    const top = arr.filter((d) => d.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, topN);
++    const bottom = arr.filter((d) => d.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, topN);
++    return { top, bottom };
++  }, [comPmvg, topN]);
++
++  // ── Material da série temporal ────────────────────────────────────────────
++  const tsMaterial = useMemo(() => {
++    if (selMaterials.length === 1) return selMaterials[0];
++    const byMat = new Map<string, number>();
++    comPmvg.forEach((r) => byMat.set(r.m, (byMat.get(r.m) || 0) + (r.diffTotal || 0)));
++    const ranked = Array.from(byMat.entries()).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
++    return ranked.length ? ranked[0][0] : filtered.length ? filtered[0].m : null;
++  }, [selMaterials, comPmvg, filtered]);
++
++  const tsRows = useMemo(
++    () => (tsMaterial ? filtered.filter((r) => r.m === tsMaterial && r.d) : []),
++    [filtered, tsMaterial]
++  );
++
++  // ── Tabela de detalhe (busca + ordenação) ─────────────────────────────────
++  const tableRows = useMemo(() => {
++    const q = tableSearch.trim().toLowerCase();
++    let rows = filtered.filter((r) => r.pmvgUnit !== null || !onlyPmvg);
++    if (q) rows = rows.filter((r) => `${r.m} ${r.sm || ""} ${r.f}`.toLowerCase().includes(q));
++    const { key, dir } = sort;
++    return rows.slice().sort((a, b) => {
++      const av = a[key] as unknown;
++      const bv = b[key] as unknown;
++      if (av === null || av === undefined) return 1;
++      if (bv === null || bv === undefined) return -1;
++      if (typeof av === "string") return (av as string).localeCompare(bv as string) * dir;
++      return ((av as number) - (bv as number)) * dir;
++    });
++  }, [filtered, tableSearch, onlyPmvg, sort]);
++
++  // ── Estatísticas por alíquota + box plots ─────────────────────────────────
++  const byRate = useMemo(() => {
++    const groups = pmvgOrder.map((idx) => {
++      const calcs = withPmvgCalcs(baseRows, idx).filter(
++        (r) => r.pmvgUnit !== null && r.diffPct !== null && isFinite(r.diffPct)
++      );
++      const stats = distributionStats(calcs.map((r) => r.diffPct as number));
++      return { idx, label: cols[idx], rows: calcs, stats };
++    });
++    const domain = computeBoxDomain(groups.map((g) => g.stats));
++    return { groups, domain };
++  }, [baseRows, pmvgOrder, cols]);
++
++  // ── Compras próximas do PMVG (aba alíquota) ───────────────────────────────
++  const nearAvailable = useMemo(() => byRate.groups.filter((g) => g.stats.n >= 1), [byRate]);
++  const nearIdx = useMemo(() => {
++    if (nearIdxState !== null && nearAvailable.some((g) => g.idx === nearIdxState)) return nearIdxState;
++    const zero = nearAvailable.find((g) => g.label === "PMVG 0%");
++    return zero ? zero.idx : nearAvailable.length ? nearAvailable[0].idx : null;
++  }, [nearIdxState, nearAvailable]);
++
++  const nearRows = useMemo(() => {
++    const group = nearIdx !== null ? byRate.groups.find((g) => g.idx === nearIdx) : null;
++    if (!group || !group.stats.n) return [];
++    return group.rows
++      .filter((r) => r.diffPct !== null && Math.abs(r.diffPct) < nearThreshold)
++      .slice()
++      .sort((a, b) => Math.abs(a.diffPct as number) - Math.abs(b.diffPct as number));
++  }, [byRate, nearIdx, nearThreshold]);
++
++  function toggleSort(key: SortKey) {
++    setSort((prev) => ({ key, dir: prev.key === key ? ((prev.dir * -1) as 1 | -1) : -1 }));
++  }
++
++  function exportCsv() {
++    const headers = TABLE_COLUMNS.map((c) => c.label);
++    const lines = [headers.join(";")];
++    tableRows.forEach((r) => {
++      const vals = TABLE_COLUMNS.map((c) => {
++        const v = r[c.key] as unknown;
++        if (v === null || v === undefined) return "";
++        if (typeof v === "number") return String(v).replace(".", ",");
++        return String(v).replace(/;/g, ",");
++      });
++      lines.push(vals.join(";"));
++    });
++    const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
++    const url = URL.createObjectURL(blob);
++    const a = document.createElement("a");
++    a.href = url;
++    a.download = "sismat_x_pmvg_detalhe.csv";
++    document.body.appendChild(a);
++    a.click();
++    document.body.removeChild(a);
++    URL.revokeObjectURL(url);
++  }
++
++  // ── Estados de carregamento / erro / vazio ────────────────────────────────
++  if (error) {
++    return (
++      <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-3">
++        <div className="flex items-center gap-2 text-destructive">
++          <AlertTriangle className="h-4 w-4" />
++          <span className="font-medium text-sm">Erro ao carregar a base SISMAT × PMVG</span>
++        </div>
++        <p className="text-xs text-muted-foreground">
++          {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
++        </p>
++      </div>
++    );
++  }
++
++  if (isLoading) {
++    return (
++      <div className="flex justify-center py-16">
++        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
++      </div>
++    );
++  }
++
++  if (!data?.hasData) {
++    return (
++      <div className="rounded-lg border border-border bg-card p-10 text-center space-y-2">
++        <Scale className="h-8 w-8 mx-auto text-muted-foreground" />
++        <p className="text-sm font-medium">Nenhum registro SISMAT × PMVG encontrado</p>
++        <p className="text-xs text-muted-foreground">
++          Importe a base com{" "}
++          <code>npx tsx scripts/import-sismat-pmvg.ts --truncate --confirm</code> e recarregue a página.
++        </p>
++      </div>
++    );
++  }
++
++  const refLabel = cols[pmvgIdx] ?? "—";
++
++  return (
++    <div className="space-y-6">
++      {/* ── Filtros ──────────────────────────────────────────────────────── */}
++      <Panel
++        icon={<SlidersHorizontal className="h-4 w-4" />}
++        title="Filtros"
++        subtitle="Controlam todos os números, gráficos e tabelas desta sub-aba."
++      >
++        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Referência PMVG (embalagem)</label>
++            <select
++              className={selectCn}
++              value={pmvgIdx}
++              onChange={(e) => setPmvgIdxState(parseInt(e.target.value, 10))}
++            >
++              {pmvgOrder.map((i) => (
++                <option key={i} value={i}>
++                  {cols[i]}
++                </option>
++              ))}
++            </select>
++          </div>
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">
++              Confiança mínima do match: <span className="font-medium text-foreground">{minScore}</span>
++            </label>
++            <input
++              type="range"
++              min={0}
++              max={100}
++              value={minScore}
++              onChange={(e) => setMinScore(parseInt(e.target.value, 10))}
++              className="w-full accent-primary"
++            />
++          </div>
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">
++              Somente com PMVG vigente encontrado
++            </label>
++            <label className="inline-flex items-center gap-2 text-sm h-9">
++              <input
++                type="checkbox"
++                checked={onlyPmvg}
++                onChange={(e) => setOnlyPmvg(e.target.checked)}
++                className="h-4 w-4 accent-primary"
++              />
++              <span className="text-muted-foreground">Ocultar compras sem PMVG na data</span>
++            </label>
++          </div>
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Entrega de</label>
++            <input
++              type="date"
++              className={selectCn}
++              value={fromEff}
++              min={dMin}
++              max={dMax}
++              onChange={(e) => setDateFrom(e.target.value)}
++            />
++          </div>
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Entrega até</label>
++            <input
++              type="date"
++              className={selectCn}
++              value={toEff}
++              min={dMin}
++              max={dMax}
++              onChange={(e) => setDateTo(e.target.value)}
++            />
++          </div>
++
++          <div className="hidden lg:block" />
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Material (múltiplo, vazio = todos)</label>
++            <select
++              multiple
++              size={4}
++              className={`${selectCn} h-auto`}
++              value={selMaterials}
++              onChange={(e) => setSelMaterials(Array.from(e.target.selectedOptions, (o) => o.value))}
++            >
++              {data.materiais.map((m) => (
++                <option key={m} value={m}>
++                  {m}
++                </option>
++              ))}
++            </select>
++          </div>
++
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Fabricante (múltiplo, vazio = todos)</label>
++            <select
++              multiple
++              size={4}
++              className={`${selectCn} h-auto`}
++              value={selFabricantes}
++              onChange={(e) => setSelFabricantes(Array.from(e.target.selectedOptions, (o) => o.value))}
++            >
++              {data.fabricantes.map((f) => (
++                <option key={f} value={f}>
++                  {f}
++                </option>
++              ))}
++            </select>
++          </div>
++        </div>
++      </Panel>
++
++      {/* ── KPIs ─────────────────────────────────────────────────────────── */}
++      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
++        <MetricCard label="Total pago (SISMAT)" value={fmtMoney(kpis.totalPago)} icon={<Coins className="h-5 w-5" />} />
++        <MetricCard label="Total teórico (PMVG)" value={fmtMoney(kpis.totalPmvg)} icon={<Scale className="h-5 w-5" />} />
++        <MetricCard
++          label="Diferença (pago − PMVG)"
++          value={fmtMoney(kpis.diff)}
++          subtext={`${fmtPct(kpis.diffPct)} vs. PMVG · ${kpis.extra}`}
++          icon={<TrendingUp className="h-5 w-5" />}
++        />
++        <MetricCard
++          label="Itens analisados"
++          value={`${comPmvg.length} / ${filtered.length}`}
++          icon={<Gauge className="h-5 w-5" />}
++        />
++      </div>
++
++      {/* ── Ranking ──────────────────────────────────────────────────────── */}
++      <Panel
++        icon={<BarChart2 className="h-4 w-4" />}
++        title="Ranking de materiais por diferença total (pago − PMVG)"
++        subtitle={`Vermelho = pago acima do PMVG (sobrepreço) · Azul = economia. Referência: ${refLabel}.`}
++      >
++        <div className="flex flex-col gap-1.5 mb-4 max-w-xs">
++          <label className="text-xs text-muted-foreground">
++            Materiais por coluna: <span className="font-medium text-foreground">{topN}</span>
++          </label>
++          <input
++            type="range"
++            min={4}
++            max={20}
++            value={topN}
++            onChange={(e) => setTopN(parseInt(e.target.value, 10))}
++            className="w-full accent-primary"
++          />
++        </div>
++        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
++          <div>
++            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
++              Maiores sobrepreços (Top {topN})
++            </p>
++            <PmvgRankChart data={ranking.top} color={PMVG_RED} />
++          </div>
++          <div>
++            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
++              Maiores economias (Bottom {topN})
++            </p>
++            <PmvgRankChart data={ranking.bottom} color={PMVG_BLUE} />
++          </div>
++        </div>
++      </Panel>
++
++      {/* ── Série temporal ───────────────────────────────────────────────── */}
++      <Panel
++        icon={<TrendingUp className="h-4 w-4" />}
++        title="Preço pago x PMVG aplicável ao longo do tempo"
++        subtitle={
++          selMaterials.length === 1
++            ? `Material: ${tsMaterial ?? "—"}`
++            : `Material com maior diferença entre os do filtro: ${tsMaterial ?? "—"} (selecione um único material para focar)`
++        }
++      >
++        <div className="flex flex-wrap gap-4 mb-3 text-xs">
++          <span className="inline-flex items-center gap-1.5">
++            <span className="h-2.5 w-2.5 rounded-full" style={{ background: PMVG_RED }} />
++            Pago (unitário)
++          </span>
++          <span className="inline-flex items-center gap-1.5">
++            <span className="h-2 w-4 rounded" style={{ background: PMVG_BLUE }} />
++            PMVG unitário (referência selecionada)
++          </span>
++        </div>
++        <PmvgTimeSeriesChart rows={tsRows} />
++      </Panel>
++
++      {/* ── Detalhe das compras ──────────────────────────────────────────── */}
++      <Panel
++        icon={<Scale className="h-4 w-4" />}
++        title="Detalhe das compras"
++        subtitle="PMVG unitário estimado = preço de embalagem ÷ unidades da embalagem (heurística de texto — confira Qtd/emb. e Método nos casos relevantes)."
++      >
++        <div className="flex flex-wrap items-center gap-3 mb-4">
++          <input
++            type="text"
++            value={tableSearch}
++            onChange={(e) => setTableSearch(e.target.value)}
++            placeholder="Buscar material, medicamento PMVG ou fabricante..."
++            className={`${selectCn} flex-1 min-w-[16rem]`}
++          />
++          <Button variant="outline" size="sm" onClick={exportCsv}>
++            <Download className="h-3.5 w-3.5 mr-1.5" />
++            Baixar tabela filtrada (CSV)
++          </Button>
++        </div>
++        <div className="overflow-x-auto">
++          <Table>
++            <TableHeader>
++              <TableRow>
++                {TABLE_COLUMNS.map((c) => (
++                  <TableHead
++                    key={c.key}
++                    onClick={() => toggleSort(c.key)}
++                    className={`cursor-pointer whitespace-nowrap select-none ${c.type && c.type !== "score" && c.type !== "qm" && c.type !== "date" ? "text-right" : ""}`}
++                  >
++                    {c.label}
++                    {sort.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
++                  </TableHead>
++                ))}
++              </TableRow>
++            </TableHeader>
++            <TableBody>
++              {tableRows.length === 0 ? (
++                <TableRow>
++                  <TableCell colSpan={TABLE_COLUMNS.length} className="text-center text-muted-foreground py-6">
++                    Nenhuma compra com os filtros atuais.
++                  </TableCell>
++                </TableRow>
++              ) : (
++                tableRows.map((r, i) => (
++                  <TableRow key={i}>
++                    {TABLE_COLUMNS.map((c) => {
++                      const isNum = c.type === "money" || c.type === "pct" || c.type === "num";
++                      const cls =
++                        c.key === "diffUnit" || c.key === "diffPct"
++                          ? signClass(r[c.key] as number | null)
++                          : "";
++                      return (
++                        <TableCell
++                          key={c.key}
++                          className={`${c.wrap ? "max-w-[16rem] whitespace-normal" : "whitespace-nowrap"} ${isNum ? "text-right tabular-nums" : ""} ${cls}`}
++                        >
++                          {renderCell(r, c)}
++                        </TableCell>
++                      );
++                    })}
++                  </TableRow>
++                ))
++              )}
++            </TableBody>
++          </Table>
++        </div>
++      </Panel>
++
++      {/* ── Diferença % por alíquota (box plots) ─────────────────────────── */}
++      <Panel
++        icon={<Gauge className="h-4 w-4" />}
++        title="Diferença percentual (pago − PMVG) por alíquota do PMVG"
++        subtitle={`Distribuição da diferença % por item em cada alíquota (respeita os filtros acima, independente da Referência PMVG). Escala: ${fmtPct(byRate.domain.lo)} a ${fmtPct(byRate.domain.hi)}.`}
++      >
++        <div className="overflow-x-auto">
++          <Table>
++            <TableHeader>
++              <TableRow>
++                <TableHead>Alíquota</TableHead>
++                <TableHead className="text-right">N</TableHead>
++                <TableHead className="text-right">Média %</TableHead>
++                <TableHead className="text-right">Desvio (pp)</TableHead>
++                <TableHead className="text-right">Mediana %</TableHead>
++                <TableHead className="text-right">Q1 %</TableHead>
++                <TableHead className="text-right">Q3 %</TableHead>
++                <TableHead>Distribuição da diferença %</TableHead>
++              </TableRow>
++            </TableHeader>
++            <TableBody>
++              {byRate.groups.map((g) => (
++                <TableRow key={g.idx}>
++                  <TableCell className="whitespace-nowrap font-medium">{g.label}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.n}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.n ? fmtPct(g.stats.mean) : "—"}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.std !== null ? fmtNum(g.stats.std, 1) : "—"}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.n ? fmtPct(g.stats.median) : "—"}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.n ? fmtPct(g.stats.q1) : "—"}</TableCell>
++                  <TableCell className="text-right tabular-nums">{g.stats.n ? fmtPct(g.stats.q3) : "—"}</TableCell>
++                  <TableCell>
++                    <PmvgBoxPlot stats={g.stats} domain={byRate.domain} />
++                  </TableCell>
++                </TableRow>
++              ))}
++            </TableBody>
++          </Table>
++        </div>
++      </Panel>
++
++      {/* ── Compras próximas do PMVG ─────────────────────────────────────── */}
++      <Panel
++        icon={<Scale className="h-4 w-4" />}
++        title="Compras com preço próximo do PMVG"
++        subtitle="Respeita os filtros acima. Ordenado pelo módulo da diferença %, do mais próximo ao mais distante do PMVG."
++      >
++        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">Alíquota do PMVG (só com observações)</label>
++            <select
++              className={selectCn}
++              value={nearIdx ?? ""}
++              onChange={(e) => setNearIdxState(e.target.value === "" ? null : parseInt(e.target.value, 10))}
++            >
++              {nearAvailable.length === 0 ? (
++                <option value="">Sem alíquotas com dados</option>
++              ) : (
++                nearAvailable.map((g) => {
++                  const near = g.rows.filter((r) => r.diffPct !== null && Math.abs(r.diffPct) < nearThreshold).length;
++                  return (
++                    <option key={g.idx} value={g.idx}>
++                      {g.label} ({near} de {g.stats.n} próximos)
++                    </option>
++                  );
++                })
++              )}
++            </select>
++          </div>
++          <div className="flex flex-col gap-1.5">
++            <label className="text-xs text-muted-foreground">
++              Diferença % máxima (módulo): <span className="font-medium text-foreground">{nearThreshold}%</span>
++            </label>
++            <input
++              type="range"
++              min={1}
++              max={30}
++              step={1}
++              value={nearThreshold}
++              onChange={(e) => setNearThreshold(parseInt(e.target.value, 10))}
++              className="w-full accent-primary"
++            />
++          </div>
++        </div>
++        <div className="overflow-x-auto max-h-[420px]">
++          <Table>
++            <TableHeader>
++              <TableRow>
++                {NEAR_COLUMNS.map((c) => (
++                  <TableHead
++                    key={c.key}
++                    className={`whitespace-nowrap ${c.type === "money" || c.type === "pct" ? "text-right" : ""}`}
++                  >
++                    {c.label}
++                  </TableHead>
++                ))}
++              </TableRow>
++            </TableHeader>
++            <TableBody>
++              {nearRows.length === 0 ? (
++                <TableRow>
++                  <TableCell colSpan={NEAR_COLUMNS.length} className="text-center text-muted-foreground py-6">
++                    Nenhuma compra dentro dessa diferença do PMVG nesta alíquota, para os filtros atuais.
++                  </TableCell>
++                </TableRow>
++              ) : (
++                nearRows.map((r, i) => (
++                  <TableRow key={i}>
++                    {NEAR_COLUMNS.map((c) => {
++                      const isNum = c.type === "money" || c.type === "pct";
++                      const cls = c.key === "diffPct" ? signClass(r.diffPct) : "";
++                      return (
++                        <TableCell
++                          key={c.key}
++                          className={`${c.wrap ? "max-w-[16rem] whitespace-normal" : "whitespace-nowrap"} ${isNum ? "text-right tabular-nums" : ""} ${cls}`}
++                        >
++                          {renderCell(r, c)}
++                        </TableCell>
++                      );
++                    })}
++                  </TableRow>
++                ))
++              )}
++            </TableBody>
++          </Table>
++        </div>
++      </Panel>
++    </div>
++  );
++}
+diff --git a/components/dashboard/precos-tabs.tsx b/components/dashboard/precos-tabs.tsx
+new file mode 100644
+index 0000000..0286a85
+--- /dev/null
++++ b/components/dashboard/precos-tabs.tsx
+@@ -0,0 +1,31 @@
++"use client";
++
++import { useState } from "react";
++import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
++import { PrecosView } from "@/components/dashboard/precos-view";
++import { PmvgView } from "@/components/dashboard/pmvg-view";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Sub-abas da página Preços: "ComprasGov" (preços praticados em compras
++// públicas) ao lado de "PMVG" (pago no SISMAT vs. teto PMVG na data de entrega).
++// Aba controlada por useState — cada view mantém o próprio estado ao alternar.
++// ─────────────────────────────────────────────────────────────────────────────
++
++export function PrecosTabs() {
++  const [tab, setTab] = useState<"comprasgov" | "pmvg">("comprasgov");
++
++  return (
++    <Tabs value={tab} onValueChange={(v) => setTab(v as "comprasgov" | "pmvg")}>
++      <TabsList>
++        <TabsTrigger value="comprasgov">ComprasGov</TabsTrigger>
++        <TabsTrigger value="pmvg">PMVG</TabsTrigger>
++      </TabsList>
++      <TabsContent value="comprasgov" className="mt-6">
++        <PrecosView />
++      </TabsContent>
++      <TabsContent value="pmvg" className="mt-6">
++        <PmvgView />
++      </TabsContent>
++    </Tabs>
++  );
++}
+diff --git a/components/layout/sidebar.tsx b/components/layout/sidebar.tsx
+index b92f86e..42d0e7f 100644
+--- a/components/layout/sidebar.tsx
++++ b/components/layout/sidebar.tsx
+@@ -92,7 +92,7 @@ const primaryNav = [
+     label: "Preços",
+     href: "/precos",
+     icon: Coins,
+-    description: "Preços praticados de medicamentos",
++    description: "Preços de medicamentos — ComprasGov e PMVG",
+   },
+ ];
+ 
+diff --git a/hooks/usePmvg.ts b/hooks/usePmvg.ts
+new file mode 100644
+index 0000000..33af592
+--- /dev/null
++++ b/hooks/usePmvg.ts
+@@ -0,0 +1,25 @@
++"use client";
++
++import { useQuery } from "@tanstack/react-query";
++import type { PmvgData } from "@/lib/pmvg-metrics";
++
++/**
++ * Base SISMAT × PMVG completa (compras pareadas + colunas de alíquota + meta).
++ * Base pequena (~1,3 mil linhas): uma única consulta serve a sub-aba inteira;
++ * filtros, matemática pago-vs-PMVG e estatísticas por alíquota rodam no cliente.
++ * Cache longo (1h) — base histórica de referência, muda só em novas importações.
++ */
++export function usePmvgData() {
++  return useQuery<PmvgData>({
++    queryKey: ["pmvg-data"],
++    queryFn: async () => {
++      const res = await fetch("/api/pmvg");
++      if (!res.ok) {
++        throw new Error("Erro ao carregar a base SISMAT × PMVG");
++      }
++      return res.json();
++    },
++    staleTime: 60 * 60 * 1000, // 1 hora
++    gcTime: 2 * 60 * 60 * 1000,
++  });
++}
+diff --git a/lib/pmvg-metrics.ts b/lib/pmvg-metrics.ts
+new file mode 100644
+index 0000000..cbf4edd
+--- /dev/null
++++ b/lib/pmvg-metrics.ts
+@@ -0,0 +1,157 @@
++import { db } from "@/lib/db";
++
++// ─────────────────────────────────────────────────────────────────────────────
++// Métricas da sub-aba "PMVG" (aba Preços) — preço unitário pago no SISMAT vs.
++// preço PMVG vigente na data de entrega (tabela sismat.SismatPmvg).
++//
++// Diferente da base ComprasGov (~53 mil linhas, agregada no servidor), a base
++// SISMAT × PMVG é pequena (~1,3 mil compras). Toda a matemática pago-vs-PMVG,
++// os filtros e as estatísticas por alíquota são dinâmicos (a alíquota do PMVG é
++// escolhida pelo usuário), então uma única consulta entrega TODAS as linhas e o
++// cliente reproduz o dashboard de origem sem novas idas ao servidor.
++// ─────────────────────────────────────────────────────────────────────────────
++
++/**
++ * Colunas de alíquota do PMVG, na MESMA ordem do array `pmvgPrecos` gravado no
++ * banco (índice i de PMVG_COLS ↔ índice i de row.p). Ordem/valores idênticos ao
++ * dashboard de origem — o script de importação valida que o HTML bate com isto.
++ */
++export const PMVG_COLS = [
++  "PMVG 0%",
++  "PMVG 12%",
++  "PMVG 12% ALC",
++  "PMVG 17%",
++  "PMVG 17% ALC",
++  "PMVG 17,5%",
++  "PMVG 17,5% ALC",
++  "PMVG 18%",
++  "PMVG 18% ALC",
++  "PMVG 19%",
++  "PMVG 19% ALC",
++  "PMVG 19,5%",
++  "PMVG 19,5% ALC",
++  "PMVG 20%",
++  "PMVG 20% ALC",
++  "PMVG 20,5%",
++  "PMVG 20,5% ALC",
++  "PMVG 21%",
++  "PMVG 21% ALC",
++  "PMVG 22%",
++  "PMVG 22% ALC",
++  "PMVG 22,5%",
++  "PMVG 22,5% ALC",
++  "PMVG 23%",
++  "PMVG 23% ALC",
++  "PMVG Sem Impostos",
++] as const;
++
++/** Uma compra pareada — chaves curtas (mesma semântica da base de origem). */
++export interface PmvgRow {
++  m: string; // material (SISMAT)
++  sm: string; // medicamento/princípio ativo (PMVG)
++  f: string; // fabricante
++  d: string; // data de entrega "YYYY-MM-DD"
++  q: number; // quantidade de unidades
++  vu: number; // valor unitário pago (R$)
++  vt: number; // valor total pago (R$)
++  sc: number; // score do match (0–100)
++  qp: number; // unidades por embalagem estimadas
++  qm: string; // método da qtd/emb.: leading_count | trailing_x | default_single
++  pd: string | null; // competência do PMVG usada "YYYY-MM-DD" (1º do mês) ou null
++  ap: string | null; // apresentação do PMVG pareado
++  p: (number | null)[]; // preço de embalagem por alíquota (ordem de PMVG_COLS)
++}
++
++export interface PmvgData {
++  /** Rótulos das alíquotas, alinhados a `p[]` de cada linha. */
++  cols: string[];
++  /** Todas as compras pareadas (uma linha por compra do SISMAT). */
++  rows: PmvgRow[];
++  totalRegistros: number;
++  /** Compras com ao menos uma alíquota de PMVG encontrada. */
++  comPmvg: number;
++  dataMin: string | null; // "YYYY-MM-DD"
++  dataMax: string | null;
++  /** Materiais distintos (ordem alfabética) — opções do filtro. */
++  materiais: string[];
++  /** Fabricantes distintos (ordem alfabética) — opções do filtro. */
++  fabricantes: string[];
++  hasData: boolean;
++}
++
++const toISODate = (d: Date) => d.toISOString().slice(0, 10);
++
++export async function getPmvgData(): Promise<PmvgData> {
++  const registros = await db.sismatPmvg.findMany({
++    orderBy: { dtEntrega: "asc" },
++    select: {
++      material: true,
++      subMaterial: true,
++      fabricante: true,
++      dtEntrega: true,
++      quantidade: true,
++      valorUnitario: true,
++      valorTotal: true,
++      score: true,
++      qtdEmbalagem: true,
++      metodoQtd: true,
++      pmvgCompetencia: true,
++      apresentacao: true,
++      pmvgPrecos: true,
++    },
++  });
++
++  const rows: PmvgRow[] = registros.map((r) => ({
++    m: r.material,
++    sm: r.subMaterial,
++    f: r.fabricante,
++    d: toISODate(r.dtEntrega),
++    q: r.quantidade,
++    vu: Number(r.valorUnitario),
++    vt: Number(r.valorTotal),
++    sc: r.score,
++    qp: r.qtdEmbalagem,
++    qm: r.metodoQtd,
++    pd: r.pmvgCompetencia ? toISODate(r.pmvgCompetencia) : null,
++    ap: r.apresentacao,
++    // pmvgPrecos é Json; normaliza para (number|null)[] no comprimento de PMVG_COLS.
++    p: normalizePmvgPrecos(r.pmvgPrecos),
++  }));
++
++  const materiais = Array.from(new Set(rows.map((r) => r.m))).sort((a, b) =>
++    a.localeCompare(b, "pt-BR")
++  );
++  const fabricantes = Array.from(new Set(rows.map((r) => r.f))).sort((a, b) =>
++    a.localeCompare(b, "pt-BR")
++  );
++
++  let dataMin: string | null = null;
++  let dataMax: string | null = null;
++  let comPmvg = 0;
++  for (const r of rows) {
++    if (!dataMin || r.d < dataMin) dataMin = r.d;
++    if (!dataMax || r.d > dataMax) dataMax = r.d;
++    if (r.p.some((v) => v !== null)) comPmvg += 1;
++  }
++
++  return {
++    cols: [...PMVG_COLS],
++    rows,
++    totalRegistros: rows.length,
++    comPmvg,
++    dataMin,
++    dataMax,
++    materiais,
++    fabricantes,
++    hasData: rows.length > 0,
++  };
++}
++
++/** Garante um array de tamanho fixo (PMVG_COLS) com números ou null. */
++function normalizePmvgPrecos(value: unknown): (number | null)[] {
++  const arr = Array.isArray(value) ? value : [];
++  return PMVG_COLS.map((_, i) => {
++    const v = arr[i];
++    return typeof v === "number" && isFinite(v) ? v : null;
++  });
++}
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 94173df..82a3d4c 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -375,6 +375,41 @@ model ComprasGovPreco {
+   @@schema("sismat")
+ }
+ 
++// ─────────────────────────────────────────────────────────────────────────────
++// SISMAT × PMVG — preço unitário pago (SISMAT) vs. preço PMVG vigente na data
++// de entrega (aba "Preços" › sub-aba PMVG). 1 linha por compra do SISMAT, já
++// pareada (fuzzy-match texto/fabricante, rank 1) com a foto mensal do PMVG
++// mais recente com competência ≤ à data de entrega.
++//   • pmvgPrecos: array com o preço de EMBALAGEM em cada alíquota do PMVG, na
++//     MESMA ordem de PMVG_COLS (lib/pmvg-metrics.ts). null = alíquota sem valor.
++//   • O preço PMVG unitário é derivado no cliente (embalagem ÷ qtdEmbalagem),
++//     como no dashboard de origem — nada de alíquota é escolhido no servidor.
++// ─────────────────────────────────────────────────────────────────────────────
++model SismatPmvg {
++  id              Int      @id @default(autoincrement())
++
++  material        String            // Material comprado (texto do SISMAT)
++  subMaterial     String            // Medicamento/princípio ativo pareado (PMVG)
++  fabricante      String            // Fabricante da compra
++  dtEntrega       DateTime          // Data de entrega (UTC, meia-noite) — eixo X
++  quantidade      Float             // Quantidade de unidades adquirida
++  valorUnitario   Decimal           // Preço unitário PAGO (R$) — eixo Y (pago)
++  valorTotal      Decimal           // Valor total da compra (R$)
++  score           Float             // Confiança do match texto/fabricante (0–100)
++  qtdEmbalagem    Float             // Unidades por embalagem estimadas (divisor do PMVG)
++  metodoQtd       String            // Heurística da qtd/emb.: leading_count | trailing_x | default_single
++  pmvgCompetencia DateTime?         // Competência do PMVG usado (1º dia do mês) — null se não encontrado
++  apresentacao    String?           // Texto da apresentação do PMVG pareado
++  pmvgPrecos      Json              // Preço de embalagem por alíquota (ordem de PMVG_COLS; null onde ausente)
++
++  criadoEm        DateTime @default(now())
++
++  @@index([material])
++  @@index([dtEntrega])
++  @@index([fabricante])
++  @@schema("sismat")
++}
++
+ // ─────────────────────────────────────────────────────────────────────────────
+ // Redmine × SISMAT — atributos da demanda por nº SEI (NUP)
+ // Tabela de apoio (1 linha por "NUP_SEI Principal") extraída da base Redmine
+diff --git a/scripts/import-sismat-pmvg.ts b/scripts/import-sismat-pmvg.ts
+new file mode 100644
+index 0000000..3315cf6
+--- /dev/null
++++ b/scripts/import-sismat-pmvg.ts
+@@ -0,0 +1,343 @@
++#!/usr/bin/env node
++
++/**
++ * Script de Importação: dashboard_sismat_pmvg.html → schema "sismat" (tabela SismatPmvg)
++ *
++ * A base SISMAT × PMVG (compras do SISMAT já pareadas com o PMVG vigente na data
++ * de entrega, ~1,3 mil linhas) foi entregue EMBUTIDA em um dashboard HTML
++ * estático (`const PAYLOAD = {...};` dentro do <script>). Este script extrai
++ * esse JSON do HTML e grava os registros no banco — a partir daí a sub-aba
++ * "PMVG" (aba Preços) consulta tudo via API/Prisma.
++ *
++ * Particularidades:
++ *   • Aceita o próprio .html OU um .json já extraído (mesma estrutura {cols, rows}).
++ *   • Campos curtos da origem: m=material (SISMAT), sm=medicamento (PMVG),
++ *     f=fabricante, d=data de entrega (YYYY-MM-DD), q=quantidade, vu=valor
++ *     unitário pago, vt=valor total, sc=score do match, qp=unid./embalagem,
++ *     qm=método da qtd (leading_count|trailing_x|default_single), pd=competência
++ *     do PMVG usada (YYYY-MM-DD ou null), ap=apresentação, p=[preço de embalagem
++ *     por alíquota, na ordem de PAYLOAD.cols; null onde ausente].
++ *   • PAYLOAD.cols é VALIDADO contra a ordem esperada (mesma de PMVG_COLS em
++ *     lib/pmvg-metrics.ts) — se a origem mudar as colunas, o script aborta em
++ *     vez de gravar índices desalinhados.
++ *   • Datas viram meia-noite UTC (mesma convenção dos demais imports).
++ *   • Números já vêm com ponto decimal (JSON) — NÃO aplicar parsing pt-BR.
++ *
++ * Uso:
++ *   npx tsx scripts/import-sismat-pmvg.ts --dry-run
++ *   npx tsx scripts/import-sismat-pmvg.ts --limit=100
++ *   npx tsx scripts/import-sismat-pmvg.ts --truncate --confirm
++ *   npx tsx scripts/import-sismat-pmvg.ts --file="/caminho/dashboard_sismat_pmvg.html"
++ *
++ * Fonte do arquivo: --file=... > env SISMAT_PMVG_HTML > ./dashboard_sismat_pmvg.html
++ */
++
++import * as fs from "fs";
++import * as path from "path";
++
++// ── Flags / config ──────────────────────────────────────────────────────────
++
++const arg = (name: string): string | undefined =>
++  process.argv.find((a) => a.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
++
++const DRY_RUN = process.argv.includes("--dry-run");
++const CONFIRM = process.argv.includes("--confirm");
++const TRUNCATE = process.argv.includes("--truncate");
++const LIMIT = parseInt(arg("limit") || "0", 10);
++const BATCH_SIZE = 500;
++
++const FILE_PATH =
++  arg("file") ||
++  process.env.SISMAT_PMVG_HTML ||
++  path.join(process.cwd(), "dashboard_sismat_pmvg.html");
++
++/**
++ * Ordem esperada das colunas de alíquota — DEVE ser idêntica a PMVG_COLS em
++ * lib/pmvg-metrics.ts (o array p[] gravado no banco é indexado por esta ordem).
++ * Duplicado aqui de propósito: o script roda via tsx sem os aliases "@/" e sem
++ * o client Prisma gerado no --dry-run; a validação abaixo garante o alinhamento.
++ */
++const EXPECTED_COLS = [
++  "PMVG 0%",
++  "PMVG 12%",
++  "PMVG 12% ALC",
++  "PMVG 17%",
++  "PMVG 17% ALC",
++  "PMVG 17,5%",
++  "PMVG 17,5% ALC",
++  "PMVG 18%",
++  "PMVG 18% ALC",
++  "PMVG 19%",
++  "PMVG 19% ALC",
++  "PMVG 19,5%",
++  "PMVG 19,5% ALC",
++  "PMVG 20%",
++  "PMVG 20% ALC",
++  "PMVG 20,5%",
++  "PMVG 20,5% ALC",
++  "PMVG 21%",
++  "PMVG 21% ALC",
++  "PMVG 22%",
++  "PMVG 22% ALC",
++  "PMVG 22,5%",
++  "PMVG 22,5% ALC",
++  "PMVG 23%",
++  "PMVG 23% ALC",
++  "PMVG Sem Impostos",
++];
++
++// ── Tipos da origem ──────────────────────────────────────────────────────────
++
++interface RegistroOrigem {
++  m: string; // material (SISMAT)
++  sm: string; // medicamento/princípio ativo (PMVG)
++  f: string; // fabricante
++  d: string; // data de entrega "YYYY-MM-DD"
++  q: number; // quantidade de unidades
++  vu: number; // valor unitário pago
++  vt: number; // valor total pago
++  sc: number; // score do match (0–100)
++  qp: number; // unidades por embalagem estimadas
++  qm: string; // método da qtd/emb.
++  pd: string | null; // competência do PMVG usada, ou null
++  ap: string | null; // apresentação do PMVG pareado
++  p: (number | null)[]; // preço de embalagem por alíquota (ordem de cols)
++}
++
++interface DadosOrigem {
++  cols: string[];
++  rows: RegistroOrigem[];
++  generated_at?: string;
++}
++
++interface LinhaBanco {
++  material: string;
++  subMaterial: string;
++  fabricante: string;
++  dtEntrega: Date;
++  quantidade: number;
++  valorUnitario: number;
++  valorTotal: number;
++  score: number;
++  qtdEmbalagem: number;
++  metodoQtd: string;
++  pmvgCompetencia: Date | null;
++  apresentacao: string | null;
++  pmvgPrecos: (number | null)[];
++}
++
++// ── Extração do JSON embutido no HTML ────────────────────────────────────────
++
++/**
++ * Localiza `const PAYLOAD = {...};` dentro do HTML e devolve o objeto parseado.
++ * Estratégia robusta a `};` dentro de strings: o fim do objeto é o ÚLTIMO `}`
++ * antes da próxima declaração (`const COLS`), e não a primeira ocorrência de
++ * `};` — assim nomes de materiais/apresentações com caracteres exóticos não
++ * quebram (mesma abordagem do import-comprasgov-precos.ts).
++ */
++function extrairPayloadDoHtml(html: string): DadosOrigem {
++  const marcador = "const PAYLOAD = ";
++  const inicio = html.indexOf(marcador);
++  if (inicio < 0) {
++    throw new Error("Não encontrei `const PAYLOAD = ` no HTML — o arquivo é o dashboard correto?");
++  }
++  const jsonInicio = inicio + marcador.length;
++
++  // A declaração seguinte no dashboard original é `const COLS = PAYLOAD.cols;`.
++  // Caso o marcador não exista (variação do arquivo), cai para o fim do <script>.
++  let limite = html.indexOf("const COLS", jsonInicio);
++  if (limite < 0) limite = html.indexOf("</script>", jsonInicio);
++  if (limite < 0) limite = html.length;
++
++  const fim = html.lastIndexOf("}", limite);
++  if (fim <= jsonInicio) {
++    throw new Error("Não consegui delimitar o objeto PAYLOAD dentro do HTML.");
++  }
++
++  return JSON.parse(html.slice(jsonInicio, fim + 1)) as DadosOrigem;
++}
++
++function lerDados(): DadosOrigem {
++  if (!fs.existsSync(FILE_PATH)) {
++    throw new Error(
++      `Arquivo não encontrado: ${FILE_PATH}\n` +
++        `   Informe com --file="/caminho/dashboard_sismat_pmvg.html" ou env SISMAT_PMVG_HTML.`
++    );
++  }
++  const conteudo = fs.readFileSync(FILE_PATH, "utf-8");
++  const dados = FILE_PATH.toLowerCase().endsWith(".json")
++    ? (JSON.parse(conteudo) as DadosOrigem)
++    : extrairPayloadDoHtml(conteudo);
++
++  if (!Array.isArray(dados.rows)) {
++    throw new Error("Estrutura inesperada: a propriedade `rows` não é um array.");
++  }
++  if (!Array.isArray(dados.cols)) {
++    throw new Error("Estrutura inesperada: a propriedade `cols` não é um array.");
++  }
++  validarCols(dados.cols);
++  return dados;
++}
++
++/** Aborta se as colunas de alíquota não baterem (ordem E valores) com o app. */
++function validarCols(cols: string[]) {
++  const iguais =
++    cols.length === EXPECTED_COLS.length && cols.every((c, i) => c === EXPECTED_COLS[i]);
++  if (!iguais) {
++    throw new Error(
++      "As colunas de alíquota do PAYLOAD não batem com PMVG_COLS (lib/pmvg-metrics.ts).\n" +
++        `   Esperado (${EXPECTED_COLS.length}): ${EXPECTED_COLS.join(" | ")}\n` +
++        `   Recebido (${cols.length}): ${cols.join(" | ")}\n` +
++        "   Atualize PMVG_COLS e EXPECTED_COLS em conjunto antes de importar."
++    );
++  }
++}
++
++// ── Mapeamento origem → banco ────────────────────────────────────────────────
++
++function sanitizeStr(value: unknown): string | null {
++  if (value === null || value === undefined) return null;
++  const s = String(value).replace(/\u200b/g, "").trim();
++  return s || null;
++}
++
++/** Data "YYYY-MM-DD" → meia-noite UTC (mesma convenção dos demais imports). */
++function parseDataUTC(d: string): Date | null {
++  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d).trim());
++  if (!m) return null;
++  const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
++  return isNaN(dt.getTime()) ? null : dt;
++}
++
++function paraLinha(r: RegistroOrigem): LinhaBanco | null {
++  const material = sanitizeStr(r.m);
++  const subMaterial = sanitizeStr(r.sm);
++  const fabricante = sanitizeStr(r.f);
++  const metodoQtd = sanitizeStr(r.qm);
++  const dtEntrega = r.d ? parseDataUTC(r.d) : null;
++  const pmvgCompetencia = r.pd ? parseDataUTC(r.pd) : null;
++
++  if (
++    !material ||
++    !subMaterial ||
++    !fabricante ||
++    !metodoQtd ||
++    !dtEntrega ||
++    typeof r.vu !== "number" ||
++    isNaN(r.vu) ||
++    typeof r.sc !== "number" ||
++    isNaN(r.sc)
++  ) {
++    return null; // linha incompleta — descartada (contabilizada no resumo)
++  }
++
++  // p[] normalizado para o comprimento das colunas: números finitos ou null.
++  const pmvgPrecos: (number | null)[] = EXPECTED_COLS.map((_, i) => {
++    const v = Array.isArray(r.p) ? r.p[i] : null;
++    return typeof v === "number" && isFinite(v) ? v : null;
++  });
++
++  return {
++    material,
++    subMaterial,
++    fabricante,
++    dtEntrega,
++    quantidade: typeof r.q === "number" && !isNaN(r.q) ? r.q : 0,
++    valorUnitario: r.vu,
++    valorTotal: typeof r.vt === "number" && !isNaN(r.vt) ? r.vt : 0,
++    score: r.sc,
++    qtdEmbalagem: typeof r.qp === "number" && !isNaN(r.qp) && r.qp > 0 ? r.qp : 1,
++    metodoQtd,
++    pmvgCompetencia,
++    apresentacao: sanitizeStr(r.ap),
++    pmvgPrecos,
++  };
++}
++
++// ── Resumo (dry-run e pré-importação) ────────────────────────────────────────
++
++function resumo(linhas: LinhaBanco[], descartadas: number) {
++  const materiais = new Set(linhas.map((l) => l.material));
++  const fabricantes = new Set(linhas.map((l) => l.fabricante));
++  const comPmvg = linhas.filter((l) => l.pmvgPrecos.some((v) => v !== null)).length;
++  const datas = linhas.map((l) => l.dtEntrega.getTime());
++  const fmt = (t: number) => new Date(t).toISOString().slice(0, 10);
++
++  console.log("\n📊 Resumo dos dados extraídos:");
++  console.log(`   Registros válidos:      ${linhas.length.toLocaleString("pt-BR")}`);
++  console.log(`   Linhas descartadas:     ${descartadas.toLocaleString("pt-BR")}`);
++  console.log(`   Materiais distintos:    ${materiais.size.toLocaleString("pt-BR")}`);
++  console.log(`   Fabricantes distintos:  ${fabricantes.size.toLocaleString("pt-BR")}`);
++  console.log(
++    `   Com PMVG na entrega:    ${comPmvg.toLocaleString("pt-BR")} (${linhas.length ? ((100 * comPmvg) / linhas.length).toFixed(1) : "0.0"}%)`
++  );
++  if (datas.length) {
++    console.log(`   Período de entregas:    ${fmt(Math.min(...datas))} → ${fmt(Math.max(...datas))}`);
++  }
++}
++
++// ── Main ─────────────────────────────────────────────────────────────────────
++
++async function main() {
++  console.log(`📁 Lendo: ${FILE_PATH}`);
++  const dados = lerDados();
++  console.log(`   Colunas de alíquota OK (${dados.cols.length}) — ordem validada contra PMVG_COLS.`);
++
++  let registros = dados.rows;
++  if (LIMIT > 0) registros = registros.slice(0, LIMIT);
++
++  const linhas: LinhaBanco[] = [];
++  let descartadas = 0;
++  for (const r of registros) {
++    const linha = paraLinha(r);
++    if (linha) linhas.push(linha);
++    else descartadas++;
++  }
++
++  resumo(linhas, descartadas);
++
++  if (DRY_RUN) {
++    console.log("\n✅ DRY_RUN concluído — nenhum dado gravado.");
++    return;
++  }
++
++  if (!LIMIT && !CONFIRM) {
++    console.log(
++      "\n⛔ Importação completa requer --confirm (ou use --limit=N para testar).\n" +
++        "   Ex.: npx tsx scripts/import-sismat-pmvg.ts --truncate --confirm"
++    );
++    return;
++  }
++
++  const { PrismaClient } = await import("@prisma/client");
++  const db = new PrismaClient({ log: ["error"] });
++
++  try {
++    if (TRUNCATE) {
++      console.log("\n🧹 Limpando tabela sismat.SismatPmvg...");
++      const del = await db.sismatPmvg.deleteMany({});
++      console.log(`   ${del.count} registro(s) removido(s).`);
++    }
++
++    console.log(`\n💾 Inserindo ${linhas.length} registro(s) em lotes de ${BATCH_SIZE}...`);
++    let inseridos = 0;
++    for (let i = 0; i < linhas.length; i += BATCH_SIZE) {
++      const lote = linhas.slice(i, i + BATCH_SIZE);
++      const res = await db.sismatPmvg.createMany({ data: lote });
++      inseridos += res.count;
++      process.stdout.write(`\r   ${inseridos}/${linhas.length}`);
++    }
++    console.log(`\n✅ Importação concluída: ${inseridos} registro(s).`);
++    console.log("   Reexecuções: use --truncate para substituir a base (id é autoincremento).");
++  } catch (err) {
++    console.error("\n❌ Erro na importação:", err);
++    process.exitCode = 1;
++  } finally {
++    await db.$disconnect();
++  }
++}
++
++main().catch((e) => {
++  console.error(e);
++  process.exit(1);
++});

@@ -8,6 +8,7 @@ import {
   type SismatDimensao,
   type SismatPeriodo,
 } from "@/lib/sismat-metrics";
+import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(request: NextRequest) {
@@ -29,11 +30,9 @@ export async function GET(request: NextRequest) {
       ? (perRaw as SismatPeriodo)
       : "monthly";
 
-    const data = await getSismatMetrics(dimension, period);
+    const subMaterial = sp.get("subMaterial") ?? undefined;
 
-    return NextResponse.json(data, {
-      headers: { "Cache-Control": "public, max-age=3600" }, // 1h: base de referência muda pouco
-    });
+    return jsonComVersao(request, ["sismatEntrada"], () => getSismatMetrics(dimension, period, subMaterial));
   } catch (error) {
     console.error("[sismat/metrics] Erro:", error);
     const message = error instanceof Error ? error.message : "Erro ao obter métricas SISMAT";

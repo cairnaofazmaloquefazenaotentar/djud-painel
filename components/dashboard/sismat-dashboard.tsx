@@ -2,13 +2,15 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { useSismatMetrics } from "@/hooks/useSismatMetrics";
+import { useSismatSubMaterials } from "@/hooks/useSismatSubMaterials";
 import type { SismatDimensao, SismatPeriodo } from "@/lib/sismat-metrics";
 import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolution-chart";
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
 import { fmtBRL, colorAt, SISMAT_ENTRADA_COLOR, SISMAT_SAIDA_COLOR } from "./charts/sismat-format";
 import { MetricCard } from "./metric-card";
-import { SismatSaidasView } from "./sismat-saidas-view";
+import { SismatSaidasPuraView } from "./sismat-saidas-pura-view";
 import { SismatEstoqueView } from "./sismat-estoque-view";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,10 +33,10 @@ import {
 // ── Constantes de UI (client-safe: não importa valores da lib server) ─────────
 
 const DIMENSOES: { value: SismatDimensao; label: string; icon: ReactNode }[] = [
+  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
   { value: "fornecedor", label: "Fornecedor", icon: <Building2 className="h-3.5 w-3.5" /> },
   { value: "fabricante", label: "Fabricante", icon: <Factory className="h-3.5 w-3.5" /> },
   { value: "distribuidor", label: "Distribuidor", icon: <Truck className="h-3.5 w-3.5" /> },
-  { value: "material", label: "Material", icon: <Pill className="h-3.5 w-3.5" /> },
 ];
 const DIM_LABEL: Record<SismatDimensao, string> = {
   fornecedor: "Fornecedor",
@@ -80,31 +82,52 @@ function Panel({
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-function SismatEntradasView() {
-  const [dimension, setDimension] = useState<SismatDimensao>("fornecedor");
+export function SismatEntradasView() {
+  const [dimension, setDimension] = useState<SismatDimensao>("material");
   const [period, setPeriod] = useState<SismatPeriodo>("monthly");
   const [topN, setTopN] = useState(8);
   const [entity, setEntity] = useState("");
+  const [subMaterial, setSubMaterial] = useState("");
   const [year, setYear] = useState("");
   const [sortField, setSortField] = useState<"name" | "valor">("valor");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
-  const { data, isLoading, error } = useSismatMetrics(dimension, period);
+  const { data: subMaterials } = useSismatSubMaterials(
+    "entradas",
+    dimension === "material" ? entity : ""
+  );
+  const subMaterialOptions = (subMaterials ?? []).map((m) => ({ value: m }));
+
+  // Base: sempre sem filtro de sub-material (para entityOptions e linha de comparação)
+  const { data: baseData, isLoading, error } = useSismatMetrics(dimension, period);
+  // Filtrado: só difere do base quando um sub-material está selecionado
+  const { data: subData } = useSismatMetrics(dimension, period, subMaterial || undefined);
+  const data = subMaterial && subData ? subData : baseData;
 
   const view = useMemo(() => {
     if (!data) return null;
     const { series, totalsByPeriod, years, grandTotal, hasData } = data;
 
+    // baseData é idêntico a data quando não há subMaterial; difere quando há filtro
+    const baseSeries = baseData?.series ?? series;
+
     const yearOf = (p: string) => Number(period === "monthly" ? p.slice(0, 4) : p);
     const fy = year ? Number(year) : null;
+    const sortPeriods = (arr: string[]) =>
+      arr.sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
 
-    // Períodos ordenados (mensal = lexicográfico = cronológico; anual = numérico)
-    const periods = totalsByPeriod
-      .map((t) => t.period)
-      .sort((a, b) => (period === "monthly" ? a.localeCompare(b) : Number(a) - Number(b)));
+    // Períodos da série atual (usado em KPIs e como fallback)
+    const periods = sortPeriods(totalsByPeriod.map((t) => t.period));
     const totalByPeriod: Record<string, number> = {};
     totalsByPeriod.forEach((t) => (totalByPeriod[t.period] = t.valor));
 
+    // Períodos para o gráfico de evolução: sempre da base, para não perder meses
+    // onde o sub-material teve zero (mas o material pai tinha atividade)
+    const evoPeriods = sortPeriods(
+      (baseData?.totalsByPeriod ?? totalsByPeriod).map((t) => t.period)
+    );
+
+    // Agrega da série atual (filtrada por subMaterial quando aplicável)
     const aggregateByEntity = (filterYear: number | null) => {
       const m = new Map<string, number>();
       for (const s of series) {
@@ -114,13 +137,14 @@ function SismatEntradasView() {
       return m;
     };
 
-    // Sem filtro de ano → opções de entidade e seleção do Top N (gráfico de evolução)
-    const totalsAll = aggregateByEntity(null);
+    // Opções de entidade e Top N sempre da série base (sem filtro de sub-material)
+    const totalsAll = new Map<string, number>();
+    for (const s of baseSeries) totalsAll.set(s.key, (totalsAll.get(s.key) ?? 0) + s.valor);
     const entityOptions = Array.from(totalsAll.entries())
       .sort((a, b) => b[1] - a[1])
       .map(([k]) => ({ value: k }));
 
-    // Com filtro de ano → KPIs, ranking e pizza
+    // KPIs, ranking e pizza da série atual (filtrada)
     const totalsFiltered = aggregateByEntity(fy);
     const rankingSorted = Array.from(totalsFiltered.entries())
       .sort((a, b) => b[1] - a[1])
@@ -137,22 +161,43 @@ function SismatEntradasView() {
     const pieData: SismatPieDatum[] = top10.map((r) => ({ name: r.name, valor: r.valor }));
     if (outrosSum > 0) pieData.push({ name: "Outros", valor: outrosSum, isOutros: true });
 
-    // Evolução: entidade selecionada OU Top N (sem filtro de ano — plota todos os períodos)
+    // Entidades a mostrar no gráfico de evolução (da base para Top N correto)
     const entitiesToShow = entity
       ? [entity]
       : Array.from(totalsAll.entries())
           .sort((a, b) => b[1] - a[1])
           .slice(0, topN)
           .map(([k]) => k);
+
+    // byEntity: usa a série atual (filtrada por subMaterial quando selecionado)
     const byEntity: Record<string, Record<string, number>> = {};
     entitiesToShow.forEach((e) => (byEntity[e] = {}));
     for (const s of series) {
       if (byEntity[s.key]) byEntity[s.key][s.period] = (byEntity[s.key][s.period] ?? 0) + s.valor;
     }
-    const evoData = periods.map((p) => {
+
+    // Linha de comparação (tracejada): total do material pai quando subMaterial selecionado,
+    // ou total geral de todas as aquisições caso contrário.
+    const evoTotalByPeriod: Record<string, number> = {};
+    if (subMaterial && entity && baseData) {
+      // Total do materialNome selecionado (princípio ativo), sem filtro de sub-material
+      for (const s of baseData.series) {
+        if (s.key === entity)
+          evoTotalByPeriod[s.period] = (evoTotalByPeriod[s.period] ?? 0) + s.valor;
+      }
+    } else {
+      // Total geral de todas as aquisições
+      (baseData?.totalsByPeriod ?? totalsByPeriod).forEach(
+        (t) => (evoTotalByPeriod[t.period] = t.valor)
+      );
+    }
+
+    const evoTotalLabel = subMaterial && entity ? `Total ${entity}` : "Total geral";
+
+    const evoData = evoPeriods.map((p) => {
       const row: Record<string, string | number> = { period: p };
-      entitiesToShow.forEach((e) => (row[e] = byEntity[e][p] ?? 0));
-      row[SISMAT_TOTAL_KEY] = totalByPeriod[p] ?? 0;
+      entitiesToShow.forEach((e) => (row[e] = byEntity[e]?.[p] ?? 0));
+      row[SISMAT_TOTAL_KEY] = evoTotalByPeriod[p] ?? 0;
       return row;
     });
 
@@ -171,6 +216,7 @@ function SismatEntradasView() {
       years,
       periods,
       evoData,
+      evoTotalLabel,
       entitiesToShow,
       entityOptions,
       tableRows,
@@ -181,7 +227,7 @@ function SismatEntradasView() {
       periodLabel,
       maiorItem: rankingSorted[0]?.name ?? "—",
     };
-  }, [data, period, topN, entity, year]);
+  }, [data, baseData, period, topN, entity, subMaterial, year]);
 
   const dimLabel = DIM_LABEL[dimension];
 
@@ -254,7 +300,8 @@ function SismatEntradasView() {
                 variant={dimension === d.value ? "default" : "outline"}
                 onClick={() => {
                   setDimension(d.value);
-                  setEntity(""); // limpa entidade ao trocar de dimensão
+                  setEntity("");
+                  setSubMaterial("");
                 }}
               >
                 {d.icon}
@@ -303,7 +350,7 @@ function SismatEntradasView() {
           <span className="text-xs text-muted-foreground">{dimLabel} específico</span>
           <Combobox
             value={entity}
-            onChange={setEntity}
+            onChange={(v) => { setEntity(v); setSubMaterial(""); }}
             options={view.entityOptions}
             placeholder="(Top N automático)"
             searchPlaceholder={`Buscar ${dimLabel.toLowerCase()}...`}
@@ -312,6 +359,23 @@ function SismatEntradasView() {
             className="w-60"
           />
         </div>
+
+        {/* Sub-material (só aparece quando dimensão = material e entity selecionado) */}
+        {dimension === "material" && entity && subMaterialOptions.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Especificação do material</span>
+            <Combobox
+              value={subMaterial}
+              onChange={setSubMaterial}
+              options={subMaterialOptions}
+              placeholder="(Todos)"
+              searchPlaceholder="Buscar especificação..."
+              allLabel="(Todos)"
+              emptyText="Nenhuma especificação encontrada."
+              className="w-72"
+            />
+          </div>
+        )}
 
         {/* Ano */}
         <div className="flex flex-col gap-1.5">
@@ -350,20 +414,23 @@ function SismatEntradasView() {
         icon={<TrendingUp className="h-4 w-4" />}
         title={`Evolução ${period === "monthly" ? "mensal" : "anual"} dos gastos por ${dimLabel.toLowerCase()}`}
         subtitle={
-          entity
-            ? `Série de "${entity}" vs. total geral (linha tracejada)`
-            : `Top ${topN} ${dimLabel.toLowerCase()}s por valor + total geral (linha tracejada)`
+          subMaterial
+            ? `"${subMaterial}" vs. total de ${entity} (linha tracejada)`
+            : entity
+              ? `Série de "${entity}" vs. total geral (linha tracejada)`
+              : `Top ${topN} ${dimLabel.toLowerCase()}s por valor + total geral (linha tracejada)`
         }
       >
         <SismatEvolutionChart
           data={view.evoData}
           entities={view.entitiesToShow}
           periodType={period}
+          totalLabel={view.evoTotalLabel}
         />
       </Panel>
 
       {/* ── Ranking + Pizza ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[65%_1fr]">
         <Panel
           icon={<Coins className="h-4 w-4" />}
           title={`Ranking por ${dimLabel.toLowerCase()}`}
@@ -430,106 +497,44 @@ function SismatEntradasView() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Wrapper do SISMAT: os checkboxes [Entradas] [Saídas] controlam quais seções
-// aparecem (cada base tem seu conjunto próprio de gráficos). Os gráficos
-// COMPARATIVOS entre as duas bases (fluxo E×S, saldo derivado acumulado e
-// saldo por material) ficam SEMPRE ao final da página, independentemente da
-// seleção — são o cruzamento inspirado no Relatório de Logística da CGLJUD.
+// Wrapper do SISMAT: 4 sub-abas navegáveis
+//   Entradas        → aquisições recebidas (SISMAT Entradas)
+//   Saídas          → entregas realizadas — KPIs e Top 20 medicamentos
+//   Saídas × Redmine→ cruzamento com Redmine por nº SEI (CRM, OAB, filtros)
+//   Entradas × Saídas → comparativo fluxo + saldo derivado acumulado
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SectionHeader({
-  icon,
-  title,
-  subtitle,
-}: {
-  icon: ReactNode;
-  title: string;
-  subtitle: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 pt-2">
-      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-        {icon}
-      </span>
-      <div>
-        <h2 className="text-lg font-semibold leading-tight">{title}</h2>
-        <p className="text-xs text-muted-foreground">{subtitle}</p>
-      </div>
-    </div>
-  );
-}
-
 export function SismatDashboard() {
-  const [showEntradas, setShowEntradas] = useState(true);
-  const [showSaidas, setShowSaidas] = useState(true);
-
   return (
-    <div className="space-y-6">
-      {/* ── Seleção de bases ─────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 bg-card border border-border rounded-xl p-4 shadow-sm">
-        <span className="text-xs text-muted-foreground">Bases exibidas</span>
-        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showEntradas}
-            onChange={(e) => setShowEntradas(e.target.checked)}
-            className="h-4 w-4 accent-primary cursor-pointer"
-          />
-          <ArrowDownToLine className="h-4 w-4" style={{ color: SISMAT_ENTRADA_COLOR }} />
+    <Tabs defaultValue="entradas" className="space-y-6">
+      <TabsList className="flex-wrap h-auto gap-1">
+        <TabsTrigger value="entradas" className="gap-1.5">
+          <ArrowDownToLine className="h-3.5 w-3.5" style={{ color: SISMAT_ENTRADA_COLOR }} />
           Entradas
-        </label>
-        <label className="flex items-center gap-2 text-sm font-medium cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showSaidas}
-            onChange={(e) => setShowSaidas(e.target.checked)}
-            className="h-4 w-4 accent-primary cursor-pointer"
-          />
-          <ArrowUpFromLine className="h-4 w-4" style={{ color: SISMAT_SAIDA_COLOR }} />
+        </TabsTrigger>
+        <TabsTrigger value="saidas" className="gap-1.5">
+          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
           Saídas
-        </label>
-      </div>
+        </TabsTrigger>
 
-      {!showEntradas && !showSaidas && (
-        <p className="text-sm text-muted-foreground px-1">
-          Nenhuma base selecionada — marque Entradas e/ou Saídas acima. O comparativo entre as duas
-          permanece disponível abaixo.
-        </p>
-      )}
+        <TabsTrigger value="entradas-saidas" className="gap-1.5">
+          <ArrowLeftRight className="h-3.5 w-3.5" />
+          Entradas × Saídas
+        </TabsTrigger>
+      </TabsList>
 
-      {/* ── Seção Entradas ───────────────────────────────────────────────── */}
-      {showEntradas && (
-        <section className="space-y-4">
-          <SectionHeader
-            icon={<ArrowDownToLine className="h-4 w-4" />}
-            title="Entradas"
-            subtitle="Aquisições de material recebidas (SISMAT)"
-          />
-          <SismatEntradasView />
-        </section>
-      )}
+      <TabsContent value="entradas">
+        <SismatEntradasView />
+      </TabsContent>
 
-      {/* ── Seção Saídas ─────────────────────────────────────────────────── */}
-      {showSaidas && (
-        <section className="space-y-4">
-          <SectionHeader
-            icon={<ArrowUpFromLine className="h-4 w-4" />}
-            title="Saídas"
-            subtitle="Entregas/baixas de material aos destinatários (SISMAT)"
-          />
-          <SismatSaidasView />
-        </section>
-      )}
+      <TabsContent value="saidas">
+        <SismatSaidasPuraView />
+      </TabsContent>
 
-      {/* ── Comparativo E×S — sempre ao final da página ──────────────────── */}
-      <section className="space-y-4">
-        <SectionHeader
-          icon={<ArrowLeftRight className="h-4 w-4" />}
-          title="Entradas × Saídas"
-          subtitle="Comparativo entre as duas bases: fluxo por período, saldo derivado acumulado e saldo por material"
-        />
+
+      <TabsContent value="entradas-saidas">
         <SismatEstoqueView />
-      </section>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
