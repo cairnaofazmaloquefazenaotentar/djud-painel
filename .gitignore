@@ -46,3 +46,7 @@ next-env.d.ts
 
 *.xlsx
 *.csv
+
+# backups de importacao (CSV dump antes do replace)
+/backups
+__pycache__/

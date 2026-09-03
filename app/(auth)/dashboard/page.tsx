@@ -354,7 +354,7 @@ export default function DashboardPage() {
                   data={metrics.valorTribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.valor }))}
                   format={fmtBRLCompacto}
                   unidade="R$"
-                  emptyLabel="As demandas com valor (Cumprimento de Ordem Judicial) ainda não têm o Tribunal (TRF) preenchido na base. Assim que esse campo for populado na exportação do Redmine, a decomposição por tribunal aparece aqui."
+                  emptyLabel="Nenhuma demanda com valor e tribunal identificado nos filtros selecionados."
                 />
               </Section>
             </TabsContent>

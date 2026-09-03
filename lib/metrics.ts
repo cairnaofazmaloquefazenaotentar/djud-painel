@@ -24,9 +24,10 @@ export interface MetricsData {
   tribunalTimeline: Array<{ mes: Date; trf: number | null; count: number }>;
 
   // ── Séries de valores em R$ — itens 2 e 3.1 ──────────────────────────────────
-  // Observação: valorEstimado só existe em demandas de Cumprimento de Ordem Judicial,
-  // e essas linhas não têm trfRegiao preenchido — por isso valorTribunalTimeline
-  // ficará vazio até que o tribunal seja preenchido nessas demandas na base.
+  // Observação: valorEstimado só existe em demandas de Cumprimento de Ordem Judicial.
+  // O Redmine não preenche "TRF Região" nessas linhas, então a importação deriva o
+  // tribunal do número CNJ do processo (scripts/import_redmine_base.py). Cobre 99,2%
+  // delas; o resto não tem número de processo ou não é da Justiça Federal.
   valorTimeline: Array<{ mes: Date; valor: number }>;
   valorTribunalTimeline: Array<{ mes: Date; trf: number | null; valor: number }>;
   topMedicamentosValor: Array<{ medicamento: string | null; valor: number }>;
