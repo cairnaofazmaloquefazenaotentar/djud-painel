@@ -398,7 +398,7 @@ export default function DashboardPage() {
                           data={metrics.valorTribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.valor }))}
                           format={fmtBRLCompacto}
                           unidade="R$"
-                          emptyLabel="As demandas com valor ainda não têm o Tribunal (TRF) preenchido na base."
+                          emptyLabel="Nenhuma demanda com valor e tribunal identificado nos filtros selecionados."
                         />
                       </Section>
                       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
