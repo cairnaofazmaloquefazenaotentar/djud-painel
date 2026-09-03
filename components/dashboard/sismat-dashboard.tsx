@@ -8,7 +8,6 @@ import { SismatEvolutionChart, SISMAT_TOTAL_KEY } from "./charts/sismat-evolutio
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
 import { fmtBRL, colorAt, SISMAT_ENTRADA_COLOR, SISMAT_SAIDA_COLOR } from "./charts/sismat-format";
 import { MetricCard } from "./metric-card";
-import { SismatSaidasView } from "./sismat-saidas-view";
 import { SismatSaidasPuraView } from "./sismat-saidas-pura-view";
 import { SismatEstoqueView } from "./sismat-estoque-view";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -83,7 +82,7 @@ function Panel({
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-function SismatEntradasView() {
+export function SismatEntradasView() {
   const [dimension, setDimension] = useState<SismatDimensao>("material");
   const [period, setPeriod] = useState<SismatPeriodo>("monthly");
   const [topN, setTopN] = useState(8);
@@ -517,10 +516,7 @@ export function SismatDashboard() {
           <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
           Saídas
         </TabsTrigger>
-        <TabsTrigger value="saidas-redmine" className="gap-1.5">
-          <ArrowUpFromLine className="h-3.5 w-3.5" style={{ color: SISMAT_SAIDA_COLOR }} />
-          Saídas × Redmine
-        </TabsTrigger>
+
         <TabsTrigger value="entradas-saidas" className="gap-1.5">
           <ArrowLeftRight className="h-3.5 w-3.5" />
           Entradas × Saídas
@@ -535,9 +531,6 @@ export function SismatDashboard() {
         <SismatSaidasPuraView />
       </TabsContent>
 
-      <TabsContent value="saidas-redmine">
-        <SismatSaidasView />
-      </TabsContent>
 
       <TabsContent value="entradas-saidas">
         <SismatEstoqueView />

@@ -17,7 +17,10 @@ import { TribunalTimelineChart } from "@/components/dashboard/charts/tribunal-ti
 import { ValorTimelineChart, fmtBRLCompacto } from "@/components/dashboard/charts/valor-timeline-chart";
 import { TopMedicamentosValorChart } from "@/components/dashboard/charts/top-medicamentos-valor-chart";
 import { FornecedorChart } from "@/components/dashboard/charts/fornecedor-chart";
-import { SismatDashboard } from "@/components/dashboard/sismat-dashboard";
+import { SismatEntradasView } from "@/components/dashboard/sismat-dashboard";
+import { SismatSaidasPuraView } from "@/components/dashboard/sismat-saidas-pura-view";
+import { SismatEstoqueView } from "@/components/dashboard/sismat-estoque-view";
+import { SismatSaidasView } from "@/components/dashboard/sismat-saidas-view";
 import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
 import { useMetrics } from "@/hooks/useMetrics";
 import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
@@ -27,7 +30,6 @@ import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity,
   AlertTriangle,
@@ -39,30 +41,25 @@ import {
   Scale,
   MapPin,
   BarChart2,
-  ShieldAlert,
+  ListChecks,
   Coins,
   Landmark,
   Building2,
-  Database,
   Users,
+  PieChart,
+  Hash,
+  ArrowUpDown,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  ArrowLeftRight,
 } from "lucide-react";
 
-const selectCn =
-  "h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
-
-// ─── Seção com título padronizado ───────────────────────────────────────────
+// ─── Seção com título padronizado ────────────────────────────────────────────
 function Section({
-  icon,
-  title,
-  subtitle,
-  children,
-  full,
+  icon, title, subtitle, children, full,
 }: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  full?: boolean;
+  icon: React.ReactNode; title: string; subtitle?: string;
+  children: React.ReactNode; full?: boolean;
 }) {
   return (
     <div className={`rounded-lg border border-border bg-card p-6 ${full ? "col-span-full" : ""}`}>
@@ -78,7 +75,7 @@ function Section({
   );
 }
 
-// ─── Indicador de risco (barra colorida) ────────────────────────────────────
+// ─── Indicador de risco ───────────────────────────────────────────────────────
 function RiskBadge({ value, max, label, color }: { value: number; max: number; label: string; color: string }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
@@ -94,32 +91,82 @@ function RiskBadge({ value, max, label, color }: { value: number; max: number; l
   );
 }
 
-// ─── Componente principal ────────────────────────────────────────────────────
+// ─── Tipos de abas ────────────────────────────────────────────────────────────
+const TENDENCIAS_TABS = [
+  { value: "demandas",        label: "Demandas",          icon: <Hash className="h-3.5 w-3.5" /> },
+  { value: "valores",         label: "Valores",           icon: <Coins className="h-3.5 w-3.5" /> },
+  { value: "autores",         label: "Autores",           icon: <Users className="h-3.5 w-3.5" /> },
+  { value: "entradas",        label: "Entradas",          icon: <ArrowDownToLine className="h-3.5 w-3.5" /> },
+  { value: "saidas",          label: "Saídas",            icon: <ArrowUpFromLine className="h-3.5 w-3.5" /> },
+  { value: "entradas-saidas", label: "Estoque", icon: <ArrowLeftRight className="h-3.5 w-3.5" /> },
+] as const;
+
+const INDICADORES_TABS = [
+  { value: "principios-ativos",  label: "Princípios Ativos",     icon: <Pill className="h-3.5 w-3.5" /> },
+  { value: "indicadores-saidas", label: "Indicadores de Saídas", icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
+] as const;
+
+const INTERNOS_TABS = [
+  { value: "servidores", label: "Servidores", icon: <BarChart2 className="h-3.5 w-3.5" /> },
+  { value: "tramitacao", label: "Tramitação", icon: <ListChecks className="h-3.5 w-3.5" /> },
+] as const;
+
+type TendenciasTab  = (typeof TENDENCIAS_TABS)[number]["value"];
+type IndicadoresTab = (typeof INDICADORES_TABS)[number]["value"];
+type InternosTab    = (typeof INTERNOS_TABS)[number]["value"];
+type AnyTab         = TendenciasTab | IndicadoresTab | InternosTab;
+
+const TENDENCIAS_VALUES  = TENDENCIAS_TABS.map((t) => t.value)  as readonly string[];
+const INDICADORES_VALUES = INDICADORES_TABS.map((t) => t.value) as readonly string[];
+
+// Abas que usam dados do Redmine (precisam dos filtros e métricas)
+const NEEDS_REDMINE = ["demandas", "valores", "autores", "principios-ativos", "servidores", "tramitacao"] as const;
+function needsRedmine(v: AnyTab): boolean { return (NEEDS_REDMINE as readonly string[]).includes(v); }
+
+function group(v: AnyTab): "tendencias" | "indicadores" | "internos" {
+  if (TENDENCIAS_VALUES.includes(v))  return "tendencias";
+  if (INDICADORES_VALUES.includes(v)) return "indicadores";
+  return "internos";
+}
+
+// ─── Botão de sub-aba ─────────────────────────────────────────────────────────
+function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors whitespace-nowrap ${
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterPrioridade, setFilterPrioridade] = useState("");
-  // Filtro por princípio ativo: seleção direta de um item da lista (sem busca por texto livre)
+  // Uma única aba ativa cobre todas as seções
+  const [activeTab, setActiveTab] = useState<AnyTab>("demandas");
+
+  const activeGroup = group(activeTab);
+
+  const [startDate,            setStartDate]            = useState("");
+  const [endDate,              setEndDate]              = useState("");
+  const [filterStatus,         setFilterStatus]         = useState("");
+  const [filterPrioridade,     setFilterPrioridade]     = useState("");
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
-  // Fonte de dados ativa: base do Redmine (processo/jurídico) ou do SISMAT (compras/estoque)
-  const [source, setSource] = useState<"redmine" | "sismat">("redmine");
-
-  // Lista de princípios ativos disponíveis (limpa, ordenada por frequência) para o combobox
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
-  const principioOptions = (principios ?? []).map((p) => ({
-    value: p.value,
-    count: p.count,
-  }));
-
+  const principioOptions = (principios ?? []).map((p) => ({ value: p.value, count: p.count }));
   const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo);
 
   const metricsFilters = {
-    startDate:   startDate   ? new Date(startDate)   : undefined,
-    endDate:     endDate     ? new Date(endDate)      : undefined,
-    status:      filterStatus     || undefined,
-    prioridade:  filterPrioridade || undefined,
+    startDate:      startDate      ? new Date(startDate)  : undefined,
+    endDate:        endDate        ? new Date(endDate)     : undefined,
+    status:         filterStatus      || undefined,
+    prioridade:     filterPrioridade  || undefined,
     principioAtivo: filterPrincipioAtivo || undefined,
   };
 
@@ -130,451 +177,347 @@ export default function DashboardPage() {
   });
 
   const handleReset = () => {
-    setStartDate("");
-    setEndDate("");
-    setFilterStatus("");
-    setFilterPrioridade("");
-    setFilterPrincipioAtivo("");
+    setStartDate(""); setEndDate(""); setFilterStatus("");
+    setFilterPrioridade(""); setFilterPrincipioAtivo("");
   };
 
-  if (error && source === "redmine") {
-    return (
-      <div className="space-y-8">
-        <PageHeader
-          title="Painel de Inteligência DJUD"
-          description="Dimensionamento, tendência e gestão de riscos das demandas judiciais de medicamentos"
-        />
-        <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-3">
-          <div className="flex items-center gap-2 text-destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <span className="font-medium text-sm">Erro ao carregar métricas</span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="text-xs text-primary underline"
-          >
-            Recarregar página
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
         title="Painel de Inteligência DJUD"
         description="Dimensionamento, tendência e gestão de riscos das demandas judiciais de medicamentos — Ministério da Saúde"
       />
 
-      {/* ── Fonte de dados: alterna entre a base do Redmine e a do SISMAT ────── */}
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground mr-1">Fonte de dados:</span>
-        <div className="inline-flex rounded-lg border border-border bg-card p-1">
+      {/* ── Navegação: 3 grupos sempre visíveis ───────────────────────────── */}
+      <div className="rounded-lg border border-border bg-card p-1.5 flex flex-col gap-1">
+
+        {/* Grupo 1: Tendências */}
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={() => setSource("redmine")}
-            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-              source === "redmine"
-                ? "bg-primary text-primary-foreground"
+            onClick={() => setActiveTab("demandas")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors mr-0.5 ${
+              activeGroup === "tendencias"
+                ? "text-primary"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <Scale className="h-3.5 w-3.5" />
-            Redmine
+            <TrendingUp className="h-3.5 w-3.5" />
+            Tendências
           </button>
+          <div className="w-px h-5 bg-border mx-1 shrink-0" />
+          {TENDENCIAS_TABS.map((tab) => (
+            <TabBtn key={tab.value} active={activeTab === tab.value} onClick={() => setActiveTab(tab.value)}>
+              {tab.icon}
+              {tab.label}
+            </TabBtn>
+          ))}
+        </div>
+
+        {/* Separador horizontal */}
+        <div className="h-px bg-border" />
+
+        {/* Grupo 2: Indicadores */}
+        <div className="flex items-center gap-0.5">
           <button
-            onClick={() => setSource("sismat")}
-            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-              source === "sismat"
-                ? "bg-primary text-primary-foreground"
+            onClick={() => setActiveTab("principios-ativos")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors mr-0.5 ${
+              activeGroup === "indicadores"
+                ? "text-primary"
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            <Database className="h-3.5 w-3.5" />
-            SISMAT
+            <PieChart className="h-3.5 w-3.5" />
+            Indicadores
           </button>
+          <div className="w-px h-5 bg-border mx-1 shrink-0" />
+          {INDICADORES_TABS.map((tab) => (
+            <TabBtn key={tab.value} active={activeTab === tab.value} onClick={() => setActiveTab(tab.value)}>
+              {tab.icon}
+              {tab.label}
+            </TabBtn>
+          ))}
+        </div>
+
+        {/* Separador horizontal */}
+        <div className="h-px bg-border" />
+
+        {/* Grupo 3: Internos */}
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={() => setActiveTab("servidores")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors mr-0.5 ${
+              activeGroup === "internos"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Building2 className="h-3.5 w-3.5" />
+            Internos
+          </button>
+          <div className="w-px h-5 bg-border mx-1 shrink-0" />
+          {INTERNOS_TABS.map((tab) => (
+            <TabBtn key={tab.value} active={activeTab === tab.value} onClick={() => setActiveTab(tab.value)}>
+              {tab.icon}
+              {tab.label}
+            </TabBtn>
+          ))}
         </div>
       </div>
 
-      {/* ── SISMAT: dashboard de gastos (fornecedores/fabricantes) ──────────── */}
-      {source === "sismat" && <SismatDashboard />}
+      {/* ── Conteúdo: componentes de estoque sem filtros ────────────────── */}
+      {activeTab === "entradas"          && <SismatEntradasView />}
+      {activeTab === "saidas"            && <SismatSaidasPuraView />}
+      {activeTab === "entradas-saidas"   && <SismatEstoqueView />}
+      {activeTab === "indicadores-saidas" && <SismatSaidasView />}
 
-      {/* ── Redmine: painel de inteligência das demandas judiciais ─────────── */}
-      {source === "redmine" && (
-      <>
-      {/* ── Filtros ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-4 items-end bg-card border border-border rounded-xl p-4 shadow-sm">
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">Data início</Label>
-          <Input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="w-36"
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">Data fim</Label>
-          <Input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="w-36"
-          />
-        </div>
-        <FilterSelect
-          label="Status"
-          value={filterStatus}
-          onChange={setFilterStatus}
-          placeholder="Todos os status"
-          options={[
-            { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
-            { value: "Entrega Pendente", label: "Entrega Pendente" },
-            { value: "Cessar Atos", label: "Cessar Atos" },
-            { value: "Concluída", label: "Concluída" },
-            { value: "Cancelada", label: "Cancelada" },
-            { value: "Suspensa", label: "Suspensa" },
-          ]}
-        />
-        <FilterSelect
-          label="Prioridade"
-          value={filterPrioridade}
-          onChange={setFilterPrioridade}
-          placeholder="Todas as prioridades"
-          options={[
-            { value: "Crítica", label: "Crítica" },
-            { value: "Alta", label: "Alta" },
-            { value: "Média", label: "Média" },
-            { value: "Normal", label: "Normal" },
-            { value: "Baixa", label: "Baixa" },
-          ]}
-        />
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
-          <Combobox
-            value={filterPrincipioAtivo}
-            onChange={setFilterPrincipioAtivo}
-            options={principioOptions}
-            loading={principiosLoading}
-            placeholder="Selecione o medicamento..."
-            searchPlaceholder="Buscar princípio ativo..."
-            allLabel="Todos os princípios ativos"
-            emptyText="Nenhum princípio ativo encontrado."
-            className="w-64"
-          />
-        </div>
-        {hasActiveFilters && (
-          <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
-            <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-            Limpar
-          </Button>
-        )}
-      </div>
-
-      {/* ── Loading ──────────────────────────────────────────────────────────── */}
-      {isLoading && (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      )}
-
-      {/* ── Conteúdo com Tabs ────────────────────────────────────────────────── */}
-      {!isLoading && metrics && (
-        <div className="space-y-6">
-
-          {/* Indicadores sempre visíveis no topo */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricCard
-              label="Total de Processos"
-              value={metrics.totalDemandas.toLocaleString("pt-BR")}
-              icon={<FileText className="h-5 w-5" />}
-            />
-            <MetricCard
-              label="Passivo Ativo"
-              value={metrics.demandasAtivas.toLocaleString("pt-BR")}
-              icon={<Activity className="h-5 w-5" />}
-              description="Processos não concluídos"
-            />
-            <MetricCard
-              label="Demandas Críticas"
-              value={metrics.demandasCriticas.toLocaleString("pt-BR")}
-              icon={<AlertTriangle className="h-5 w-5" />}
-              description="Prioridade Alta ou Crítica"
-            />
-            <MetricCard
-              label="Taxa de Resolução"
-              value={`${metrics.taxaResolucao.toFixed(1)}%`}
-              icon={<TrendingUp className="h-5 w-5" />}
-              description="Processos finalizados"
-            />
-          </div>
-
-          {/* Tabs analíticas */}
-          <Tabs defaultValue="valores">
-            <TabsList className="mb-2">
-              <TabsTrigger value="valores">
-                <Coins className="h-3.5 w-3.5 mr-1.5" />
-                Valores
-              </TabsTrigger>
-              <TabsTrigger value="processos">
-                <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
-                Processos
-              </TabsTrigger>
-              <TabsTrigger value="dimensionamento">
-                <Pill className="h-3.5 w-3.5 mr-1.5" />
-                Dimensionamento
-              </TabsTrigger>
-              <TabsTrigger value="riscos">
-                <ShieldAlert className="h-3.5 w-3.5 mr-1.5" />
-                Riscos
-              </TabsTrigger>
-              <TabsTrigger value="geografia">
-                <MapPin className="h-3.5 w-3.5 mr-1.5" />
-                Geografia
-              </TabsTrigger>
-              <TabsTrigger value="operacional">
-                <BarChart2 className="h-3.5 w-3.5 mr-1.5" />
-                Operacional
-              </TabsTrigger>
-              <TabsTrigger value="autores">
-                <Users className="h-3.5 w-3.5 mr-1.5" />
-                Autores
-              </TabsTrigger>
-            </TabsList>
-
-            {/* ── Valores (item 2 — primeira aba, à esquerda) ───────────── */}
-            <TabsContent value="valores" className="space-y-6 mt-4">
-              <Section
-                icon={<Coins className="h-4 w-4" />}
-                title="Série Histórica de Valores"
-                subtitle="Evolução mensal do valor total dos processos (R$) — base para dimensionamento orçamentário"
-                full
-              >
-                <ValorTimelineChart data={metrics.valorTimeline} />
-              </Section>
-              <Section
-                icon={<Landmark className="h-4 w-4" />}
-                title="Valores por Tribunal ao Longo do Tempo"
-                subtitle="Decomposição mensal do valor (R$) por TRF — concentração de valor por tribunal"
-                full
-              >
-                <TribunalTimelineChart
-                  data={metrics.valorTribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.valor }))}
-                  format={fmtBRLCompacto}
-                  unidade="R$"
-                  emptyLabel="As demandas com valor (Cumprimento de Ordem Judicial) ainda não têm o Tribunal (TRF) preenchido na base. Assim que esse campo for populado na exportação do Redmine, a decomposição por tribunal aparece aqui."
+      {/* ── Conteúdo: abas que usam dados do Redmine ─────────────────── */}
+      {needsRedmine(activeTab) && (
+        <>
+          {/* Filtros */}
+              <div className="flex flex-wrap gap-4 items-end bg-card border border-border rounded-xl p-4 shadow-sm">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">Data início</Label>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-36" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">Data fim</Label>
+                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-36" />
+                </div>
+                <FilterSelect
+                  label="Status" value={filterStatus} onChange={setFilterStatus}
+                  placeholder="Todos os status"
+                  options={[
+                    { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
+                    { value: "Entrega Pendente",  label: "Entrega Pendente" },
+                    { value: "Cessar Atos",       label: "Cessar Atos" },
+                    { value: "Concluída",         label: "Concluída" },
+                    { value: "Cancelada",         label: "Cancelada" },
+                    { value: "Suspensa",          label: "Suspensa" },
+                  ]}
                 />
-              </Section>
-            </TabsContent>
-
-            {/* ── Processos (antiga aba Tendência — item 1) ─────────────── */}
-            <TabsContent value="processos" className="space-y-6 mt-4">
-              <Section
-                icon={<TrendingUp className="h-4 w-4" />}
-                title="Série Histórica de Demandas"
-                subtitle="Evolução mensal dos processos registrados — base para análise de tendência e previsibilidade da demanda"
-                full
-              >
-                <TimelineChart data={metrics.demandasTimeline} />
-              </Section>
-              <Section
-                icon={<Landmark className="h-4 w-4" />}
-                title="Volume por Tribunal ao Longo do Tempo"
-                subtitle="Decomposição mensal das demandas por TRF — revela picos de entrada concentrados em um tribunal (item 1.1)"
-                full
-              >
-                <TribunalTimelineChart
-                  data={metrics.tribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.count }))}
-                  unidade="processos"
-                  emptyLabel="Sem dados de tribunal (TRF) no período selecionado."
+                <FilterSelect
+                  label="Prioridade" value={filterPrioridade} onChange={setFilterPrioridade}
+                  placeholder="Todas as prioridades"
+                  options={[
+                    { value: "Crítica", label: "Crítica" },
+                    { value: "Alta",    label: "Alta" },
+                    { value: "Média",   label: "Média" },
+                    { value: "Normal",  label: "Normal" },
+                    { value: "Baixa",   label: "Baixa" },
+                  ]}
                 />
-              </Section>
-            </TabsContent>
-
-            {/* ── Dimensionamento ───────────────────────────────────────── */}
-            <TabsContent value="dimensionamento" className="space-y-6 mt-4">
-              <Section
-                icon={<Pill className="h-4 w-4" />}
-                title="Top 15 Princípios Ativos Mais Demandados"
-                subtitle="Ranking por volume de processos judiciais — subsidia o quantitativo para Atas de Registro de Preços (ARP)"
-                full
-              >
-                <TopMedicamentosChart data={metrics.topMedicamentosDistribution} />
-              </Section>
-
-              {/* item 3.1 — Top 15 por VALOR total */}
-              <Section
-                icon={<Coins className="h-4 w-4" />}
-                title="Top 15 Princípios Ativos por Valor Total"
-                subtitle="Ranking por valor (R$) dos processos — complementa o ranking por quantidade. Cobre o universo de demandas com valor de depósito informado"
-                full
-              >
-                <TopMedicamentosValorChart data={metrics.topMedicamentosValor} />
-              </Section>
-
-              {/* item 3.2 — Fornecedores (gráfico real; mostra estado-vazio até a base trazer o campo) */}
-              <Section
-                icon={<Building2 className="h-4 w-4" />}
-                title="Demandas por Fornecedor do Medicamento"
-                subtitle="Empresa que produz/comercializa o medicamento pleiteado"
-                full
-              >
-                <FornecedorChart data={metrics.fornecedorDistribution} />
-              </Section>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Section
-                  icon={<BarChart2 className="h-4 w-4" />}
-                  title="Por Grupo Temático"
-                  subtitle="Top 10 categorias de demandas judiciais"
-                >
-                  <AreaTematicaChart data={metrics.areaTematicaDistribution} />
-                </Section>
-                <Section
-                  icon={<Scale className="h-4 w-4" />}
-                  title="Por Objeto da Ação"
-                  subtitle="Tipo de insumo ou medicamento pleiteado judicialmente"
-                >
-                  <ObjetoAcaoChart data={metrics.objetoAcaoDistribution} />
-                </Section>
-              </div>
-            </TabsContent>
-
-            {/* ── Riscos ────────────────────────────────────────────────── */}
-            <TabsContent value="riscos" className="space-y-6 mt-4">
-              {/* item 4 — funil de gargalos ordenado pelo fluxo de execução do DJUD */}
-              <Section
-                icon={<ShieldAlert className="h-4 w-4" />}
-                title="Gargalos por Status (funil do fluxo de execução)"
-                subtitle="Etapas do processo do topo (entrada) para a base (conclusão) — a largura indica o volume parado em cada etapa"
-                full
-              >
-                <StatusChart data={metrics.statusDistribution} />
-              </Section>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Section
-                  icon={<AlertTriangle className="h-4 w-4" />}
-                  title="Perfil de Risco"
-                  subtitle="Distribuição por nível de prioridade"
-                >
-                  <PrioridadeChart data={metrics.prioridadeDistribution} />
-                </Section>
-                <Section
-                  icon={<Activity className="h-4 w-4" />}
-                  title="Indicadores de Risco"
-                  subtitle="Passivo ativo por categoria de prioridade"
-                >
-                  <div className="space-y-4 mt-2">
-                    {(() => {
-                      const total = metrics.totalDemandas || 1;
-                      return [
-                        { label: "Crítica", color: "#dc2626", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Crítica")?.count || 0 },
-                        { label: "Alta",    color: "#ea580c", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Alta")?.count || 0 },
-                        { label: "Normal",  color: "#2563eb", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Normal" || p.prioridade === "Média")?.count || 0 },
-                        { label: "Baixa",   color: "#16a34a", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Baixa")?.count || 0 },
-                      ].map((item) => (
-                        <RiskBadge key={item.label} label={item.label} value={item.value} max={total} color={item.color} />
-                      ));
-                    })()}
-                    <div className="pt-3 border-t border-border space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Passivo ativo total</span>
-                        <span className="font-bold">{metrics.demandasAtivas.toLocaleString("pt-BR")}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-muted-foreground">Criticidade (Alta + Crítica)</span>
-                        <span className="font-bold text-destructive">{metrics.demandasCriticas.toLocaleString("pt-BR")}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Section>
-              </div>
-            </TabsContent>
-
-            {/* ── Geografia ─────────────────────────────────────────────── */}
-            <TabsContent value="geografia" className="mt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <Section
-                  icon={<MapPin className="h-4 w-4" />}
-                  title="Por Região do Brasil"
-                  subtitle="Volume de judicializações por macrorregião"
-                >
-                  <RegiaoBrasilChart data={metrics.regiaoBrasilDistribution} />
-                </Section>
-                <Section
-                  icon={<Scale className="h-4 w-4" />}
-                  title="Por TRF Região"
-                  subtitle="Tribunal Regional Federal de origem do processo"
-                >
-                  <TRFChart data={metrics.trfRegiaoDistribution} />
-                </Section>
-                <Section
-                  icon={<MapPin className="h-4 w-4" />}
-                  title="Top 15 UFs de Residência"
-                  subtitle="Unidade federativa do paciente autor da ação"
-                >
-                  <UFChart data={metrics.ufResidenciaDistribution} />
-                </Section>
-              </div>
-            </TabsContent>
-
-            {/* ── Operacional ───────────────────────────────────────────── */}
-            <TabsContent value="operacional" className="mt-4">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Section
-                  icon={<BarChart2 className="h-4 w-4" />}
-                  title="Top 10 Responsáveis"
-                  subtitle="Servidores com maior volume de processos sob responsabilidade"
-                >
-                  <TopResponsaveisChart data={metrics.topResponsaveis} />
-                </Section>
-                {metrics.totalValorEstimado > 0 && (
-                  <Section
-                    icon={<FileText className="h-4 w-4" />}
-                    title="Valor Estimado dos Processos"
-                    subtitle="Referência para dimensionamento orçamentário das aquisições"
-                  >
-                    <div className="flex items-center justify-center h-32">
-                      <div className="text-center">
-                        <p className="text-4xl font-bold text-primary tabular-nums">
-                          R$&nbsp;{(metrics.totalValorEstimado / 1_000_000).toFixed(1)}M
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Valor total estimado com base nos {metrics.totalDemandas.toLocaleString("pt-BR")} processos
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Média de R$&nbsp;{(metrics.totalValorEstimado / Math.max(metrics.totalDemandas, 1)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} por processo
-                        </p>
-                      </div>
-                    </div>
-                  </Section>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
+                  <Combobox
+                    value={filterPrincipioAtivo} onChange={setFilterPrincipioAtivo}
+                    options={principioOptions} loading={principiosLoading}
+                    placeholder="Selecione o medicamento..."
+                    searchPlaceholder="Buscar princípio ativo..."
+                    allLabel="Todos os princípios ativos"
+                    emptyText="Nenhum princípio ativo encontrado."
+                    className="w-64"
+                  />
+                </div>
+                {hasActiveFilters && (
+                  <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
+                    <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                    Limpar
+                  </Button>
                 )}
               </div>
-            </TabsContent>
-            {/* ── Autores ───────────────────────────────────────────────── */}
-            <TabsContent value="autores" className="space-y-6 mt-4">
-              <Section
-                icon={<Users className="h-4 w-4" />}
-                title="Evolução de Autores por Mês"
-                subtitle="Autores únicos, novos (primeira demanda no mês) e reincidentes (já tinham demanda anterior)"
-                full
-              >
-                {autoresLoading ? (
-                  <div className="flex justify-center py-12">
-                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+
+              {/* Erro */}
+              {error && (
+                <div className="rounded-lg border border-destructive bg-destructive/10 p-6 space-y-3">
+                  <div className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <span className="font-medium text-sm">Erro ao carregar métricas</span>
                   </div>
-                ) : (
-                  <AutoresTimelineChart data={autoresData ?? []} />
-                )}
-              </Section>
-            </TabsContent>
-          </Tabs>
-        </div>
-      )}
-      </>
+                  <p className="text-xs text-muted-foreground">
+                    {error instanceof Error ? error.message : "Não foi possível consultar o banco de dados."}
+                  </p>
+                  <button onClick={() => window.location.reload()} className="text-xs text-primary underline">
+                    Recarregar página
+                  </button>
+                </div>
+              )}
+
+              {/* Loading */}
+              {isLoading && (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                </div>
+              )}
+
+              {/* Conteúdo */}
+              {!isLoading && metrics && (
+                <div className="space-y-6">
+                  {/* Indicadores */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <MetricCard label="Total de Processos" value={metrics.totalDemandas.toLocaleString("pt-BR")} icon={<FileText className="h-5 w-5" />} />
+                    <MetricCard label="Passivo Ativo" value={metrics.demandasAtivas.toLocaleString("pt-BR")} icon={<Activity className="h-5 w-5" />} description="Processos não concluídos" />
+                    <MetricCard label="Demandas Críticas" value={metrics.demandasCriticas.toLocaleString("pt-BR")} icon={<AlertTriangle className="h-5 w-5" />} description="Prioridade Alta ou Crítica" />
+                    <MetricCard label="Taxa de Resolução" value={`${metrics.taxaResolucao.toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} description="Processos finalizados" />
+                  </div>
+
+                  {/* A.1) Contagem */}
+                  {activeTab === "demandas" && (
+                    <div className="space-y-6">
+                      <Section icon={<TrendingUp className="h-4 w-4" />} title="Série Histórica de Demandas" subtitle="Evolução mensal dos processos registrados" full>
+                        <TimelineChart data={metrics.demandasTimeline} />
+                      </Section>
+                      <Section icon={<Landmark className="h-4 w-4" />} title="Volume por Tribunal ao Longo do Tempo" subtitle="Decomposição mensal das demandas por TRF" full>
+                        <TribunalTimelineChart
+                          data={metrics.tribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.count }))}
+                          unidade="processos"
+                          emptyLabel="Sem dados de tribunal (TRF) no período selecionado."
+                        />
+                      </Section>
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <Section icon={<MapPin className="h-4 w-4" />} title="Por Região do Brasil" subtitle="Volume de judicializações por macrorregião">
+                          <RegiaoBrasilChart data={metrics.regiaoBrasilDistribution} />
+                        </Section>
+                        <Section icon={<Scale className="h-4 w-4" />} title="Por TRF Região" subtitle="Tribunal Regional Federal de origem do processo">
+                          <TRFChart data={metrics.trfRegiaoDistribution} />
+                        </Section>
+                        <Section icon={<MapPin className="h-4 w-4" />} title="Top 15 UFs de Residência" subtitle="Unidade federativa do paciente autor da ação">
+                          <UFChart data={metrics.ufResidenciaDistribution} />
+                        </Section>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A.2) Valores */}
+                  {activeTab === "valores" && (
+                    <div className="space-y-6">
+                      <Section icon={<Coins className="h-4 w-4" />} title="Série Histórica de Valores" subtitle="Evolução mensal do valor total dos processos (R$)" full>
+                        <ValorTimelineChart data={metrics.valorTimeline} />
+                      </Section>
+                      <Section icon={<Landmark className="h-4 w-4" />} title="Valores por Tribunal ao Longo do Tempo" subtitle="Decomposição mensal do valor (R$) por TRF" full>
+                        <TribunalTimelineChart
+                          data={metrics.valorTribunalTimeline.map((d) => ({ mes: d.mes, trf: d.trf, value: d.valor }))}
+                          format={fmtBRLCompacto}
+                          unidade="R$"
+                          emptyLabel="As demandas com valor ainda não têm o Tribunal (TRF) preenchido na base."
+                        />
+                      </Section>
+                      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <Section icon={<MapPin className="h-4 w-4" />} title="Por Região do Brasil" subtitle="Concentração geográfica do portfólio de processos">
+                          <RegiaoBrasilChart data={metrics.regiaoBrasilDistribution} />
+                        </Section>
+                        <Section icon={<Scale className="h-4 w-4" />} title="Por TRF Região" subtitle="Série de valores por TRF no gráfico de evolução acima">
+                          <TRFChart data={metrics.trfRegiaoDistribution} />
+                        </Section>
+                        <Section icon={<MapPin className="h-4 w-4" />} title="Top 15 UFs de Residência" subtitle="Unidade federativa do paciente autor da ação">
+                          <UFChart data={metrics.ufResidenciaDistribution} />
+                        </Section>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A.3) Princípios Ativos */}
+                  {activeTab === "principios-ativos" && (
+                    <div className="space-y-6">
+                      <Section icon={<Pill className="h-4 w-4" />} title="Top 15 Princípios Ativos Mais Demandados" subtitle="Ranking por volume de processos — subsidia o quantitativo para ARPs" full>
+                        <TopMedicamentosChart data={metrics.topMedicamentosDistribution} />
+                      </Section>
+                      <Section icon={<Coins className="h-4 w-4" />} title="Top 15 Princípios Ativos por Valor Total" subtitle="Ranking por valor (R$) — complementa o ranking por quantidade" full>
+                        <TopMedicamentosValorChart data={metrics.topMedicamentosValor} />
+                      </Section>
+                      <Section icon={<Building2 className="h-4 w-4" />} title="Demandas por Fornecedor do Medicamento" subtitle="Empresa que produz/comercializa o medicamento pleiteado" full>
+                        <FornecedorChart data={metrics.fornecedorDistribution} />
+                      </Section>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <Section icon={<BarChart2 className="h-4 w-4" />} title="Por Grupo Temático" subtitle="Top 10 categorias de demandas judiciais">
+                          <AreaTematicaChart data={metrics.areaTematicaDistribution} />
+                        </Section>
+                        <Section icon={<Scale className="h-4 w-4" />} title="Por Objeto da Ação" subtitle="Tipo de insumo ou medicamento pleiteado judicialmente">
+                          <ObjetoAcaoChart data={metrics.objetoAcaoDistribution} />
+                        </Section>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A.4) Riscos */}
+                  {activeTab === "tramitacao" && (
+                    <div className="space-y-6">
+                      <Section icon={<ListChecks className="h-4 w-4" />} title="Gargalos por Status (funil do fluxo de execução)" subtitle="Volume parado em cada etapa do processo" full>
+                        <StatusChart data={metrics.statusDistribution} />
+                      </Section>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <Section icon={<AlertTriangle className="h-4 w-4" />} title="Perfil de Risco" subtitle="Distribuição por nível de prioridade">
+                          <PrioridadeChart data={metrics.prioridadeDistribution} />
+                        </Section>
+                        <Section icon={<Activity className="h-4 w-4" />} title="Indicadores de Risco" subtitle="Passivo ativo por categoria de prioridade">
+                          <div className="space-y-4 mt-2">
+                            {(() => {
+                              const total = metrics.totalDemandas || 1;
+                              return [
+                                { label: "Crítica", color: "#dc2626", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Crítica")?.count || 0 },
+                                { label: "Alta",    color: "#ea580c", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Alta")?.count || 0 },
+                                { label: "Normal",  color: "#2563eb", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Normal" || p.prioridade === "Média")?.count || 0 },
+                                { label: "Baixa",   color: "#16a34a", value: metrics.prioridadeDistribution.find((p) => p.prioridade === "Baixa")?.count || 0 },
+                              ].map((item) => (
+                                <RiskBadge key={item.label} label={item.label} value={item.value} max={total} color={item.color} />
+                              ));
+                            })()}
+                            <div className="pt-3 border-t border-border space-y-1">
+                              <div className="flex justify-between text-xs">
+                                <span className="text-muted-foreground">Passivo ativo total</span>
+                                <span className="font-bold">{metrics.demandasAtivas.toLocaleString("pt-BR")}</span>
+                              </div>
+                              <div className="flex justify-between text-xs">
+                                <span className="text-muted-foreground">Criticidade (Alta + Crítica)</span>
+                                <span className="font-bold text-destructive">{metrics.demandasCriticas.toLocaleString("pt-BR")}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </Section>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* A.5) Operacional */}
+                  {activeTab === "servidores" && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      <Section icon={<BarChart2 className="h-4 w-4" />} title="Top 10 Responsáveis" subtitle="Servidores com maior volume de processos sob responsabilidade">
+                        <TopResponsaveisChart data={metrics.topResponsaveis} />
+                      </Section>
+                      {metrics.totalValorEstimado > 0 && (
+                        <Section icon={<FileText className="h-4 w-4" />} title="Valor Estimado dos Processos" subtitle="Referência para dimensionamento orçamentário das aquisições">
+                          <div className="flex items-center justify-center h-32">
+                            <div className="text-center">
+                              <p className="text-4xl font-bold text-primary tabular-nums">
+                                R$&nbsp;{(metrics.totalValorEstimado / 1_000_000).toFixed(1)}M
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                Valor total estimado com base nos {metrics.totalDemandas.toLocaleString("pt-BR")} processos
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Média de R$&nbsp;{(metrics.totalValorEstimado / Math.max(metrics.totalDemandas, 1)).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} por processo
+                              </p>
+                            </div>
+                          </div>
+                        </Section>
+                      )}
+                    </div>
+                  )}
+
+                  {/* A.6) Autores */}
+                  {activeTab === "autores" && (
+                    <Section icon={<Users className="h-4 w-4" />} title="Evolução de Autores por Mês" subtitle="Autores únicos, novos e reincidentes" full>
+                      {autoresLoading ? (
+                        <div className="flex justify-center py-12">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : (
+                        <AutoresTimelineChart data={autoresData ?? []} />
+                      )}
+                    </Section>
+                  )}
+                </div>
+              )}
+        </>
       )}
     </div>
   );
