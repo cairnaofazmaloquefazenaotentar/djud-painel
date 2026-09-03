@@ -7,6 +7,7 @@ import { FormFileInput } from "@/components/ui/form-file-input";
 import { FilePreviewModal } from "@/components/file-preview/file-preview-modal";
 import { useFilePreview } from "@/hooks/useFilePreview";
 import { cn } from "@/lib/utils";
+import { apiPath } from "@/lib/url";
 
 interface Attachment {
   id: string;
@@ -69,7 +70,7 @@ export function AttachmentsManager({
         formData.append("file", file);
 
         const response = await fetch(
-          `/api/demandas/${demandaId}/attachments`,
+          apiPath(`/api/demandas/${demandaId}/attachments`),
           {
             method: "POST",
             body: formData,
@@ -108,7 +109,7 @@ export function AttachmentsManager({
 
     try {
       const response = await fetch(
-        `/api/demandas/${demandaId}/attachments/${attachmentId}`,
+        apiPath(`/api/demandas/${demandaId}/attachments/${attachmentId}`),
         {
           method: "DELETE",
         }
@@ -136,7 +137,7 @@ export function AttachmentsManager({
     // Usar o endpoint de preview como URL de download (storagePath é um caminho de
     // filesystem, não uma URL acessível pelo browser)
     const link = document.createElement("a");
-    link.href = `/api/attachments/${attachment.id}/preview`;
+    link.href = apiPath(`/api/attachments/${attachment.id}/preview`);
     link.download = attachment.fileName;
     document.body.appendChild(link);
     link.click();

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SismatPeriodo } from "@/lib/sismat-metrics";
 import type { SismatEstoqueData } from "@/lib/sismat-estoque-metrics";
+import { apiPath } from "@/lib/url";
 
 /**
  * Carrega o cruzamento Entradas × Saídas (fluxo por período + saldo por material).
@@ -11,7 +12,7 @@ export function useSismatEstoque(period: SismatPeriodo) {
   return useQuery<SismatEstoqueData>({
     queryKey: ["sismat-estoque", period],
     queryFn: async () => {
-      const res = await fetch(`/api/sismat/estoque?period=${period}`);
+      const res = await fetch(apiPath(`/api/sismat/estoque?period=${period}`));
       if (!res.ok) {
         throw new Error("Erro ao carregar métricas de estoque SISMAT");
       }

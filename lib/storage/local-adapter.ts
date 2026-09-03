@@ -5,7 +5,7 @@ import {
   DeleteResult,
   GetUrlResult,
 } from "./storage-adapter";
-import { writeFile, unlink, stat } from "fs/promises";
+import { mkdir, writeFile, unlink, stat } from "fs/promises";
 import { join } from "path";
 
 export class LocalStorageAdapter extends StorageAdapter {
@@ -36,12 +36,8 @@ export class LocalStorageAdapter extends StorageAdapter {
       const fullPath = join(this.uploadDir, normalizedPath);
 
       // Create directory if it doesn't exist
-      const dir = fullPath.substring(0, fullPath.lastIndexOf("\\"));
-      try {
-        await stat(dir);
-      } catch {
-        // Directory doesn't exist - will handle in writeFile
-      }
+      const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+      await mkdir(dir, { recursive: true });
 
       // Write file
       await writeFile(fullPath, file);

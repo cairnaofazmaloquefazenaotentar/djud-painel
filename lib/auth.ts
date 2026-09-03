@@ -10,6 +10,8 @@ const allowedDomains = (process.env.AUTH_ALLOWED_DOMAINS || "")
   .filter(Boolean);
 
 const authConfig: NextAuthConfig = {
+  // O Next.js remove o basePath antes de encaminhar as rotas de API.
+  basePath: "/api/auth",
   providers: [
     Google({
       clientId: process.env.AUTH_GOOGLE_ID || "",

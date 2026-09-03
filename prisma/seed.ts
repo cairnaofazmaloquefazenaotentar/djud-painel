@@ -4,17 +4,24 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
-  const hashedPassword = await bcrypt.hash("1234", 12);
+  const email = process.env.SEED_ADMIN_EMAIL || "admin@facchi.com.br";
+  const password = process.env.SEED_ADMIN_PASSWORD;
+
+  if (!password) {
+    throw new Error("SEED_ADMIN_PASSWORD deve ser informada para criar o administrador inicial.");
+  }
+
+  const hashedPassword = await bcrypt.hash(password, 12);
 
   const admin = await prisma.user.upsert({
-    where: { email: "admin@facchi.com.br" },
+    where: { email },
     update: {
       password: hashedPassword,
       role: "ADMIN",
     },
     create: {
       name: "Super Admin",
-      email: "admin@facchi.com.br",
+      email,
       password: hashedPassword,
       role: "ADMIN",
       emailVerified: new Date(),

@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import {
   Search,
   AlertTriangle,
@@ -362,7 +363,7 @@ export default function PesquisaPrecoPage() {
     try {
       const params = new URLSearchParams({ q: query.trim() });
       if (uf && uf !== "todos") params.set("uf", uf);
-      const res = await fetch(`/api/precos/buscar?${params}`);
+      const res = await fetch(apiPath(`/api/precos/buscar?${params}`));
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Erro na pesquisa");
@@ -381,7 +382,7 @@ export default function PesquisaPrecoPage() {
     const newWin = window.open("", "_blank");
     setGerandoPdf(true);
     try {
-      const res = await fetch("/api/relatorios/pesquisa-preco", {
+      const res = await fetch(apiPath("/api/relatorios/pesquisa-preco"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ termo: query.trim(), ...relMeta }),

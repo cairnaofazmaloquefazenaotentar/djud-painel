@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 import type { PrecosOverviewData, PrecosSerieData } from "@/lib/precos-metrics";
 
 /**
@@ -12,7 +13,7 @@ export function usePrecosOverview() {
   return useQuery<PrecosOverviewData>({
     queryKey: ["precos-overview"],
     queryFn: async () => {
-      const res = await fetch("/api/precos/overview");
+      const res = await fetch(apiPath("/api/precos/overview"));
       if (!res.ok) {
         throw new Error("Erro ao carregar a visão geral de preços");
       }
@@ -34,7 +35,7 @@ export function usePrecosSerie(material: string, unidade: string) {
     queryKey: ["precos-serie", material, unidade],
     queryFn: async () => {
       const params = new URLSearchParams({ material, unidade });
-      const res = await fetch(`/api/precos/serie?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/precos/serie?${params.toString()}`));
       if (!res.ok) {
         throw new Error("Erro ao carregar a série de preços do medicamento");
       }

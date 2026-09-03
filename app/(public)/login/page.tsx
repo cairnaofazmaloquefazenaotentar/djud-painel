@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { appPath } from "@/lib/url";
 
 // ── Variantes de animação ────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ function useMagneticCard() {
 
 export default function LoginPage() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get("callbackUrl") || "/dashboard";
+  const callbackUrl = searchParams.get("callbackUrl") || appPath("/dashboard");
 
   const [isLoading, setIsLoading]         = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
@@ -225,7 +226,7 @@ export default function LoginPage() {
         redirect: false,
       });
 
-      if (!result?.ok) {
+      if (!result?.ok || result.error) {
         setError("Email ou senha inválidos.");
         setIsLoading(false);
       } else {

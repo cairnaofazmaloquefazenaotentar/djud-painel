@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit2, Lock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { rolePermissions } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 interface User {
@@ -77,7 +78,7 @@ export default function UsersPage() {
         if (busca) params.append("busca", busca);
         if (role) params.append("role", role);
 
-        const res = await fetch(`/api/users?${params.toString()}`);
+        const res = await fetch(apiPath(`/api/users?${params.toString()}`));
         if (res.ok) {
           const data = await res.json();
           setUsers(data.data);
@@ -98,7 +99,7 @@ export default function UsersPage() {
     const userName = deleteDialog.userName;
 
     try {
-      const res = await fetch(`/api/users/${deleteDialog.userId}`, {
+      const res = await fetch(apiPath(`/api/users/${deleteDialog.userId}`), {
         method: "DELETE",
       });
 

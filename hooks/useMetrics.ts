@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { MetricsData } from "@/lib/metrics";
+import { apiPath } from "@/lib/url";
 
 interface UseMetricsOptions {
   startDate?: Date;
@@ -50,7 +51,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
         params.append("organizacaoId", options.organizacaoId);
       }
 
-      const response = await fetch(`/api/demandas/metrics?${params.toString()}`);
+      const response = await fetch(apiPath(`/api/demandas/metrics?${params.toString()}`));
 
       if (!response.ok) {
         throw new Error("Erro ao carregar métricas");

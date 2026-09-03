@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle, CheckSquare, Square, FileSpreadsheet, Columns3, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 interface Demanda {
@@ -194,7 +195,7 @@ export default function DemandasPage() {
         if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
 
         console.log("🔄 Buscando demandas...", params.toString());
-        const res = await fetch(`/api/demandas?${params.toString()}`);
+        const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
 
         if (res.ok) {
           const data = await res.json();
@@ -227,7 +228,7 @@ export default function DemandasPage() {
     const numero = deleteDialog.demandaNumero;
 
     try {
-      const res = await fetch(`/api/demandas/${deleteDialog.demandaId}`, {
+      const res = await fetch(apiPath(`/api/demandas/${deleteDialog.demandaId}`), {
         method: "DELETE",
       });
 
@@ -255,7 +256,7 @@ export default function DemandasPage() {
     if (trfRegiao) params.append("trfRegiao", trfRegiao);
     if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
 
-    const res = await fetch(`/api/demandas?${params.toString()}`);
+    const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       toast.error(err.error || "Erro ao exportar demandas.");
@@ -334,7 +335,7 @@ export default function DemandasPage() {
       if (trfRegiao) params.append("trfRegiao", trfRegiao);
       if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
 
-      const res = await fetch(`/api/demandas?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
       if (!res.ok) { toast.error("Erro ao buscar dados.", { id: "xlsx-export" }); return; }
       const { data } = await res.json();
 
@@ -376,7 +377,7 @@ export default function DemandasPage() {
     let failed = 0;
 
     for (const id of selectedIds) {
-      const res = await fetch(`/api/demandas/${id}`, { method: "DELETE" });
+      const res = await fetch(apiPath(`/api/demandas/${id}`), { method: "DELETE" });
       if (res.ok) success++;
       else failed++;
     }
