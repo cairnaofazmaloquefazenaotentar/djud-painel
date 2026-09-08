@@ -45,3 +45,11 @@ export const SISMAT_SAIDA_COLOR = "#ff922b"; // laranja (saiu do estoque)
 export const SISMAT_SALDO_COLOR = "#51cf66"; // verde (saldo derivado)
 
 export const colorAt = (i: number): string => SISMAT_COLORS[i % SISMAT_COLORS.length];
+
+/** Quantidade inteira — ex: 1.234 unid. */
+export const fmtQty = (v: number): string =>
+  new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 0 }).format(v ?? 0) + " un.";
+
+/** Quantidade compacta — ex: 1,2 mil — para eixos. */
+export const fmtQtyCompact = (v: number): string =>
+  new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(v ?? 0);
