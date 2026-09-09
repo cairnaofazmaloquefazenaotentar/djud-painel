@@ -15,6 +15,8 @@
     "import:sismat-saidas": "tsx scripts/import-sismat-saidas.ts",
     "import:precos": "tsx scripts/import-comprasgov-precos.ts",
     "import:redmine-sei": "tsx scripts/import-redmine-sei.ts",
+    "import:catmat": "python scripts/import_catmat_classes.py",
+    "import:cmed-registros": "python scripts/import_cmed_registros.py",
     "backfill:autor": "tsx scripts/backfill-autor-demandas.ts"
   },
   "dependencies": {

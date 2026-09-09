@@ -83,7 +83,24 @@ npm run tokens:check     # Validar sync (usado no CI)
 npm run db:push          # Sync Prisma schema → banco
 npm run build            # Build production
 npm run lint             # ESLint check
+
+# Pesquisa de Preços — bases de apoio (Python: openpyxl + psycopg; lê DATABASE_URL de .env.local)
+python scripts/import_catmat_classes.py --file "Catmats - 16 Classes - DD.MM.AAAA.xlsx" --dry-run|--confirm
+python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....xlsx" --dry-run|--confirm
 ```
+
+## Pesquisa de Preços (aba /pesquisa-preco)
+
+- Três filtros obrigatórios: **Código do material** (CATMAT de até 6 dígitos ou Registro ANVISA de 13),
+  **Descrição CATMAT** e **Unidade de fornecimento**. Lógica em `lib/pesquisa-preco.ts`.
+- Tabelas de apoio (schema public): `CatmatItem` (catálogo das 16 classes da saúde) e `CmedRegistro`
+  (registro ANVISA → CATMAT, unidade de fornecimento, `qtEmbalagem`). Carregadas pelos scripts acima
+  (REPLACE; criam a tabela se ausente com a mesma DDL do `prisma db push`).
+- Preço CMED é por embalagem (`PrecoCmed.pmvgSemImpostos`); a pesquisa divide por `qtEmbalagem` para
+  refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
+- Cruzamento por código: BPS/SIASG usam `"BR0" + CATMAT`, PNCP usa o código puro. ComprasGov não tem
+  CATMAT — cruza por `nomePdm` + unidade e é apenas informativo (fora do preço de referência).
+- `normalizarTexto`/`normalizarUnidade` (TS) são espelhadas em `scripts/precos_norm.py` — alterar as duas.
 
 ## Variáveis de Ambiente
 

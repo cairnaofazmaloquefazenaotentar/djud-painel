@@ -596,3 +596,62 @@ model RelatorioGerado {
   @@index([criadoEm])
   @@schema("public")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pesquisa de Preços — catálogo CATMAT e registros ANVISA (CMED)
+//
+// CatmatItem: catálogo de materiais das 16 classes da saúde (planilha
+// "Catmats - 16 Classes - DD.MM.AAAA.xlsx", ~133 mil itens). Alimenta os filtros
+// obrigatórios "Código do material" e "Descrição CATMAT" da pesquisa de preços.
+// O código (até 6 dígitos, sem zeros à esquerda) é a chave de cruzamento com
+// PrecoBps/PrecoSiasg ("BR0" + código) e PrecoPncp (código puro).
+//
+// CmedRegistro: registro ANVISA → CATMAT, unidade de fornecimento e quantidade
+// por embalagem (planilha "CMED - grande.padrão", ~51 mil registros). Cruza com
+// PrecoCmed pelo registro (13 dígitos): o preço da CMED é por EMBALAGEM e a
+// pesquisa o divide por qtEmbalagem para refletir a menor unidade de
+// fornecimento. Registros sem CATMAT ("Não tem"/"Fora"/vazio) ficam com
+// catmat = null e só têm preço CMED.
+//
+// Ambas são recarregadas (REPLACE) por scripts/import_catmat_classes.py e
+// scripts/import_cmed_registros.py, que também criam as tabelas se ausentes
+// (DDL idêntica à que `prisma db push` geraria a partir destes modelos).
+// ─────────────────────────────────────────────────────────────────────────────
+model CatmatItem {
+  codigoItem    String   @id            // CATMAT (código do item, até 6 dígitos)
+  descricaoItem String   @db.Text       // Descrição completa do item
+  descricaoNorm String   @db.Text       // Descrição sem acento/minúscula p/ busca (normalizarTexto)
+  codigoPdm     String                  // Padrão Descritivo de Material (ex.: "8811")
+  nomePdm       String                  // Nome do PDM (ex.: "AZITROMICINA") — chave p/ ComprasGovPreco.material
+  codigoClasse  String                  // Classe (ex.: "6505")
+  nomeClasse    String                  // Ex.: "DROGAS E MEDICAMENTOS"
+  codigoGrupo   String                  // Grupo (ex.: "65")
+  nomeGrupo     String
+  codigoNcm     String?
+  criadoEm      DateTime @default(now())
+
+  @@index([codigoClasse])
+  @@index([nomePdm])
+  @@schema("public")
+}
+
+model CmedRegistro {
+  registro            String   @id      // Registro ANVISA (13 dígitos) — chave com PrecoCmed.registro
+  catmat              String?           // CATMAT (até 6 dígitos); null = "Não tem"/"Fora"/vazio
+  descricaoCatmat     String?  @db.Text // Descrição CATMAT conforme a planilha CMED
+  unidadeFornecimento String?           // Ex.: "COMPRIMIDO", "FRASCO 100,00 ML"
+  unidadeNorm         String?           // Unidade normalizada (normalizarUnidade) — filtro da pesquisa
+  qtEmbalagem         Int?              // Qt_Embal: unidades de fornecimento por embalagem (divisor do preço CMED)
+  generico            Boolean?          // Coluna "Gen."
+  icms                Boolean?          // Coluna "ICMS"
+  substancia          String?
+  produto             String?
+  apresentacao        String?
+  cnpj                String?
+  fabricante          String?
+  criadoEm            DateTime @default(now())
+
+  @@index([catmat])
+  @@index([unidadeNorm])
+  @@schema("public")
+}

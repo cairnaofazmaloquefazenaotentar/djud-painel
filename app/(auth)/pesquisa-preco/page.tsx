@@ -1,22 +1,21 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
 import {
-  Search,
   AlertTriangle,
-  ShieldCheck,
-  Info,
   ChevronDown,
   ChevronUp,
   FileText,
+  Info,
   Loader2,
+  Search,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -24,47 +23,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-preco/material-search";
+import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
+import type {
+  CmedResultado,
+  FonteMercadoResultado,
+  ItemPesquisa,
+  Recomendacao,
+  UnidadeOpcao,
+} from "@/lib/pesquisa-preco";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface SourceStats {
-  total: number;
-  amostra: number;
-  precoMin: number | null;
-  precoMax: number | null;
-  precoMediana: number | null;
-  registros: any[];
-}
-
-interface BuscarResult {
-  query: string;
-  termoNormalizado: string;
-  resultados: {
-    cmed: { total: number; registros: any[]; pmvgMin: number | null; pmvgMax: number | null };
-    bps: SourceStats;
-    siasg: SourceStats;
-    pncp: SourceStats;
-  };
-  recomendacao: {
-    precoReferencia: number | null;
-    limitePmvg: number | null;
-    precoFinal: number | null;
-    metodologia: string;
-    fontes: string[];
-    observacoes: string[];
-  };
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Pesquisa de Preço — três filtros obrigatórios (código do material, descrição
+// CATMAT e unidade de fornecimento) dirigem a consulta consolidada em CMED,
+// BPS, SIASG, PNCP e ComprasGov (lib/pesquisa-preco.ts). O preço CMED é
+// exibido por unidade de fornecimento (PMVG ÷ Qt_Embal).
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const fmt = (v: number | null, decimals = 4) => {
+const fmt = (v: number | null | undefined, decimals = 4) => {
   if (v == null) return "—";
   const [int, dec] = v.toFixed(decimals).split(".");
   const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
@@ -74,34 +54,45 @@ const fmt = (v: number | null, decimals = 4) => {
 const fmtDate = (d: string | Date) =>
   new Date(d).toLocaleDateString("pt-BR", { year: "numeric", month: "2-digit", day: "2-digit" });
 
-// ── Source Panel ──────────────────────────────────────────────────────────────
+const fmtInt = (n: number) => n.toLocaleString("pt-BR");
+
+const UFS = [
+  "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
+  "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+];
+
+// ── Painel de fonte de mercado ────────────────────────────────────────────────
 
 function SourcePanel({
   label,
   color,
   stats,
   loading,
+  nota,
 }: {
   label: string;
   color: string;
-  stats: SourceStats | null;
+  stats: FonteMercadoResultado | null;
   loading: boolean;
+  nota?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
-          <span className="font-semibold text-sm">{label}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${color}`} />
+          <span className="font-semibold text-sm truncate">{label}</span>
         </div>
         {stats && (
-          <Badge variant="outline" className="text-xs">
-            {stats.total.toLocaleString("pt-BR")} registros
+          <Badge variant="outline" className="text-xs shrink-0">
+            {fmtInt(stats.total)} registros
           </Badge>
         )}
       </div>
+
+      {nota && <p className="text-[11px] text-muted-foreground">{nota}</p>}
 
       {loading && (
         <div className="h-16 flex items-center justify-center text-muted-foreground text-sm animate-pulse">
@@ -113,7 +104,13 @@ function SourcePanel({
         <p className="text-sm text-muted-foreground">Realize uma pesquisa para ver resultados.</p>
       )}
 
-      {!loading && stats && (
+      {!loading && stats && stats.total === 0 && (
+        <p className="text-sm text-muted-foreground">
+          Nenhum registro para este código e unidade de fornecimento.
+        </p>
+      )}
+
+      {!loading && stats && stats.total > 0 && (
         <>
           <div className="grid grid-cols-3 gap-3 text-center">
             <div>
@@ -129,6 +126,10 @@ function SourcePanel({
               <p className="text-sm font-medium">{fmt(stats.precoMax)}</p>
             </div>
           </div>
+          <p className="text-[11px] text-muted-foreground text-center">
+            Amostra de {fmtInt(stats.amostra)} registro(s) mais recente(s)
+            {stats.outliersRemovidos > 0 ? ` · ${stats.outliersRemovidos} outlier(s) removido(s) (IQR)` : ""}
+          </p>
 
           {stats.registros.length > 0 && (
             <div>
@@ -150,15 +151,22 @@ function SourcePanel({
               </Button>
               {expanded && (
                 <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto">
-                  {stats.registros.map((r, i) => (
-                    <div key={r.id || i} className="rounded border p-2 text-xs space-y-0.5">
-                      <p className="font-medium truncate">{r.descricao || r.descricaoResumida || r.nomeNorm}</p>
-                      <div className="flex items-center gap-3 text-muted-foreground">
-                        <span className="font-semibold text-foreground">{fmt(r.preco ?? r.valorUnitResultado)}</span>
+                  {stats.registros.map((r) => (
+                    <div key={String(r.id)} className="rounded border p-2 text-xs space-y-0.5">
+                      <p className="font-medium truncate">{r.descricao}</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
+                        <span className="font-semibold text-foreground">{fmt(r.preco)}</span>
                         {r.unidade && <span>/{r.unidade}</span>}
-                        {r.data && <span>{fmtDate(r.data)}</span>}
+                        <span>{fmtDate(r.data)}</span>
                         {r.uf && <span>{r.uf}</span>}
+                        {r.esfera && <span>{r.esfera}</span>}
                         {r.modalidade && <span>{r.modalidade}</span>}
+                        {r.judicial && (
+                          <Badge variant={r.judicial === "Judicial" ? "destructive" : "secondary"} className="text-[10px] h-4">
+                            {r.judicial}
+                          </Badge>
+                        )}
+                        {r.orgao && <span className="truncate max-w-[14rem]">{r.orgao}</span>}
                       </div>
                     </div>
                   ))}
@@ -172,28 +180,28 @@ function SourcePanel({
   );
 }
 
-// ── CMED Panel ────────────────────────────────────────────────────────────────
+// ── Painel CMED ───────────────────────────────────────────────────────────────
 
 function CmedPanel({
   data,
+  unidade,
   loading,
 }: {
-  data: BuscarResult["resultados"]["cmed"] | null;
+  data: CmedResultado | null;
+  unidade: string | null;
   loading: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="h-2.5 w-2.5 rounded-full bg-red-500" />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
           <span className="font-semibold text-sm">CMED — Teto PMVG</span>
           <Badge variant="secondary" className="text-xs">ANVISA</Badge>
         </div>
-        {data && (
-          <Badge variant="outline" className="text-xs">{data.total} produto(s)</Badge>
-        )}
+        {data && <Badge variant="outline" className="text-xs shrink-0">{data.total} registro(s)</Badge>}
       </div>
 
       {loading && (
@@ -207,21 +215,27 @@ function CmedPanel({
       )}
 
       {!loading && data && data.total === 0 && (
-        <p className="text-sm text-amber-600">Substância não encontrada na tabela CMED vigente.</p>
+        <p className="text-sm text-amber-600">
+          Nenhum registro ANVISA com preço CMED vigente para este código e unidade.
+        </p>
       )}
 
       {!loading && data && data.total > 0 && (
         <>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-md bg-red-50 dark:bg-red-950/20 p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">PMVG Mín (sem imp.)</p>
-              <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgMin)}</p>
+              <p className="text-xs text-muted-foreground mb-1">PMVG unitário mín. (sem imp.)</p>
+              <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgUnitMin)}</p>
             </div>
             <div className="rounded-md bg-red-50 dark:bg-red-950/20 p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">PMVG Máx (sem imp.)</p>
-              <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgMax)}</p>
+              <p className="text-xs text-muted-foreground mb-1">PMVG unitário máx. (sem imp.)</p>
+              <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgUnitMax)}</p>
             </div>
           </div>
+          <p className="text-[11px] text-muted-foreground text-center">
+            Preço por {unidade ?? "unidade"} = PMVG da embalagem ÷ quantidade por embalagem (Qt_Embal)
+            {data.semQtEmbalagem > 0 ? ` · ${data.semQtEmbalagem} registro(s) sem Qt_Embal` : ""}
+          </p>
 
           <Button
             variant="ghost"
@@ -230,20 +244,32 @@ function CmedPanel({
             onClick={() => setExpanded((v) => !v)}
           >
             {expanded ? <ChevronUp className="h-3.5 w-3.5 mr-1" /> : <ChevronDown className="h-3.5 w-3.5 mr-1" />}
-            {expanded ? "Ocultar" : "Ver"} produtos CMED
+            {expanded ? "Ocultar" : "Ver"} registros CMED
           </Button>
 
           {expanded && (
-            <div className="space-y-1.5 max-h-56 overflow-y-auto">
-              {data.registros.map((r, i) => (
-                <div key={r.id || i} className="rounded border p-2 text-xs space-y-0.5">
-                  <p className="font-medium">{r.substancia}</p>
-                  <p className="text-muted-foreground">{r.produto} — {r.apresentacao}</p>
-                  <div className="flex gap-3">
-                    <span>PMVG: <strong>{fmt(r.pmvgSemImpostos)}</strong></span>
-                    <span>PF: <strong>{fmt(r.pf0)}</strong></span>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {data.registros.map((r) => (
+                <div key={r.id} className="rounded border p-2 text-xs space-y-0.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium">{r.produto}</span>
+                    <span className="text-muted-foreground">{r.apresentacao}</span>
+                    {r.generico && <Badge variant="secondary" className="text-[10px] h-4">Genérico</Badge>}
                     {r.cap && <Badge variant="destructive" className="text-[10px] h-4">CAP</Badge>}
-                    {r.laboratorio && <span className="text-muted-foreground">{r.laboratorio}</span>}
+                  </div>
+                  <p className="text-muted-foreground">
+                    {r.substancia}
+                    {r.laboratorio ? ` · ${r.laboratorio}` : ""} · Reg. {r.registro}
+                  </p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>
+                      Embalagem: <strong>{fmt(r.pmvgEmbalagem)}</strong>
+                      {r.qtEmbalagem ? ` (${r.qtEmbalagem} × ${r.unidadeFornecimento ?? unidade ?? "un."})` : ""}
+                    </span>
+                    <span>
+                      PMVG unit.: <strong className="text-red-700 dark:text-red-400">{fmt(r.pmvgUnitario)}</strong>
+                    </span>
+                    <span>PF 0% unit.: <strong>{fmt(r.pfUnitario)}</strong></span>
                   </div>
                 </div>
               ))}
@@ -255,13 +281,15 @@ function CmedPanel({
   );
 }
 
-// ── Recommendation Panel ──────────────────────────────────────────────────────
+// ── Painel de recomendação ────────────────────────────────────────────────────
 
 function RecomendacaoPanel({
   rec,
+  unidade,
   loading,
 }: {
-  rec: BuscarResult["recomendacao"] | null;
+  rec: Recomendacao | null;
+  unidade: string | null;
   loading: boolean;
 }) {
   if (loading) {
@@ -276,48 +304,49 @@ function RecomendacaoPanel({
   if (!rec) return null;
 
   const hasPriceConflict =
-    rec.limitePmvg !== null &&
-    rec.precoReferencia !== null &&
-    rec.precoReferencia > rec.limitePmvg;
+    rec.limitePmvg !== null && rec.precoReferencia !== null && rec.precoReferencia > rec.limitePmvg;
 
   return (
     <div className="rounded-lg border-2 border-primary/40 bg-primary/5 p-5 space-y-4">
       <div className="flex items-center gap-2">
         <ShieldCheck className="h-5 w-5 text-primary" />
         <h3 className="font-semibold">Recomendação — IN 65/2021</h3>
+        {unidade && <Badge variant="outline" className="text-xs">por {unidade}</Badge>}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="text-center">
           <p className="text-xs text-muted-foreground mb-1">Preço de Referência</p>
-          <p className="text-2xl font-bold text-primary">{fmt(rec.precoReferencia, 4)}</p>
-          <p className="text-[10px] text-muted-foreground mt-1">Mediana das medianas</p>
+          <p className="text-2xl font-bold text-primary">{fmt(rec.precoReferencia)}</p>
+          <p className="text-[10px] text-muted-foreground mt-1">Mediana das medianas (BPS, SIASG, PNCP)</p>
         </div>
         <div className="text-center">
-          <p className="text-xs text-muted-foreground mb-1">Teto PMVG</p>
+          <p className="text-xs text-muted-foreground mb-1">Teto PMVG unitário</p>
           <p className={`text-2xl font-bold ${hasPriceConflict ? "text-red-600" : "text-muted-foreground"}`}>
-            {fmt(rec.limitePmvg, 4)}
+            {fmt(rec.limitePmvg)}
           </p>
-          <p className="text-[10px] text-muted-foreground mt-1">CMED sem impostos</p>
+          <p className="text-[10px] text-muted-foreground mt-1">CMED sem impostos ÷ Qt_Embal</p>
         </div>
         <div className="text-center">
           <p className="text-xs text-muted-foreground mb-1">Preço Final Sugerido</p>
-          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-            {fmt(rec.precoFinal, 4)}
-          </p>
+          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmt(rec.precoFinal)}</p>
           <p className="text-[10px] text-muted-foreground mt-1">
-            {hasPriceConflict ? "PMVG aplicado como teto" : "Preço de referência de mercado"}
+            {hasPriceConflict
+              ? "PMVG aplicado como teto"
+              : rec.precoReferencia === null && rec.limitePmvg !== null
+                ? "Sem preço de mercado — PMVG unitário"
+                : "Preço de referência de mercado"}
           </p>
         </div>
       </div>
 
       <div className="space-y-1.5">
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0" />
-          <span>{rec.metodologia}</span>
-          {rec.fontes.length > 0 && (
-            <span>· Fontes: {rec.fontes.join(", ")}</span>
-          )}
+        <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>
+            {rec.metodologia}
+            {rec.fontes.length > 0 && <> · Fontes: {rec.fontes.join(", ")}</>}
+          </span>
         </div>
         {rec.observacoes.map((obs, i) => (
           <div key={i} className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
@@ -330,61 +359,107 @@ function RecomendacaoPanel({
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Resumo do item selecionado ────────────────────────────────────────────────
 
-const UFS = [
-  "AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG",
-  "PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO",
-];
+function ItemResumo({ item, unidades }: { item: ItemPesquisa; unidades: UnidadeOpcao[] }) {
+  const comCmed = item.registros.length;
+  return (
+    <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge variant={item.tipo === "CATMAT" ? "default" : "secondary"}>
+          {item.tipo === "CATMAT" ? `CATMAT ${item.catmat}` : `Registro ANVISA ${item.registro}`}
+        </Badge>
+        {item.tipo === "REGISTRO" && (
+          <Badge variant={item.catmat ? "outline" : "destructive"}>
+            {item.catmat ? `CATMAT ${item.catmat}` : "Sem CATMAT associado"}
+          </Badge>
+        )}
+        {item.codigoClasse && (
+          <Badge variant="outline">
+            Classe {item.codigoClasse} · {item.nomeClasse}
+          </Badge>
+        )}
+        {item.nomePdm && <Badge variant="outline">PDM {item.nomePdm}</Badge>}
+        {item.tipo === "CATMAT" && (
+          <Badge variant="outline">{comCmed} registro(s) ANVISA vinculado(s)</Badge>
+        )}
+      </div>
+      <p className="text-muted-foreground">{item.descricao}</p>
+      {unidades.length === 0 && (
+        <p className="text-amber-700 dark:text-amber-400 flex items-center gap-1">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Nenhuma unidade de fornecimento encontrada nas bases para este código.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Página ────────────────────────────────────────────────────────────────────
 
 export default function PesquisaPrecoPage() {
   const { data: session } = useSession();
-  const [query, setQuery] = useState("");
-  const [uf, setUf] = useState<string>("todos");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<BuscarResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+
+  const [material, setMaterial] = useState<MaterialSelecionado | null>(null);
+  const [unidade, setUnidade] = useState("");
+  const [uf, setUf] = useState("todos");
+  const [params, setParams] = useState<ParametrosBusca | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [relMeta, setRelMeta] = useState({
-    responsavel: "", cargo: "", orgao: "", processo: "", especificacao: "", unidade: "UN",
+    responsavel: "", cargo: "", orgao: "", processo: "", especificacao: "",
   });
 
   const canSearch = hasPermission(session as any, "precos:pesquisar");
   const canReport = hasPermission(session as any, "relatorios:gerar");
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim() || query.trim().length < 3) return;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    try {
-      const params = new URLSearchParams({ q: query.trim() });
-      if (uf && uf !== "todos") params.set("uf", uf);
-      const res = await fetch(`/api/precos/buscar?${params}`);
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Erro na pesquisa");
-      }
-      setResult(await res.json());
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [query, uf]);
+  const {
+    data: detalhe,
+    isLoading: carregandoItem,
+    error: erroItem,
+  } = useItemPesquisa(material?.codigo ?? null);
+  const unidades = detalhe?.unidades ?? [];
+  const unidadeSelecionada = unidades.find((u) => u.unidade === unidade) ?? null;
+
+  const {
+    data: result,
+    isFetching: loading,
+    error: erroBusca,
+  } = usePesquisaPrecos(params);
+
+  // Unidade: única opção → pré-seleciona; opção que sumiu → limpa.
+  useEffect(() => {
+    if (!detalhe) return;
+    setUnidade((atual) => {
+      if (detalhe.unidades.length === 1) return detalhe.unidades[0].unidade;
+      return detalhe.unidades.some((u) => u.unidade === atual) ? atual : "";
+    });
+  }, [detalhe]);
+
+  const selecionarMaterial = useCallback((m: MaterialSelecionado | null) => {
+    setMaterial(m);
+    setUnidade("");
+    setParams(null);
+  }, []);
+
+  const canSubmit = !!material && !!unidade && !carregandoItem;
+
+  const handleSearch = useCallback(() => {
+    if (!material || !unidade) return;
+    setParams({ codigo: material.codigo, unidade, uf: uf !== "todos" ? uf : null });
+  }, [material, unidade, uf]);
 
   const handleGerarRelatorio = useCallback(async () => {
-    if (!result) return;
-    // Open window synchronously (before await) so popup blocker doesn't fire
+    if (!result || !params) return;
+    // Abre a janela antes do await para o bloqueador de pop-up não interferir.
     const newWin = window.open("", "_blank");
     setGerandoPdf(true);
     try {
       const res = await fetch("/api/relatorios/pesquisa-preco", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ termo: query.trim(), ...relMeta }),
+        body: JSON.stringify({ ...params, ...relMeta }),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -403,7 +478,7 @@ export default function PesquisaPrecoPage() {
       setGerandoPdf(false);
       setModalOpen(false);
     }
-  }, [result, query, relMeta]);
+  }, [result, params, relMeta]);
 
   if (!canSearch) {
     return (
@@ -414,41 +489,105 @@ export default function PesquisaPrecoPage() {
     );
   }
 
+  const error = (erroBusca as Error | null)?.message ?? null;
+  const unidadePesquisada = result?.unidade ?? null;
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Header */}
+      {/* Cabeçalho */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Consulta consolidada nas bases CMED, BPS, SIASG judicial e PNCP · Metodologia IN 65/2021
+          Consulta consolidada nas bases CMED, BPS, SIASG judicial, PNCP e ComprasGov por código CATMAT ·
+          Metodologia IN 65/2021
         </p>
       </div>
 
-      {/* Search bar */}
-      <div className="flex gap-2">
-        <Input
-          placeholder="Ex: paracetamol, amoxicilina 500mg, insulina glargina…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          className="flex-1"
-          disabled={loading}
-        />
-        <Select value={uf} onValueChange={setUf}>
-          <SelectTrigger className="w-28">
-            <SelectValue placeholder="UF" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos</SelectItem>
-            {UFS.map((u) => (
-              <SelectItem key={u} value={u}>{u}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button onClick={handleSearch} disabled={loading || query.trim().length < 3}>
-          <Search className="h-4 w-4 mr-2" />
-          {loading ? "Buscando…" : "Buscar"}
-        </Button>
+      {/* Filtros obrigatórios */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Código do material <span className="text-destructive">*</span>
+            </Label>
+            <MaterialSearch modo="codigo" selecionado={material} onSelecionar={selecionarMaterial} />
+            <p className="text-[11px] text-muted-foreground">
+              CATMAT (6 dígitos) ou Registro ANVISA (13 dígitos)
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Descrição CATMAT <span className="text-destructive">*</span>
+            </Label>
+            <MaterialSearch modo="descricao" selecionado={material} onSelecionar={selecionarMaterial} />
+            <p className="text-[11px] text-muted-foreground">
+              Busca no catálogo das 16 classes da saúde e nos registros da CMED
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_8rem_auto] md:items-end">
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Unidade de fornecimento <span className="text-destructive">*</span>
+            </Label>
+            <Select value={unidade} onValueChange={setUnidade} disabled={!material || carregandoItem || unidades.length === 0}>
+              <SelectTrigger className="w-full">
+                <SelectValue
+                  placeholder={
+                    !material
+                      ? "Selecione o material primeiro"
+                      : carregandoItem
+                        ? "Carregando unidades…"
+                        : unidades.length === 0
+                          ? "Sem unidades disponíveis"
+                          : "Selecione a unidade"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {unidades.map((u) => (
+                  <SelectItem key={u.unidade} value={u.unidade}>
+                    {u.unidade} · {fmtInt(u.total)} registro(s)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {unidadeSelecionada && (
+              <p className="text-[11px] text-muted-foreground">
+                CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · BPS {fmtInt(unidadeSelecionada.fontes.bps)} · SIASG{" "}
+                {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP {fmtInt(unidadeSelecionada.fontes.pncp)} · ComprasGov{" "}
+                {fmtInt(unidadeSelecionada.fontes.comprasgov)}
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">UF (opcional)</Label>
+            <Select value={uf} onValueChange={setUf}>
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="UF" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todas</SelectItem>
+                {UFS.map((u) => (
+                  <SelectItem key={u} value={u}>{u}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={handleSearch} disabled={!canSubmit || loading}>
+            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
+            {loading ? "Buscando…" : "Buscar"}
+          </Button>
+        </div>
+
+        {erroItem && (
+          <p className="text-sm text-destructive flex items-center gap-1.5">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {(erroItem as Error).message}
+          </p>
+        )}
+        {material && detalhe && <ItemResumo item={detalhe.item} unidades={unidades} />}
       </div>
 
       {/* Gerar Relatório */}
@@ -461,7 +600,7 @@ export default function PesquisaPrecoPage() {
         </div>
       )}
 
-      {/* Error */}
+      {/* Erro */}
       {error && (
         <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -469,14 +608,14 @@ export default function PesquisaPrecoPage() {
         </div>
       )}
 
-      {/* Recommendation */}
+      {/* Recomendação */}
       {(result || loading) && (
-        <RecomendacaoPanel rec={result?.recomendacao ?? null} loading={loading} />
+        <RecomendacaoPanel rec={result?.recomendacao ?? null} unidade={unidadePesquisada} loading={loading} />
       )}
 
-      {/* Source panels grid */}
+      {/* Painéis por fonte */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CmedPanel data={result?.resultados.cmed ?? null} loading={loading} />
+        <CmedPanel data={result?.resultados.cmed ?? null} unidade={unidadePesquisada} loading={loading} />
         <SourcePanel
           label="BPS — Banco de Preços em Saúde"
           color="bg-blue-500"
@@ -495,16 +634,24 @@ export default function PesquisaPrecoPage() {
           stats={result?.resultados.pncp ?? null}
           loading={loading}
         />
+        <SourcePanel
+          label="ComprasGov — compras públicas 2018–2025"
+          color="bg-violet-500"
+          stats={result?.resultados.comprasgov ?? null}
+          loading={loading}
+          nota="Base sem CATMAT: cruzada pelo nome do PDM e unidade (sem dosagem). Informativa — não entra no preço de referência."
+        />
       </div>
 
-      {/* Methodology note */}
+      {/* Metodologia */}
       <div className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground space-y-1">
         <p className="font-medium text-foreground">Metodologia</p>
         <p>
-          Conforme IN SEGES/ME nº 65/2021: os preços são coletados de ao menos 3 fontes distintas,
-          aplicando-se o critério de remoção de outliers (método IQR). O preço de referência é a
-          mediana das medianas por fonte. Para medicamentos controlados, o PMVG vigente (CMED) é
-          aplicado como teto obrigatório.
+          Conforme IN SEGES/ME nº 65/2021: os preços são coletados por código CATMAT nas bases BPS, SIASG
+          (compras judiciais) e PNCP, na unidade de fornecimento selecionada, aplicando-se o critério de
+          remoção de outliers (método IQR). O preço de referência é a mediana das medianas por fonte. O
+          PMVG vigente (CMED), convertido para a unidade de fornecimento pela quantidade por embalagem, é
+          aplicado como teto obrigatório. Registros ANVISA sem CATMAT retornam apenas o preço CMED.
         </p>
       </div>
 
@@ -517,6 +664,16 @@ export default function PesquisaPrecoPage() {
           <p className="text-sm text-muted-foreground -mt-2">
             Preencha os dados institucionais para instrução do processo. Todos os campos são opcionais.
           </p>
+          {result && (
+            <div className="rounded-md border bg-muted/30 p-2 text-xs space-y-0.5">
+              <p className="font-medium truncate">{result.item.descricao}</p>
+              <p className="text-muted-foreground">
+                {result.item.tipo === "CATMAT" ? `CATMAT ${result.item.catmat}` : `Registro ANVISA ${result.item.registro}`}
+                {" · "}Unidade: {result.unidade}
+                {result.uf ? ` · UF: ${result.uf}` : ""}
+              </p>
+            </div>
+          )}
           <div className="grid gap-3 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -524,7 +681,7 @@ export default function PesquisaPrecoPage() {
                 <Input
                   placeholder="Nome completo"
                   value={relMeta.responsavel}
-                  onChange={e => setRelMeta(m => ({ ...m, responsavel: e.target.value }))}
+                  onChange={(e) => setRelMeta((m) => ({ ...m, responsavel: e.target.value }))}
                 />
               </div>
               <div className="space-y-1">
@@ -532,7 +689,7 @@ export default function PesquisaPrecoPage() {
                 <Input
                   placeholder="Ex: Farmacêutico — Mat. 12345"
                   value={relMeta.cargo}
-                  onChange={e => setRelMeta(m => ({ ...m, cargo: e.target.value }))}
+                  onChange={(e) => setRelMeta((m) => ({ ...m, cargo: e.target.value }))}
                 />
               </div>
             </div>
@@ -541,7 +698,7 @@ export default function PesquisaPrecoPage() {
               <Input
                 placeholder="Ex: Secretaria de Saúde — DIAF"
                 value={relMeta.orgao}
-                onChange={e => setRelMeta(m => ({ ...m, orgao: e.target.value }))}
+                onChange={(e) => setRelMeta((m) => ({ ...m, orgao: e.target.value }))}
               />
             </div>
             <div className="space-y-1">
@@ -549,26 +706,16 @@ export default function PesquisaPrecoPage() {
               <Input
                 placeholder="Ex: 25000.123456/2025-01"
                 value={relMeta.processo}
-                onChange={e => setRelMeta(m => ({ ...m, processo: e.target.value }))}
+                onChange={(e) => setRelMeta((m) => ({ ...m, processo: e.target.value }))}
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2 space-y-1">
-                <Label className="text-xs">Especificação / Apresentação</Label>
-                <Input
-                  placeholder="Ex: comprimido 500 mg, cápsula 20 mg"
-                  value={relMeta.especificacao}
-                  onChange={e => setRelMeta(m => ({ ...m, especificacao: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Unidade</Label>
-                <Input
-                  placeholder="UN, CP, FR…"
-                  value={relMeta.unidade}
-                  onChange={e => setRelMeta(m => ({ ...m, unidade: e.target.value }))}
-                />
-              </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Especificação complementar (opcional)</Label>
+              <Input
+                placeholder="Ex: comprimido revestido 500 mg, blister"
+                value={relMeta.especificacao}
+                onChange={(e) => setRelMeta((m) => ({ ...m, especificacao: e.target.value }))}
+              />
             </div>
           </div>
           <div className="flex justify-end gap-2 pt-2">
