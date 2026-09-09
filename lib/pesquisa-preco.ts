@@ -18,9 +18,11 @@ import { db } from "@/lib/db";
 //   • BPS   — PrecoBps.codigoCatmat ("BR0267140" ou "267140")
 //   • SIASG — PrecoSiasg.codigoCatmat ("BR0267140"), só compras judiciais
 //   • PNCP  — PrecoPncp.codItemCatalogo ("267140")
-//   • ComprasGov — sismat.ComprasGovPreco não traz CATMAT: cruza pelo nome do
-//             PDM do catálogo (material = nomePdm) + unidade. Como o PDM não
-//             distingue dosagem, é INFORMATIVO e não entra no preço de referência.
+//
+// A base ComprasGov (sismat.ComprasGovPreco) NÃO entra aqui: ela não traz o
+// código CATMAT, e o cruzamento possível seria pelo nome do PDM sem distinção
+// de dosagem — incompatível com a exigência de pesquisar por código. Ela segue
+// alimentando a aba "Preços" (lib/precos-metrics.ts).
 //
 // Metodologia (IN SEGES/ME nº 65/2021): por fonte, remoção de outliers (IQR) e
 // mediana; preço de referência = mediana das medianas (BPS, SIASG, PNCP); o
@@ -57,7 +59,6 @@ export function normalizarTexto(texto: string): string {
 /**
  * Unidade de fornecimento comparável entre fontes. Idempotente.
  *   "Frasco 100,00 ML"        → "FRASCO 100 ML"   (PNCP/BPS)
- *   "FRASCO 100 ML"           → "FRASCO 100 ML"   (ComprasGov)
  *   "SERINGA 0,40 ML"         → "SERINGA 0,4 ML"
  *   "COMPRIMIDO - GENÉRICO"   → "COMPRIMIDO"      (BPS marca genérico na unidade)
  *   "UNIDADE 0,00"            → "UNIDADE"         (quantidade zero = não informada)
@@ -133,6 +134,7 @@ export interface ItemPesquisa {
   /** Preenchido quando a pesquisa foi por registro ANVISA. */
   registro: string | null;
   descricao: string;
+  /** Padrão Descritivo de Material do catálogo — exibição apenas. */
   nomePdm: string | null;
   codigoClasse: string | null;
   nomeClasse: string | null;
@@ -140,7 +142,7 @@ export interface ItemPesquisa {
   registros: RegistroCmedResumo[];
 }
 
-export type FonteMercado = "bps" | "siasg" | "pncp" | "comprasgov";
+export type FonteMercado = "bps" | "siasg" | "pncp";
 
 export interface UnidadeOpcao {
   /** Unidade normalizada — valor do filtro obrigatório. */
@@ -175,7 +177,7 @@ export interface Sugestoes {
 }
 
 export interface RegistroMercado {
-  id: string | number;
+  id: string;
   descricao: string;
   unidade: string | null;
   preco: number;
@@ -186,7 +188,6 @@ export interface RegistroMercado {
   orgao: string | null;
   fornecedor: string | null;
   esfera?: string | null;
-  judicial?: string | null;
 }
 
 export interface FonteMercadoResultado {
@@ -245,7 +246,6 @@ export interface ResultadoPesquisa {
     bps: FonteMercadoResultado;
     siasg: FonteMercadoResultado;
     pncp: FonteMercadoResultado;
-    comprasgov: FonteMercadoResultado;
   };
   recomendacao: Recomendacao;
 }
@@ -466,7 +466,6 @@ interface GrupoUnidade {
 
 export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> {
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
-  const nomePdm = item.nomePdm;
   const registrosIds = item.registros.map((r) => r.registro);
 
   const gruposBps = async (): Promise<GrupoUnidade[]> => {
@@ -496,15 +495,6 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     });
     return grupos;
   };
-  const gruposCg = async (): Promise<GrupoUnidade[]> => {
-    if (!nomePdm) return [];
-    const grupos = await db.comprasGovPreco.groupBy({
-      by: ["unidade"],
-      where: { material: { equals: nomePdm, mode: "insensitive" } },
-      _count: { _all: true },
-    });
-    return grupos;
-  };
   const registrosComPreco = async (): Promise<string[]> => {
     if (!registrosIds.length) return [];
     const rows = await db.precoCmed.findMany({
@@ -514,11 +504,10 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     return rows.map((r) => r.registro).filter((r): r is string => r != null);
   };
 
-  const [bps, siasg, pncp, comprasgov, cmedComPreco] = await Promise.all([
+  const [bps, siasg, pncp, cmedComPreco] = await Promise.all([
     gruposBps(),
     gruposSiasg(),
     gruposPncp(),
-    gruposCg(),
     registrosComPreco(),
   ]);
 
@@ -526,7 +515,6 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     bps: new Map(),
     siasg: new Map(),
     pncp: new Map(),
-    comprasgov: new Map(),
   };
   const opcoes = new Map<string, UnidadeOpcao>();
 
@@ -535,7 +523,7 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     const atual = opcoes.get(unidadeNorm) ?? {
       unidade: unidadeNorm,
       total: 0,
-      fontes: { cmed: 0, bps: 0, siasg: 0, pncp: 0, comprasgov: 0 },
+      fontes: { cmed: 0, bps: 0, siasg: 0, pncp: 0 },
     };
     atual.total += n;
     atual.fontes[fonte] += n;
@@ -557,7 +545,6 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
   registrar("bps", bps);
   registrar("siasg", siasg);
   registrar("pncp", pncp);
-  registrar("comprasgov", comprasgov);
 
   const comPreco = new Set(cmedComPreco);
   for (const r of item.registros) {
@@ -614,18 +601,6 @@ interface LinhaPncp {
   fornecedor: string | null;
 }
 
-interface LinhaComprasGov {
-  id: number;
-  material: string;
-  unidade: string;
-  esfera: string;
-  modalidade: string;
-  judicial: string;
-  dtCompra: Date;
-  quantidade: number;
-  precoUnitario: Prisma.Decimal;
-}
-
 const toISO = (d: Date) => d.toISOString();
 
 export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoPesquisa | null> {
@@ -636,12 +611,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const uf = p.uf ? p.uf.toUpperCase() : null;
   const { brutas } = await mapearUnidades(item);
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
-  const nomePdm = item.nomePdm;
 
   const brutasBps = brutas.bps.get(unidade) ?? [];
   const brutasSiasg = brutas.siasg.get(unidade) ?? [];
   const brutasPncp = brutas.pncp.get(unidade) ?? [];
-  const brutasCg = brutas.comprasgov.get(unidade) ?? [];
 
   const whereBps: Prisma.PrecoBpsWhereInput | null =
     variantes && brutasBps.length
@@ -659,10 +632,6 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const wherePncp: Prisma.PrecoPncpWhereInput | null =
     variantes && brutasPncp.length
       ? { codItemCatalogo: { in: variantes.pncp }, unidade: { in: brutasPncp }, ...(uf ? { uf } : {}) }
-      : null;
-  const whereCg: Prisma.ComprasGovPrecoWhereInput | null =
-    nomePdm && brutasCg.length
-      ? { material: { equals: nomePdm, mode: "insensitive" }, unidade: { in: brutasCg } }
       : null;
 
   // Registros ANVISA da unidade escolhida (a CMED é filtrada pela unidade do registro).
@@ -735,26 +704,6 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     });
     return rows;
   };
-  const buscarCg = async (): Promise<LinhaComprasGov[]> => {
-    if (!whereCg) return [];
-    const rows = await db.comprasGovPreco.findMany({
-      where: whereCg,
-      orderBy: { dtCompra: "desc" },
-      take: AMOSTRA,
-      select: {
-        id: true,
-        material: true,
-        unidade: true,
-        esfera: true,
-        modalidade: true,
-        judicial: true,
-        dtCompra: true,
-        quantidade: true,
-        precoUnitario: true,
-      },
-    });
-    return rows;
-  };
   const buscarCmed = async (): Promise<PrecoCmed[]> => {
     if (!registrosDaUnidade.length) return [];
     const rows = await db.precoCmed.findMany({
@@ -778,23 +727,16 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     const n = await db.precoPncp.count({ where: wherePncp });
     return n;
   };
-  const contarCg = async (): Promise<number> => {
-    if (!whereCg) return 0;
-    const n = await db.comprasGovPreco.count({ where: whereCg });
-    return n;
-  };
 
-  const [bpsRows, siasgRows, pncpRows, cgRows, cmedRows, totalBps, totalSiasg, totalPncp, totalCg] =
+  const [bpsRows, siasgRows, pncpRows, cmedRows, totalBps, totalSiasg, totalPncp] =
     await Promise.all([
       buscarBps(),
       buscarSiasg(),
       buscarPncp(),
-      buscarCg(),
       buscarCmed(),
       contarBps(),
       contarSiasg(),
       contarPncp(),
-      contarCg(),
     ]);
 
   const bps = consolidar(
@@ -845,24 +787,6 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       fornecedor: r.fornecedor,
     })),
     pncpRows.length
-  );
-  const comprasgov = consolidar(
-    totalCg,
-    cgRows.map((r) => ({
-      id: r.id,
-      descricao: r.material,
-      unidade: r.unidade,
-      preco: Number(r.precoUnitario),
-      qtd: r.quantidade,
-      data: toISO(r.dtCompra),
-      uf: null,
-      modalidade: r.modalidade,
-      orgao: null,
-      fornecedor: null,
-      esfera: r.esfera,
-      judicial: r.judicial,
-    })),
-    cgRows.length
   );
 
   // CMED: preço por embalagem → por unidade de fornecimento (÷ Qt_Embal).
@@ -957,17 +881,12 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
   }
-  if (comprasgov.total > 0) {
-    observacoes.push(
-      `ComprasGov: ${comprasgov.total} compra(s) de "${nomePdm}" na unidade selecionada, cruzadas pelo nome do PDM (sem dosagem). Exibidas para referência; não entram no preço de referência.`
-    );
-  }
 
   return {
     item,
     unidade,
     uf,
-    resultados: { cmed, bps, siasg, pncp, comprasgov },
+    resultados: { cmed, bps, siasg, pncp },
     recomendacao: {
       precoReferencia,
       limitePmvg,

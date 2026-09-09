@@ -17,8 +17,8 @@ import { NextRequest, NextResponse } from "next/server";
 // Relatório de Pesquisa de Preços (IN SEGES/ME nº 65/2021) — HTML imprimível.
 // Reutiliza a mesma pesquisa da tela (lib/pesquisa-preco.ts): três filtros
 // obrigatórios (código CATMAT/registro ANVISA, descrição, unidade de
-// fornecimento), preço CMED por unidade (PMVG ÷ Qt_Embal), BPS/SIASG/PNCP no
-// preço de referência e ComprasGov como fonte informativa.
+// fornecimento), preço CMED por unidade (PMVG ÷ Qt_Embal) e BPS/SIASG/PNCP no
+// preço de referência.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ interface DadosRelatorio {
 
 function gerarHTML(data: DadosRelatorio): string {
   const { item, unidade, uf, resultados, recomendacao } = data.resultado;
-  const { cmed, bps, siasg, pncp, comprasgov } = resultados;
+  const { cmed, bps, siasg, pncp } = resultados;
 
   const validadeAte = new Date(data.geradoEm);
   validadeAte.setDate(validadeAte.getDate() + 90);
@@ -205,28 +205,7 @@ function gerarHTML(data: DadosRelatorio): string {
     (f) => `Foram identificados <strong>${f.total.toLocaleString("pt-BR")}</strong> registros no PNCP (materiais, 2024–2025) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
     { label: "Fornecedor", fn: (r) => esc((r.fornecedor || "—").substring(0, 40)) }
   );
-  const cgContent =
-    comprasgov.total === 0
-      ? `<p style="color:#666;font-style:italic;font-size:11px;">Nenhuma compra encontrada na base ComprasGov para o PDM ${esc(item.nomePdm || "—")} na unidade selecionada.</p>`
-      : `
-      <p style="font-size:11px;margin-bottom:8px;">A base ComprasGov (compras públicas de medicamentos 2018–2025, com marcador judicial) não traz o código CATMAT; o cruzamento é feito pelo nome do Padrão Descritivo de Material (PDM) <strong>${esc(item.nomePdm)}</strong> e pela unidade de fornecimento, sem distinção de dosagem. Por isso esta fonte é apresentada <strong>apenas para referência</strong> e não compõe o preço de referência. Foram identificadas <strong>${comprasgov.total.toLocaleString("pt-BR")}</strong> compras; analisada amostra de <strong>${comprasgov.amostra}</strong> mais recentes${comprasgov.outliersRemovidos > 0 ? `, com <strong>${comprasgov.outliersRemovidos}</strong> outliers removidos (IQR)` : ""}.</p>
-      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        ${estatBox("Mínimo (pós-limpeza)", fmtBRL(comprasgov.precoMin))}
-        ${estatBox("Mediana", fmtBRL(comprasgov.precoMediana))}
-        ${estatBox("Máximo (pós-limpeza)", fmtBRL(comprasgov.precoMax))}
-        ${estatBox("Compras na amostra", String(comprasgov.amostra))}
-      </div>
-      ${tabela(comprasgov.registros, [
-        { label: "Material", fn: (r) => esc(r.descricao) },
-        { label: "Preço", fn: (r) => fmtBRL(r.preco), right: true },
-        { label: "Unidade", fn: (r) => esc(r.unidade || "—") },
-        { label: "Data", fn: (r) => fmtDate(r.data) },
-        { label: "Esfera", fn: (r) => esc(r.esfera || "—") },
-        { label: "Modalidade", fn: (r) => esc(r.modalidade || "—") },
-        { label: "Judicial", fn: (r) => esc(r.judicial || "—") },
-      ])}`;
-
-  // Seção 9 — Análise
+  // Seção 8 — Análise
   const fonteLinhas = [
     { fonte: "BPS", mediana: bps.precoMediana, n: bps.amostra, removidos: bps.outliersRemovidos },
     { fonte: "SIASG (judicial)", mediana: siasg.precoMediana, n: siasg.amostra, removidos: siasg.outliersRemovidos },
@@ -286,7 +265,7 @@ function gerarHTML(data: DadosRelatorio): string {
         : ""
     }`;
 
-  // Seção 10 — Conclusão
+  // Seção 9 — Conclusão
   const conclusaoContent = `
     <div style="border:2px solid #1a3a5c;padding:12px;margin-bottom:16px;border-radius:4px;background:#eef2f7;">
       <p style="font-size:13px;font-weight:bold;color:#1a3a5c;margin-bottom:6px;">PREÇO UNITÁRIO ESTIMADO:</p>
@@ -306,7 +285,7 @@ function gerarHTML(data: DadosRelatorio): string {
         : ""
     }
     <p style="font-size:11px;margin-bottom:6px;"><strong>Validade desta pesquisa:</strong> 90 (noventa) dias, conforme art. 5º, §4º da IN SEGES/ME nº 65/2021 — até <strong>${fmtDateLong(validadeAte)}</strong>.</p>
-    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), BPS 2020–2025, SIASG/Comprasnet (compras judiciais 2002–2021), PNCP (materiais 2024–2025) e ComprasGov 2018–2025 (referência).</p>
+    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), BPS 2020–2025, SIASG/Comprasnet (compras judiciais 2002–2021) e PNCP (materiais 2024–2025).</p>
     <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:8px;">
       <tr>
         <td style="width:50%;padding-right:20px;">
@@ -423,7 +402,6 @@ function gerarHTML(data: DadosRelatorio): string {
         <li><strong>BPS</strong> — Banco de Preços em Saúde (DATASUS/MS): registros de compras hospitalares públicas 2020–2025, por código CATMAT.</li>
         <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
         <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT).</li>
-        <li><strong>ComprasGov</strong> — compras públicas de medicamentos 2018–2025 (marcador judicial): sem código CATMAT na origem, cruzada pelo nome do PDM e unidade; apresentada apenas para referência.</li>
       </ul>
       <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR), e o preço estimado foi calculado como a mediana da distribuição resultante. O preço de referência consolidado corresponde à mediana das medianas apuradas nas fontes BPS, SIASG e PNCP (método das medianas de medianas). Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º).</p>`
     )}
@@ -432,12 +410,11 @@ function gerarHTML(data: DadosRelatorio): string {
     ${secao(5, "Resultado por Fonte — BPS (Banco de Preços em Saúde)", bpsContent)}
     ${secao(6, "Resultado por Fonte — SIASG/Comprasnet (Compras com Ação Judicial)", siasgContent)}
     ${secao(7, "Resultado por Fonte — PNCP (Portal Nacional de Contratações Públicas)", pncpContent)}
-    ${secao(8, "Referência Complementar — ComprasGov (Compras Públicas 2018–2025)", cgContent)}
-    ${secao(9, "Análise Estatística e Apuração do Preço de Referência", analiseContent)}
-    ${secao(10, "Conclusão, Recomendação, Validade e Responsável", conclusaoContent)}
+    ${secao(8, "Análise Estatística e Apuração do Preço de Referência", analiseContent)}
+    ${secao(9, "Conclusão, Recomendação, Validade e Responsável", conclusaoContent)}
 
     ${secao(
-      11,
+      10,
       "Referências Normativas",
       `<ul style="padding-left:18px;font-size:10px;line-height:1.8;color:#444;">
         <li>IN SEGES/ME nº 65, de 7 de julho de 2021 — Dispõe sobre o procedimento administrativo para a realização de pesquisa de preços para a aquisição de bens e contratação de serviços.</li>

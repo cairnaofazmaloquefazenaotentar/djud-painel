@@ -38,8 +38,8 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preço — três filtros obrigatórios (código do material, descrição
 // CATMAT e unidade de fornecimento) dirigem a consulta consolidada em CMED,
-// BPS, SIASG, PNCP e ComprasGov (lib/pesquisa-preco.ts). O preço CMED é
-// exibido por unidade de fornecimento (PMVG ÷ Qt_Embal).
+// BPS, SIASG e PNCP (lib/pesquisa-preco.ts). O preço CMED é exibido por
+// unidade de fornecimento (PMVG ÷ Qt_Embal).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -68,13 +68,11 @@ function SourcePanel({
   color,
   stats,
   loading,
-  nota,
 }: {
   label: string;
   color: string;
   stats: FonteMercadoResultado | null;
   loading: boolean;
-  nota?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -91,8 +89,6 @@ function SourcePanel({
           </Badge>
         )}
       </div>
-
-      {nota && <p className="text-[11px] text-muted-foreground">{nota}</p>}
 
       {loading && (
         <div className="h-16 flex items-center justify-center text-muted-foreground text-sm animate-pulse">
@@ -152,7 +148,7 @@ function SourcePanel({
               {expanded && (
                 <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto">
                   {stats.registros.map((r) => (
-                    <div key={String(r.id)} className="rounded border p-2 text-xs space-y-0.5">
+                    <div key={r.id} className="rounded border p-2 text-xs space-y-0.5">
                       <p className="font-medium truncate">{r.descricao}</p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
                         <span className="font-semibold text-foreground">{fmt(r.preco)}</span>
@@ -161,11 +157,6 @@ function SourcePanel({
                         {r.uf && <span>{r.uf}</span>}
                         {r.esfera && <span>{r.esfera}</span>}
                         {r.modalidade && <span>{r.modalidade}</span>}
-                        {r.judicial && (
-                          <Badge variant={r.judicial === "Judicial" ? "destructive" : "secondary"} className="text-[10px] h-4">
-                            {r.judicial}
-                          </Badge>
-                        )}
                         {r.orgao && <span className="truncate max-w-[14rem]">{r.orgao}</span>}
                       </div>
                     </div>
@@ -498,7 +489,7 @@ export default function PesquisaPrecoPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Consulta consolidada nas bases CMED, BPS, SIASG judicial, PNCP e ComprasGov por código CATMAT ·
+          Consulta consolidada nas bases CMED, BPS, SIASG judicial e PNCP por código CATMAT ·
           Metodologia IN 65/2021
         </p>
       </div>
@@ -556,8 +547,7 @@ export default function PesquisaPrecoPage() {
             {unidadeSelecionada && (
               <p className="text-[11px] text-muted-foreground">
                 CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · BPS {fmtInt(unidadeSelecionada.fontes.bps)} · SIASG{" "}
-                {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP {fmtInt(unidadeSelecionada.fontes.pncp)} · ComprasGov{" "}
-                {fmtInt(unidadeSelecionada.fontes.comprasgov)}
+                {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP {fmtInt(unidadeSelecionada.fontes.pncp)}
               </p>
             )}
           </div>
@@ -633,13 +623,6 @@ export default function PesquisaPrecoPage() {
           color="bg-emerald-500"
           stats={result?.resultados.pncp ?? null}
           loading={loading}
-        />
-        <SourcePanel
-          label="ComprasGov — compras públicas 2018–2025"
-          color="bg-violet-500"
-          stats={result?.resultados.comprasgov ?? null}
-          loading={loading}
-          nota="Base sem CATMAT: cruzada pelo nome do PDM e unidade (sem dosagem). Informativa — não entra no preço de referência."
         />
       </div>
 

@@ -98,8 +98,10 @@ python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....
   (REPLACE; criam a tabela se ausente com a mesma DDL do `prisma db push`).
 - Preço CMED é por embalagem (`PrecoCmed.pmvgSemImpostos`); a pesquisa divide por `qtEmbalagem` para
   refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
-- Cruzamento por código: BPS/SIASG usam `"BR0" + CATMAT`, PNCP usa o código puro. ComprasGov não tem
-  CATMAT — cruza por `nomePdm` + unidade e é apenas informativo (fora do preço de referência).
+- Fontes: CMED (teto), BPS, SIASG judicial e PNCP. Cruzamento por código: BPS/SIASG usam
+  `"BR0" + CATMAT`, PNCP usa o código puro.
+- A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
+  só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços.
 - `normalizarTexto`/`normalizarUnidade` (TS) são espelhadas em `scripts/precos_norm.py` — alterar as duas.
 
 ## Variáveis de Ambiente

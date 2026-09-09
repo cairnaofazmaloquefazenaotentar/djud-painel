@@ -622,7 +622,7 @@ model CatmatItem {
   descricaoItem String   @db.Text       // Descrição completa do item
   descricaoNorm String   @db.Text       // Descrição sem acento/minúscula p/ busca (normalizarTexto)
   codigoPdm     String                  // Padrão Descritivo de Material (ex.: "8811")
-  nomePdm       String                  // Nome do PDM (ex.: "AZITROMICINA") — chave p/ ComprasGovPreco.material
+  nomePdm       String                  // Nome do PDM (ex.: "AZITROMICINA") — exibição/agrupamento
   codigoClasse  String                  // Classe (ex.: "6505")
   nomeClasse    String                  // Ex.: "DROGAS E MEDICAMENTOS"
   codigoGrupo   String                  // Grupo (ex.: "65")

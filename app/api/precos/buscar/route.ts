@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 /**
  * GET /api/precos/buscar?codigo=267140&unidade=COMPRIMIDO[&uf=SP]
  *
- * Pesquisa consolidada de preços (CMED, BPS, SIASG, PNCP e ComprasGov) dirigida
+ * Pesquisa consolidada de preços (CMED, BPS, SIASG e PNCP) dirigida
  * pelos três filtros obrigatórios: código do material (CATMAT de até 6 dígitos
  * ou registro ANVISA de 13), descrição CATMAT (implícita no código) e unidade
  * de fornecimento (normalizada — ver lib/pesquisa-preco.ts). Resposta:
