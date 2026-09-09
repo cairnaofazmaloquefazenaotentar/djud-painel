@@ -87,6 +87,9 @@ npm run lint             # ESLint check
 # Pesquisa de Preços — bases de apoio (Python: openpyxl + psycopg; lê DATABASE_URL de .env.local)
 python scripts/import_catmat_classes.py --file "Catmats - 16 Classes - DD.MM.AAAA.xlsx" --dry-run|--confirm
 python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....xlsx" --dry-run|--confirm
+
+# Cesta da Pesquisa de Preços — cria a tabela CestaItem (equivale ao db:push do model)
+python scripts/create_cesta_table.py --dry-run|--confirm
 ```
 
 ## Pesquisa de Preços (aba /pesquisa-preco)
@@ -103,6 +106,21 @@ python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....
 - A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
   só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços.
 - `normalizarTexto`/`normalizarUnidade` (TS) são espelhadas em `scripts/precos_norm.py` — alterar as duas.
+
+### Cesta de itens (carrinho)
+
+- Tabela `CestaItem` (schema public), **uma cesta por usuário** (`userId`) — fica no banco, não em
+  localStorage, justamente para persistir entre sessões/máquinas. Quem sai sem gerar o relatório
+  encontra os mesmos itens ao logar de novo.
+- Chave lógica do item: `codigo` + `unidade` + `uf`. Adicionar de novo **soma a quantidade** em vez
+  de duplicar a linha. Teto de `MAX_ITENS_CESTA` (30) itens em `lib/cesta-schemas.ts`.
+- Os campos `precoReferencia`/`limitePmvg`/`precoFinal` são **snapshot** do momento em que o item
+  entrou na cesta — servem só para o total exibido na tela. O relatório consolidado
+  (`POST /api/relatorios/cesta`) **refaz `pesquisarPrecos` item a item na emissão** (concorrência 4)
+  e é esse preço, datado, que instrui o processo.
+- Gerar o relatório esvazia a cesta por padrão (checkbox na modal permite manter).
+- HTML dos relatórios: blocos compartilhados em `lib/relatorio-pesquisa-preco.ts`, usados tanto pelo
+  relatório de um item quanto pelo da cesta.
 
 ## Variáveis de Ambiente
 

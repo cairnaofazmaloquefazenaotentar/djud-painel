@@ -12,6 +12,7 @@ import {
   Loader2,
   Search,
   ShieldCheck,
+  ShoppingCart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +27,9 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-preco/material-search";
+import { CestaSheet } from "@/components/pesquisa-preco/cesta-sheet";
 import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
+import { useAdicionarItemCesta } from "@/hooks/useCesta";
 import type {
   CmedResultado,
   FonteMercadoResultado,
@@ -398,6 +401,7 @@ export default function PesquisaPrecoPage() {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
+  const [avisoCesta, setAvisoCesta] = useState<{ texto: string; erro: boolean } | null>(null);
   const [relMeta, setRelMeta] = useState({
     responsavel: "", cargo: "", orgao: "", processo: "", especificacao: "",
   });
@@ -418,6 +422,11 @@ export default function PesquisaPrecoPage() {
     isFetching: loading,
     error: erroBusca,
   } = usePesquisaPrecos(params);
+
+  const adicionarCesta = useAdicionarItemCesta();
+
+  // O aviso vale para a pesquisa que está na tela.
+  useEffect(() => setAvisoCesta(null), [params]);
 
   // Unidade: única opção → pré-seleciona; opção que sumiu → limpa.
   useEffect(() => {
@@ -440,6 +449,24 @@ export default function PesquisaPrecoPage() {
     if (!material || !unidade) return;
     setParams({ codigo: material.codigo, unidade, uf: uf !== "todos" ? uf : null });
   }, [material, unidade, uf]);
+
+  const handleAdicionarCesta = useCallback(() => {
+    if (!params) return;
+    setAvisoCesta(null);
+    adicionarCesta.mutate(
+      { codigo: params.codigo, unidade: params.unidade, uf: params.uf, quantidade: 1 },
+      {
+        onSuccess: (r) =>
+          setAvisoCesta({
+            texto: r.duplicado
+              ? `Item já estava na cesta — quantidade agora é ${r.item.quantidade}.`
+              : "Item adicionado à cesta.",
+            erro: false,
+          }),
+        onError: (e) => setAvisoCesta({ texto: e.message, erro: true }),
+      }
+    );
+  }, [adicionarCesta, params]);
 
   const handleGerarRelatorio = useCallback(async () => {
     if (!result || !params) return;
@@ -486,12 +513,15 @@ export default function PesquisaPrecoPage() {
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
       {/* Cabeçalho */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Consulta consolidada nas bases CMED, BPS, SIASG judicial e PNCP por código CATMAT ·
-          Metodologia IN 65/2021
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Consulta consolidada nas bases CMED, BPS, SIASG judicial e PNCP por código CATMAT ·
+            Metodologia IN 65/2021
+          </p>
+        </div>
+        <CestaSheet podeGerarRelatorio={canReport} />
       </div>
 
       {/* Filtros obrigatórios */}
@@ -580,13 +610,34 @@ export default function PesquisaPrecoPage() {
         {material && detalhe && <ItemResumo item={detalhe.item} unidades={unidades} />}
       </div>
 
-      {/* Gerar Relatório */}
-      {result && canReport && (
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={() => setModalOpen(true)}>
-            <FileText className="h-4 w-4 mr-2" />
-            Gerar Relatório IN 65/2021
+      {/* Ações do resultado */}
+      {result && (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {avisoCesta && (
+            <span
+              className={`mr-auto text-xs ${avisoCesta.erro ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}`}
+            >
+              {avisoCesta.texto}
+            </span>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleAdicionarCesta}
+            disabled={adicionarCesta.isPending}
+          >
+            {adicionarCesta.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <ShoppingCart className="h-4 w-4 mr-2" />
+            )}
+            Adicionar à cesta
           </Button>
+          {canReport && (
+            <Button variant="outline" onClick={() => setModalOpen(true)}>
+              <FileText className="h-4 w-4 mr-2" />
+              Gerar Relatório IN 65/2021
+            </Button>
+          )}
         </div>
       )}
 

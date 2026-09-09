@@ -29,6 +29,7 @@ model User {
   demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
   attachments             Attachment[] @relation("UserAttachments")
   relatoriosGerados       RelatorioGerado[]
+  cestaItens              CestaItem[]
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -653,5 +654,46 @@ model CmedRegistro {
 
   @@index([catmat])
   @@index([unidadeNorm])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cesta de itens da Pesquisa de Preços
+//
+// Carrinho por usuário: cada linha é um item já pesquisado (código + unidade de
+// fornecimento + UF) que o usuário guardou para compor um relatório único com
+// vários itens. Fica no banco (e não em localStorage) para persistir entre
+// sessões e dispositivos — o usuário desloga, loga de novo e a cesta continua
+// lá até que ele gere o relatório e opte por esvaziá-la.
+//
+// Os campos de preço são um SNAPSHOT do momento em que o item foi adicionado,
+// usados apenas para exibir o total estimado na cesta. O relatório consolidado
+// (app/api/relatorios/cesta) refaz a pesquisa item a item na data de emissão —
+// é esse recálculo que vale para instruir o processo.
+//
+// A tabela é criada por scripts/create_cesta_table.py (mesma DDL que o
+// `prisma db push` geraria a partir deste modelo).
+// ─────────────────────────────────────────────────────────────────────────────
+model CestaItem {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codigo          String                // CATMAT (até 6 dígitos) ou registro ANVISA (13)
+  tipo            String                // CATMAT | REGISTRO
+  catmat          String?               // CATMAT resolvido (exibição)
+  descricao       String   @db.Text
+  unidade         String                // Unidade de fornecimento normalizada
+  uf              String?               // Filtro de UF da pesquisa; null = todas
+  quantidade      Int      @default(1)  // Quantidade demandada — compõe o valor total
+  observacao      String?  @db.Text
+  precoReferencia Float?                // Snapshot: mediana das medianas (BPS/SIASG/PNCP)
+  limitePmvg      Float?                // Snapshot: teto PMVG unitário (CMED ÷ Qt_Embal)
+  precoFinal      Float?                // Snapshot: preço unitário sugerido
+  calculadoEm     DateTime @default(now())
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, codigo, unidade])
   @@schema("public")
 }
