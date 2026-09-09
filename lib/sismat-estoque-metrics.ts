@@ -74,14 +74,14 @@ export async function getSismatEstoqueMetrics(
   const twelveMonthsAgo = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1));
 
   // ── Step 1: distinct material names (com dosagem) de SismatEntrada ──────
-  const materiaisRaw = await db.sismatEntrada.findMany({
-    select: { material: true },
-    distinct: ["material"],
+  // groupBy é mais idiomático que findMany+distinct e usa o índice em material
+  const materiaisGrouped = await db.sismatEntrada.groupBy({
+    by: ["material"],
   });
 
   // Mapa: nome normalizado → lista de valores raw (para filtrar no Prisma)
   const normToRaw = new Map<string, string[]>();
-  for (const r of materiaisRaw) {
+  for (const r of materiaisGrouped) {
     const norm = normalizeMat(r.material);
     if (!norm) continue;
     const arr = normToRaw.get(norm) ?? [];
