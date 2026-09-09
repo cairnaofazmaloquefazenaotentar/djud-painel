@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle, CheckSquare, Square, FileSpreadsheet, Columns3, Eye, EyeOff, RotateCcw } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
+import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
 import { toast } from "sonner";
 
 interface Demanda {
@@ -396,7 +397,7 @@ export default function DemandasPage() {
   ];
 
   const COL_LABELS: Record<string, string> = {
-    numero: "Nº DJUD", numeroProcesso: "Nº Processo", titulo: "Título",
+    numero: "Nº DJUD", numeroProcesso: "Nº Processo", titulo: "Título / Princípio Ativo",
     areaTematica: "Grupo Temático", status: "Status", prioridade: "Prioridade",
     trfRegiao: "TRF", regiaoBrasil: "Região Brasil", dataEntradaDJUD: "Entrada DJUD",
     responsavel: "Responsável",
@@ -451,41 +452,47 @@ export default function DemandasPage() {
     },
     {
       accessorKey: "titulo",
-      header: "Título / Objeto",
-      cell: ({ row }) => (
-        <div className="max-w-[220px]">
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <p className="font-medium text-sm truncate cursor-default">
-                  {row.original.titulo}
-                </p>
-              </TooltipTrigger>
-              {row.original.titulo.length > 30 && (
-                <TooltipContent side="top" className="max-w-xs text-xs">
-                  {row.original.titulo}
-                </TooltipContent>
-              )}
-            </Tooltip>
-          </TooltipProvider>
-          {row.original.objetoAcao && (
+      header: "Título / Princípio Ativo",
+      cell: ({ row }) => {
+        // Demandas de serviço/material não têm medicamento — daí o traço.
+        const principios = normalizarPrincipioAtivo(row.original.principioAtivo);
+        return (
+          <div className="max-w-[220px]">
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <p className="text-xs text-muted-foreground truncate cursor-default">
-                    {row.original.objetoAcao}
+                  <p className="font-medium text-sm truncate cursor-default">
+                    {row.original.titulo}
                   </p>
                 </TooltipTrigger>
-                {row.original.objetoAcao.length > 35 && (
-                  <TooltipContent side="bottom" className="max-w-xs text-xs">
-                    {row.original.objetoAcao}
+                {row.original.titulo.length > 30 && (
+                  <TooltipContent side="top" className="max-w-xs text-xs">
+                    {row.original.titulo}
                   </TooltipContent>
                 )}
               </Tooltip>
             </TooltipProvider>
-          )}
-        </div>
-      ),
+            {principios ? (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <p className="text-xs text-muted-foreground truncate cursor-default">
+                      {principios}
+                    </p>
+                  </TooltipTrigger>
+                  {principios.length > 35 && (
+                    <TooltipContent side="bottom" className="max-w-xs text-xs">
+                      {principios}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <p className="text-xs text-muted-foreground/40">—</p>
+            )}
+          </div>
+        );
+      },
     },
     {
       accessorKey: "areaTematica",

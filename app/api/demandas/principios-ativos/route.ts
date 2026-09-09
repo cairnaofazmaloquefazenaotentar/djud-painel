@@ -3,41 +3,8 @@ export const runtime = "nodejs";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { jsonComVersao } from "@/lib/data-version";
+import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
 import { NextResponse } from "next/server";
-
-/**
- * Normaliza um valor bruto de princípio ativo vindo do Redmine.
- * Os dados vêm sujos: alguns valores chegam como array JSON de 1 elemento
- * (ex.: `["Canabidiol"]`), outros como texto puro (ex.: `Canabidiol`).
- * Esta função desempacota o array e devolve o nome limpo, ou `null` quando
- * o valor é lixo (N/A, placeholder "==> Outro...", vazio).
- */
-function normalizar(raw: string): string | null {
-  let s = raw.trim();
-
-  // Desempacota formas tipo ["Canabidiol"] ou ["A","B"] -> "A | B"
-  if (s.startsWith("[") && s.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(s);
-      if (Array.isArray(parsed)) {
-        s = parsed.map((x) => String(x).trim()).join(" | ");
-      }
-    } catch {
-      // fallback: remove colchetes/aspas manualmente
-      s = s.replace(/^\[|\]$/g, "").replace(/^"|"$/g, "").trim();
-    }
-  }
-
-  s = s.trim();
-  const upper = s.toUpperCase();
-
-  // Descarta lixo conhecido
-  if (s === "") return null;
-  if (upper === "N/A" || upper === "NA") return null;
-  if (s.startsWith("==>")) return null;
-
-  return s;
-}
 
 export async function GET(request: Request) {
   try {
@@ -57,7 +24,7 @@ export async function GET(request: Request) {
     const mapa = new Map<string, { value: string; count: number }>();
 
     for (const g of grupos) {
-      const limpo = normalizar(g.principioAtivo ?? "");
+      const limpo = normalizarPrincipioAtivo(g.principioAtivo);
       if (!limpo) continue;
 
       const chave = limpo.toLowerCase();
