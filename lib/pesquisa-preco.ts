@@ -25,6 +25,12 @@ import { db } from "@/lib/db";
 // Metodologia (IN SEGES/ME nº 65/2021): por fonte, remoção de outliers (IQR) e
 // mediana; preço de referência = mediana das medianas (BPS, SIASG, PNCP); o
 // menor PMVG unitário sem impostos (CMED) é aplicado como teto.
+//
+// Nota de tipagem: as chamadas ao Prisma (groupBy/findMany/count) ficam sempre
+// em `const` locais e NUNCA em posição de retorno de função com tipo declarado.
+// Com tipo de retorno contextual o TypeScript tenta inferir os genéricos
+// internos do Prisma (ex.: `InputErrors` do groupBy) a partir dele e quebra o
+// build ("is not assignable to parameter of type ... & GrupoUnidade[]").
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Tamanho da amostra (registros mais recentes) usada na estatística por fonte. */
@@ -337,13 +343,12 @@ export async function resolverItem(codigoBruto: string): Promise<ItemPesquisa | 
     };
   }
 
-  const [catmatItem, regs] = await Promise.all([
-    db.catmatItem.findUnique({ where: { codigoItem: cls.codigo } }),
-    db.cmedRegistro.findMany({
-      where: { catmat: cls.codigo },
-      orderBy: [{ substancia: "asc" }, { produto: "asc" }, { registro: "asc" }],
-    }),
-  ]);
+  const catmatItemPromise = db.catmatItem.findUnique({ where: { codigoItem: cls.codigo } });
+  const regsPromise = db.cmedRegistro.findMany({
+    where: { catmat: cls.codigo },
+    orderBy: [{ substancia: "asc" }, { produto: "asc" }, { registro: "asc" }],
+  });
+  const [catmatItem, regs] = await Promise.all([catmatItemPromise, regsPromise]);
   if (!catmatItem && regs.length === 0) return null;
 
   return {
@@ -386,9 +391,6 @@ function sugestaoRegistro(r: CmedRegistro): SugestaoRegistro {
   };
 }
 
-const semItens = (): Promise<CatmatItem[]> => Promise.resolve([]);
-const semRegistros = (): Promise<CmedRegistro[]> => Promise.resolve([]);
-
 export async function sugerirMateriais(q: string): Promise<Sugestoes> {
   const termo = q.trim();
   if (termo.length < 2) return { itens: [], registros: [] };
@@ -398,22 +400,26 @@ export async function sugerirMateriais(q: string): Promise<Sugestoes> {
 
   if (somenteDigitos && digitos) {
     const catmatPrefixo = digitos.replace(/^0+/, "");
-    const buscarItens = (): Promise<CatmatItem[]> =>
-      catmatPrefixo && catmatPrefixo.length <= 6
-        ? db.catmatItem.findMany({
-            where: { codigoItem: { startsWith: catmatPrefixo } },
-            orderBy: { codigoItem: "asc" },
-            take: 20,
-          })
-        : semItens();
-    const buscarRegistros = (): Promise<CmedRegistro[]> =>
-      digitos.length >= 4
-        ? db.cmedRegistro.findMany({
-            where: { registro: { startsWith: digitos } },
-            orderBy: { registro: "asc" },
-            take: 20,
-          })
-        : semRegistros();
+
+    const buscarItens = async (): Promise<CatmatItem[]> => {
+      if (!catmatPrefixo || catmatPrefixo.length > 6) return [];
+      const rows = await db.catmatItem.findMany({
+        where: { codigoItem: { startsWith: catmatPrefixo } },
+        orderBy: { codigoItem: "asc" },
+        take: 20,
+      });
+      return rows;
+    };
+    const buscarRegistros = async (): Promise<CmedRegistro[]> => {
+      if (digitos.length < 4) return [];
+      const rows = await db.cmedRegistro.findMany({
+        where: { registro: { startsWith: digitos } },
+        orderBy: { registro: "asc" },
+        take: 20,
+      });
+      return rows;
+    };
+
     const [itens, registros] = await Promise.all([buscarItens(), buscarRegistros()]);
     return { itens: itens.map(sugestaoItem), registros: registros.map(sugestaoRegistro) };
   }
@@ -425,23 +431,23 @@ export async function sugerirMateriais(q: string): Promise<Sugestoes> {
     .map((p) => p.replace(/^[,\-]+|[,\-]+$/g, ""))
     .filter((p) => p.length >= 2);
   if (palavras.length === 0) return { itens: [], registros: [] };
-  const [itens, registros] = await Promise.all([
-    db.catmatItem.findMany({
-      where: { AND: palavras.map((p) => ({ descricaoNorm: { contains: p } })) },
-      orderBy: [{ codigoClasse: "asc" }, { descricaoItem: "asc" }],
-      take: 30,
-    }),
-    db.cmedRegistro.findMany({
-      where: {
-        OR: [
-          { produto: { contains: termo, mode: "insensitive" } },
-          { substancia: { contains: termo, mode: "insensitive" } },
-        ],
-      },
-      orderBy: [{ substancia: "asc" }, { produto: "asc" }],
-      take: 10,
-    }),
-  ]);
+
+  const itensPromise = db.catmatItem.findMany({
+    where: { AND: palavras.map((p) => ({ descricaoNorm: { contains: p } })) },
+    orderBy: [{ codigoClasse: "asc" }, { descricaoItem: "asc" }],
+    take: 30,
+  });
+  const registrosPromise = db.cmedRegistro.findMany({
+    where: {
+      OR: [
+        { produto: { contains: termo, mode: "insensitive" } },
+        { substancia: { contains: termo, mode: "insensitive" } },
+      ],
+    },
+    orderBy: [{ substancia: "asc" }, { produto: "asc" }],
+    take: 10,
+  });
+  const [itens, registros] = await Promise.all([itensPromise, registrosPromise]);
   return { itens: itens.map(sugestaoItem), registros: registros.map(sugestaoRegistro) };
 }
 
@@ -458,52 +464,55 @@ interface GrupoUnidade {
   _count: { _all: number };
 }
 
-const semGrupos = (): Promise<GrupoUnidade[]> => Promise.resolve([]);
-
 export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> {
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
   const nomePdm = item.nomePdm;
   const registrosIds = item.registros.map((r) => r.registro);
 
-  const gruposBps = (): Promise<GrupoUnidade[]> =>
-    variantes
-      ? db.precoBps.groupBy({
-          by: ["unidade"],
-          where: { codigoCatmat: { in: variantes.bps } },
-          _count: { _all: true },
-        })
-      : semGrupos();
-  const gruposSiasg = (): Promise<GrupoUnidade[]> =>
-    variantes
-      ? db.precoSiasg.groupBy({
-          by: ["unidade"],
-          where: { codigoCatmat: { in: variantes.siasg }, acaoJudicial: true },
-          _count: { _all: true },
-        })
-      : semGrupos();
-  const gruposPncp = (): Promise<GrupoUnidade[]> =>
-    variantes
-      ? db.precoPncp.groupBy({
-          by: ["unidade"],
-          where: { codItemCatalogo: { in: variantes.pncp } },
-          _count: { _all: true },
-        })
-      : semGrupos();
-  const gruposCg = (): Promise<GrupoUnidade[]> =>
-    nomePdm
-      ? db.comprasGovPreco.groupBy({
-          by: ["unidade"],
-          where: { material: { equals: nomePdm, mode: "insensitive" } },
-          _count: { _all: true },
-        })
-      : semGrupos();
-  const registrosComPreco = (): Promise<{ registro: string | null }[]> =>
-    registrosIds.length
-      ? db.precoCmed.findMany({
-          where: { registro: { in: registrosIds } },
-          select: { registro: true },
-        })
-      : Promise.resolve([]);
+  const gruposBps = async (): Promise<GrupoUnidade[]> => {
+    if (!variantes) return [];
+    const grupos = await db.precoBps.groupBy({
+      by: ["unidade"],
+      where: { codigoCatmat: { in: variantes.bps } },
+      _count: { _all: true },
+    });
+    return grupos;
+  };
+  const gruposSiasg = async (): Promise<GrupoUnidade[]> => {
+    if (!variantes) return [];
+    const grupos = await db.precoSiasg.groupBy({
+      by: ["unidade"],
+      where: { codigoCatmat: { in: variantes.siasg }, acaoJudicial: true },
+      _count: { _all: true },
+    });
+    return grupos;
+  };
+  const gruposPncp = async (): Promise<GrupoUnidade[]> => {
+    if (!variantes) return [];
+    const grupos = await db.precoPncp.groupBy({
+      by: ["unidade"],
+      where: { codItemCatalogo: { in: variantes.pncp } },
+      _count: { _all: true },
+    });
+    return grupos;
+  };
+  const gruposCg = async (): Promise<GrupoUnidade[]> => {
+    if (!nomePdm) return [];
+    const grupos = await db.comprasGovPreco.groupBy({
+      by: ["unidade"],
+      where: { material: { equals: nomePdm, mode: "insensitive" } },
+      _count: { _all: true },
+    });
+    return grupos;
+  };
+  const registrosComPreco = async (): Promise<string[]> => {
+    if (!registrosIds.length) return [];
+    const rows = await db.precoCmed.findMany({
+      where: { registro: { in: registrosIds } },
+      select: { registro: true },
+    });
+    return rows.map((r) => r.registro).filter((r): r is string => r != null);
+  };
 
   const [bps, siasg, pncp, comprasgov, cmedComPreco] = await Promise.all([
     gruposBps(),
@@ -550,7 +559,7 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
   registrar("pncp", pncp);
   registrar("comprasgov", comprasgov);
 
-  const comPreco = new Set(cmedComPreco.map((r) => r.registro));
+  const comPreco = new Set(cmedComPreco);
   for (const r of item.registros) {
     if (comPreco.has(r.registro)) somar("cmed", r.unidadeNorm, 1);
   }
@@ -662,95 +671,118 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     .filter((r) => r.unidadeNorm === unidade)
     .map((r) => r.registro);
 
-  const buscarBps = (): Promise<LinhaBps[]> =>
-    whereBps
-      ? db.precoBps.findMany({
-          where: whereBps,
-          orderBy: { data: "desc" },
-          take: AMOSTRA,
-          select: {
-            id: true,
-            descricao: true,
-            preco: true,
-            qtd: true,
-            unidade: true,
-            data: true,
-            uf: true,
-            modalidade: true,
-            instituicao: true,
-            fornecedor: true,
-          },
-        })
-      : Promise.resolve([]);
-  const buscarSiasg = (): Promise<LinhaSiasg[]> =>
-    whereSiasg
-      ? db.precoSiasg.findMany({
-          where: whereSiasg,
-          orderBy: { data: "desc" },
-          take: AMOSTRA,
-          select: {
-            id: true,
-            descricao: true,
-            preco: true,
-            qtd: true,
-            unidade: true,
-            data: true,
-            uf: true,
-            modalidade: true,
-            orgao: true,
-            fornecedor: true,
-            esfera: true,
-          },
-        })
-      : Promise.resolve([]);
-  const buscarPncp = (): Promise<LinhaPncp[]> =>
-    wherePncp
-      ? db.precoPncp.findMany({
-          where: wherePncp,
-          orderBy: { data: "desc" },
-          take: AMOSTRA,
-          select: {
-            id: true,
-            descricaoResumida: true,
-            valorUnitResultado: true,
-            quantidade: true,
-            unidade: true,
-            data: true,
-            uf: true,
-            modalidade: true,
-            orgao: true,
-            fornecedor: true,
-          },
-        })
-      : Promise.resolve([]);
-  const buscarCg = (): Promise<LinhaComprasGov[]> =>
-    whereCg
-      ? db.comprasGovPreco.findMany({
-          where: whereCg,
-          orderBy: { dtCompra: "desc" },
-          take: AMOSTRA,
-          select: {
-            id: true,
-            material: true,
-            unidade: true,
-            esfera: true,
-            modalidade: true,
-            judicial: true,
-            dtCompra: true,
-            quantidade: true,
-            precoUnitario: true,
-          },
-        })
-      : Promise.resolve([]);
-  const buscarCmed = (): Promise<PrecoCmed[]> =>
-    registrosDaUnidade.length
-      ? db.precoCmed.findMany({
-          where: { registro: { in: registrosDaUnidade } },
-          orderBy: [{ substancia: "asc" }, { produto: "asc" }, { apresentacao: "asc" }],
-        })
-      : Promise.resolve([]);
-  const contar = (fn: () => Promise<number>, ativo: boolean): Promise<number> =>
-    ativo ? fn() : Promise.resolve(0);
+  const buscarBps = async (): Promise<LinhaBps[]> => {
+    if (!whereBps) return [];
+    const rows = await db.precoBps.findMany({
+      where: whereBps,
+      orderBy: { data: "desc" },
+      take: AMOSTRA,
+      select: {
+        id: true,
+        descricao: true,
+        preco: true,
+        qtd: true,
+        unidade: true,
+        data: true,
+        uf: true,
+        modalidade: true,
+        instituicao: true,
+        fornecedor: true,
+      },
+    });
+    return rows;
+  };
+  const buscarSiasg = async (): Promise<LinhaSiasg[]> => {
+    if (!whereSiasg) return [];
+    const rows = await db.precoSiasg.findMany({
+      where: whereSiasg,
+      orderBy: { data: "desc" },
+      take: AMOSTRA,
+      select: {
+        id: true,
+        descricao: true,
+        preco: true,
+        qtd: true,
+        unidade: true,
+        data: true,
+        uf: true,
+        modalidade: true,
+        orgao: true,
+        fornecedor: true,
+        esfera: true,
+      },
+    });
+    return rows;
+  };
+  const buscarPncp = async (): Promise<LinhaPncp[]> => {
+    if (!wherePncp) return [];
+    const rows = await db.precoPncp.findMany({
+      where: wherePncp,
+      orderBy: { data: "desc" },
+      take: AMOSTRA,
+      select: {
+        id: true,
+        descricaoResumida: true,
+        valorUnitResultado: true,
+        quantidade: true,
+        unidade: true,
+        data: true,
+        uf: true,
+        modalidade: true,
+        orgao: true,
+        fornecedor: true,
+      },
+    });
+    return rows;
+  };
+  const buscarCg = async (): Promise<LinhaComprasGov[]> => {
+    if (!whereCg) return [];
+    const rows = await db.comprasGovPreco.findMany({
+      where: whereCg,
+      orderBy: { dtCompra: "desc" },
+      take: AMOSTRA,
+      select: {
+        id: true,
+        material: true,
+        unidade: true,
+        esfera: true,
+        modalidade: true,
+        judicial: true,
+        dtCompra: true,
+        quantidade: true,
+        precoUnitario: true,
+      },
+    });
+    return rows;
+  };
+  const buscarCmed = async (): Promise<PrecoCmed[]> => {
+    if (!registrosDaUnidade.length) return [];
+    const rows = await db.precoCmed.findMany({
+      where: { registro: { in: registrosDaUnidade } },
+      orderBy: [{ substancia: "asc" }, { produto: "asc" }, { apresentacao: "asc" }],
+    });
+    return rows;
+  };
+  const contarBps = async (): Promise<number> => {
+    if (!whereBps) return 0;
+    const n = await db.precoBps.count({ where: whereBps });
+    return n;
+  };
+  const contarSiasg = async (): Promise<number> => {
+    if (!whereSiasg) return 0;
+    const n = await db.precoSiasg.count({ where: whereSiasg });
+    return n;
+  };
+  const contarPncp = async (): Promise<number> => {
+    if (!wherePncp) return 0;
+    const n = await db.precoPncp.count({ where: wherePncp });
+    return n;
+  };
+  const contarCg = async (): Promise<number> => {
+    if (!whereCg) return 0;
+    const n = await db.comprasGovPreco.count({ where: whereCg });
+    return n;
+  };
 
   const [bpsRows, siasgRows, pncpRows, cgRows, cmedRows, totalBps, totalSiasg, totalPncp, totalCg] =
     await Promise.all([
@@ -759,10 +791,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       buscarPncp(),
       buscarCg(),
       buscarCmed(),
-      contar(() => db.precoBps.count({ where: whereBps ?? undefined }), !!whereBps),
-      contar(() => db.precoSiasg.count({ where: whereSiasg ?? undefined }), !!whereSiasg),
-      contar(() => db.precoPncp.count({ where: wherePncp ?? undefined }), !!wherePncp),
-      contar(() => db.comprasGovPreco.count({ where: whereCg ?? undefined }), !!whereCg),
+      contarBps(),
+      contarSiasg(),
+      contarPncp(),
+      contarCg(),
     ]);
 
   const bps = consolidar(
