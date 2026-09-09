@@ -306,6 +306,7 @@ model SismatEntrada {
   @@index([materialNome])
   @@index([tipoMovimentacao])
   @@index([dtRecebimento])
+  @@index([material])
   @@schema("sismat")
 }
 
