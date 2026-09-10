@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Tooltip,
@@ -25,6 +25,7 @@ import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight,
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
+import type { FiltroCatmat } from "@/lib/demandas-catmat";
 import { toast } from "sonner";
 
 interface Demanda {
@@ -178,6 +179,27 @@ export default function DemandasPage() {
   const [areaTematica, setAreaTematica] = useState(searchParams.get("areaTematica") || "");
   const [trfRegiao, setTrfRegiao] = useState(searchParams.get("trfRegiao") || "");
   const [regiaoBrasil, setRegiaoBrasil] = useState(searchParams.get("regiaoBrasil") || "");
+  // CATMAT / registro ANVISA. Um código tem 4 a 13 dígitos e não há como saber
+  // quando terminou de ser digitado, então o valor aplicado (`catmat`) só
+  // acompanha o digitado (`catmatInput`) depois de uma pausa — senão cada
+  // tecla resolve um código parcial e a lista pisca vazia.
+  const [catmatInput, setCatmatInput] = useState(searchParams.get("catmat") || "");
+  const [catmat, setCatmat] = useState(catmatInput);
+  const catmatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // O que o servidor resolveu para o código aplicado (descrição, substâncias
+  // ou o motivo de não dar para filtrar).
+  const [filtroCatmat, setFiltroCatmat] = useState<FiltroCatmat | null>(null);
+
+  const onCatmatChange = (v: string) => {
+    setCatmatInput(v);
+    if (catmatTimer.current) clearTimeout(catmatTimer.current);
+    catmatTimer.current = setTimeout(() => {
+      const limpo = v.trim();
+      setCatmat(limpo);
+      setPage("1");
+      updateUrl({ catmat: limpo, page: "1" });
+    }, 450);
+  };
 
   useEffect(() => {
     const fetchDemandas = async () => {
@@ -193,6 +215,7 @@ export default function DemandasPage() {
         if (areaTematica) params.append("areaTematica", areaTematica);
         if (trfRegiao) params.append("trfRegiao", trfRegiao);
         if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
+        if (catmat) params.append("catmat", catmat);
 
         console.log("🔄 Buscando demandas...", params.toString());
         const res = await fetch(`/api/demandas?${params.toString()}`);
@@ -203,6 +226,7 @@ export default function DemandasPage() {
           setDemandas(data.data);
           setTotal(data.pagination.total);
           setTotalPages(data.pagination.totalPages);
+          setFiltroCatmat(data.filtroCatmat ?? null);
         } else {
           const errorData = await res.json();
           const errorMsg = errorData.error || `Erro ${res.status}`;
@@ -221,7 +245,7 @@ export default function DemandasPage() {
     };
 
     fetchDemandas();
-  }, [page, pageSize, busca, status, prioridade, areaTematica, trfRegiao, regiaoBrasil]);
+  }, [page, pageSize, busca, status, prioridade, areaTematica, trfRegiao, regiaoBrasil, catmat]);
 
   const handleDelete = async () => {
     if (!deleteDialog.demandaId) return;
@@ -255,6 +279,7 @@ export default function DemandasPage() {
     if (areaTematica) params.append("areaTematica", areaTematica);
     if (trfRegiao) params.append("trfRegiao", trfRegiao);
     if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
+    if (catmat) params.append("catmat", catmat);
 
     const res = await fetch(`/api/demandas?${params.toString()}`);
     if (!res.ok) {
@@ -317,6 +342,9 @@ export default function DemandasPage() {
     setAreaTematica("");
     setTrfRegiao("");
     setRegiaoBrasil("");
+    if (catmatTimer.current) clearTimeout(catmatTimer.current);
+    setCatmatInput("");
+    setCatmat("");
     setPage("1");
     setSelectedIds(new Set());
     router.replace("/demandas", { scroll: false });
@@ -334,6 +362,7 @@ export default function DemandasPage() {
       if (areaTematica) params.append("areaTematica", areaTematica);
       if (trfRegiao) params.append("trfRegiao", trfRegiao);
       if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
+      if (catmat) params.append("catmat", catmat);
 
       const res = await fetch(`/api/demandas?${params.toString()}`);
       if (!res.ok) { toast.error("Erro ao buscar dados.", { id: "xlsx-export" }); return; }
@@ -616,7 +645,7 @@ export default function DemandasPage() {
     },
   ];
 
-  const isFiltered = !!(busca || status || prioridade || areaTematica || trfRegiao || regiaoBrasil);
+  const isFiltered = !!(busca || status || prioridade || areaTematica || trfRegiao || regiaoBrasil || catmat);
 
   // Filtrar colunas ocultas (preserva select + actions sempre)
   const visibleColumns = columns.filter(
@@ -702,6 +731,12 @@ export default function DemandasPage() {
           value={busca}
           onChange={(v) => { setBusca(v); setPage("1"); updateUrl({ busca: v, page: "1" }); }}
         />
+        <FilterInput
+          label="CATMAT / Registro ANVISA"
+          placeholder="Ex.: 457888 ou 1006811570015"
+          value={catmatInput}
+          onChange={onCatmatChange}
+        />
         <FilterSelect
           label="Status"
           value={status}
@@ -750,6 +785,34 @@ export default function DemandasPage() {
           options={REGIOES_BRASIL.map((r) => ({ value: r, label: r }))}
         />
       </FilterBar>
+
+      {/* Tradução do código: a Demanda não tem CATMAT, o filtro é por substância */}
+      {catmat && filtroCatmat && (
+        filtroCatmat.encontrado ? (
+          <div className="-mt-4 rounded-md border bg-muted/30 px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium">
+              {filtroCatmat.tipo === "REGISTRO"
+                ? `Registro ANVISA ${filtroCatmat.registro}`
+                : `CATMAT ${filtroCatmat.catmat}`}
+            </span>
+            {filtroCatmat.tipo === "REGISTRO" && filtroCatmat.catmat && (
+              <span className="text-muted-foreground">· CATMAT {filtroCatmat.catmat}</span>
+            )}
+            <span className="text-muted-foreground truncate max-w-xl" title={filtroCatmat.descricao ?? ""}>
+              · {filtroCatmat.descricao}
+            </span>
+            <span className="basis-full text-muted-foreground">
+              Demandas cujo medicamento corresponde a:{" "}
+              <span className="text-foreground">{filtroCatmat.grupos.map((g) => g.rotulo).join(" ou ")}</span>
+            </span>
+          </div>
+        ) : (
+          <div className="-mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+            {filtroCatmat.motivo}
+          </div>
+        )
+      )}
 
       {/* Exibir erro se houver */}
       {erro && (

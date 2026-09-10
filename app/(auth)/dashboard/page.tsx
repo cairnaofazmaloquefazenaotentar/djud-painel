@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusChart } from "@/components/dashboard/charts/status-chart";
@@ -22,7 +22,13 @@ import { SismatSaidasPuraView } from "@/components/dashboard/sismat-saidas-pura-
 import { SismatEstoqueView } from "@/components/dashboard/sismat-estoque-view";
 import { SismatSaidasView } from "@/components/dashboard/sismat-saidas-view";
 import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
-import { useMetrics } from "@/hooks/useMetrics";
+import { RankingAnualChart } from "@/components/dashboard/charts/ranking-anual-chart";
+import { paramsDeMetrics, useMetrics } from "@/hooks/useMetrics";
+import { useRankingAnual } from "@/hooks/useRankingAnual";
+// Só o tipo: lib/metrics-ranking-anual.ts importa o Prisma, e um import de
+// valor arrastaria o client do banco para o bundle do navegador. Os rótulos
+// das dimensões vêm prontos na resposta da API (`rotulo`).
+import type { DimensaoRanking } from "@/lib/metrics-ranking-anual";
 import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
 import { Combobox } from "@/components/ui/combobox";
@@ -52,6 +58,9 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowLeftRight,
+  CalendarRange,
+  Download,
+  FileSpreadsheet,
 } from "lucide-react";
 
 // ─── Seção com título padronizado ────────────────────────────────────────────
@@ -103,6 +112,7 @@ const TENDENCIAS_TABS = [
 
 const INDICADORES_TABS = [
   { value: "principios-ativos",  label: "Princípios Ativos",     icon: <Pill className="h-3.5 w-3.5" /> },
+  { value: "ranking-anual",      label: "Ranking por Ano",       icon: <CalendarRange className="h-3.5 w-3.5" /> },
   { value: "indicadores-saidas", label: "Indicadores de Saídas", icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
 ] as const;
 
@@ -120,7 +130,9 @@ const TENDENCIAS_VALUES  = TENDENCIAS_TABS.map((t) => t.value)  as readonly stri
 const INDICADORES_VALUES = INDICADORES_TABS.map((t) => t.value) as readonly string[];
 
 // Abas que usam dados do Redmine (precisam dos filtros e métricas)
-const NEEDS_REDMINE = ["demandas", "valores", "autores", "principios-ativos", "servidores", "tramitacao"] as const;
+const NEEDS_REDMINE = [
+  "demandas", "valores", "autores", "principios-ativos", "ranking-anual", "servidores", "tramitacao",
+] as const;
 function needsRedmine(v: AnyTab): boolean { return (NEEDS_REDMINE as readonly string[]).includes(v); }
 
 function group(v: AnyTab): "tendencias" | "indicadores" | "internos" {
@@ -158,9 +170,25 @@ export default function DashboardPage() {
   const [filterPrioridade,     setFilterPrioridade]     = useState("");
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
+  // CATMAT / registro ANVISA — mesmo filtro da lista de demandas. O valor
+  // aplicado só acompanha o digitado depois de uma pausa: um código tem de 4 a
+  // 13 dígitos e cada tecla dispararia a resolução de um código parcial.
+  const [catmatInput, setCatmatInput] = useState("");
+  const [catmat,      setCatmat]      = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setCatmat(catmatInput.replace(/[^\d.\-]/g, "").trim()), 450);
+    return () => clearTimeout(t);
+  }, [catmatInput]);
+
+  // Ranking por ano: sete agregações a mais, só buscadas na aba que as usa.
+  const [dimensaoRanking, setDimensaoRanking] = useState<DimensaoRanking>("medicamento");
+  const [exportando, setExportando] = useState<"csv" | "html" | null>(null);
+
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
   const principioOptions = (principios ?? []).map((p) => ({ value: p.value, count: p.count }));
-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo);
+  const hasActiveFilters = !!(
+    startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo || catmatInput
+  );
 
   const metricsFilters = {
     startDate:      startDate      ? new Date(startDate)  : undefined,
@@ -168,6 +196,7 @@ export default function DashboardPage() {
     status:         filterStatus      || undefined,
     prioridade:     filterPrioridade  || undefined,
     principioAtivo: filterPrincipioAtivo || undefined,
+    catmat:         catmat || undefined,
   };
 
   const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
@@ -175,10 +204,54 @@ export default function DashboardPage() {
     startDate: metricsFilters.startDate,
     endDate:   metricsFilters.endDate,
   });
+  const { data: rankingAnual, isLoading: rankingLoading } = useRankingAnual(
+    metricsFilters,
+    activeTab === "ranking-anual"
+  );
 
   const handleReset = () => {
     setStartDate(""); setEndDate(""); setFilterStatus("");
     setFilterPrioridade(""); setFilterPrincipioAtivo("");
+    setCatmatInput(""); setCatmat("");
+  };
+
+  // A exportação refaz a apuração no servidor com os mesmos filtros: a planilha
+  // sai com a série mensal inteira, não só com os pontos que couberam no gráfico.
+  const exportar = async (formato: "csv" | "html") => {
+    setExportando(formato);
+    // A janela é aberta antes do await para o bloqueador de pop-up não barrar.
+    const janela = formato === "html" ? window.open("", "_blank") : null;
+    try {
+      const params = paramsDeMetrics(metricsFilters);
+      params.set("format", formato);
+      if (activeTab === "ranking-anual") params.set("rankingAnual", "1");
+      const res = await fetch(`/api/demandas/metrics/export?${params.toString()}`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        janela?.close();
+        throw new Error(d.error || "Erro ao exportar o painel");
+      }
+      if (formato === "html") {
+        const html = await res.text();
+        if (janela) {
+          janela.document.open();
+          janela.document.write(html);
+          janela.document.close();
+        }
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `painel_djud_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao exportar o painel");
+    } finally {
+      setExportando(null);
+    }
   };
 
   return (
@@ -318,13 +391,88 @@ export default function DashboardPage() {
                     className="w-64"
                   />
                 </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">CATMAT / Registro ANVISA</Label>
+                  <Input
+                    inputMode="numeric"
+                    placeholder="Ex.: 267140"
+                    value={catmatInput}
+                    onChange={(e) => setCatmatInput(e.target.value)}
+                    className="w-44"
+                  />
+                </div>
                 {hasActiveFilters && (
                   <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
                     <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
                     Limpar
                   </Button>
                 )}
+                {/* Exportação do que está na tela, com os mesmos filtros. */}
+                <div className="ml-auto flex items-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportando !== null}
+                    onClick={() => exportar("csv")}
+                  >
+                    {exportando === "csv" ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Planilha (CSV)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportando !== null}
+                    onClick={() => exportar("html")}
+                  >
+                    {exportando === "html" ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Relatório (PDF)
+                  </Button>
+                </div>
               </div>
+
+              {/* Tradução do código: a Demanda não tem coluna CATMAT — o filtro
+                  é por substância (ver lib/demandas-catmat.ts). */}
+              {catmat && metrics?.filtroCatmat && (
+                <div
+                  className={`rounded-lg border p-3 text-xs ${
+                    metrics.filtroCatmat.encontrado
+                      ? "bg-muted/40"
+                      : "border-amber-500/50 bg-amber-500/10"
+                  }`}
+                >
+                  {metrics.filtroCatmat.encontrado ? (
+                    <>
+                      <span className="font-medium">
+                        {metrics.filtroCatmat.tipo === "REGISTRO"
+                          ? `Registro ANVISA ${metrics.filtroCatmat.registro}`
+                          : `CATMAT ${metrics.filtroCatmat.catmat}`}
+                      </span>
+                      {metrics.filtroCatmat.descricao && (
+                        <span className="text-muted-foreground"> — {metrics.filtroCatmat.descricao}</span>
+                      )}
+                      <p className="mt-1 text-muted-foreground">
+                        A demanda não guarda o código: o painel está filtrando pelas substâncias{" "}
+                        <strong>
+                          {metrics.filtroCatmat.grupos.map((g) => g.rotulo).join(" · ")}
+                        </strong>{" "}
+                        no princípio ativo, no título e na descrição.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-amber-700 dark:text-amber-400">
+                      {metrics.filtroCatmat.motivo}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Erro */}
               {error && (
@@ -436,6 +584,52 @@ export default function DashboardPage() {
                         </Section>
                       </div>
                     </div>
+                  )}
+
+                  {/* A.3.1) Rankings comparados entre exercícios */}
+                  {activeTab === "ranking-anual" && (
+                    <Section
+                      icon={<CalendarRange className="h-4 w-4" />}
+                      title="Ranking por Ano — Comparação entre Exercícios"
+                      subtitle="Os principais rankings do painel abertos ano a ano, para identificar tendências que o acumulado do período esconde"
+                      full
+                    >
+                      {rankingLoading ? (
+                        <div className="flex justify-center py-12">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : !rankingAnual || rankingAnual.rankings.length === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                          Sem dados para os rankings no recorte selecionado.
+                        </p>
+                      ) : (
+                        <div className="space-y-4">
+                          {/* Uma dimensão por vez: sete tabelas com N colunas de
+                              ano na mesma tela seriam ilegíveis. */}
+                          <div className="flex flex-wrap gap-1.5">
+                            {rankingAnual.rankings.map((r) => (
+                              <button
+                                key={r.dimensao}
+                                onClick={() => setDimensaoRanking(r.dimensao)}
+                                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                                  dimensaoRanking === r.dimensao
+                                    ? "bg-primary text-primary-foreground"
+                                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                              >
+                                {r.rotulo}
+                              </button>
+                            ))}
+                          </div>
+                          {(() => {
+                            const atual =
+                              rankingAnual.rankings.find((r) => r.dimensao === dimensaoRanking) ??
+                              rankingAnual.rankings[0];
+                            return <RankingAnualChart ranking={atual} anos={rankingAnual.anos} />;
+                          })()}
+                        </div>
+                      )}
+                    </Section>
                   )}
 
                   {/* A.4) Riscos */}

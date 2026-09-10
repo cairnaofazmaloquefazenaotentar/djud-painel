@@ -1,4 +1,10 @@
 import { db } from "@/lib/db";
+import {
+  resolverFiltroCatmat,
+  sqlDemandaPorCatmat,
+  whereDemandaPorCatmat,
+  type FiltroCatmat,
+} from "@/lib/demandas-catmat";
 import { Prisma } from "@prisma/client";
 
 export interface MetricsData {
@@ -45,6 +51,13 @@ export interface MetricsData {
   topResponsaveis:              Array<{ id: string; name: string | null; count: number }>;
   formaCumprimentoDistribution: Array<{ forma: string | null; count: number }>;
   areaFinalisticaDistribution:  Array<{ area: string | null; count: number }>;
+
+  // ── Filtro por CATMAT / registro ANVISA ──────────────────────────────────────
+  // A Demanda não guarda o código: ele é traduzido para substância(s) em
+  // lib/demandas-catmat.ts. `null` quando não houve filtro por código; quando
+  // houve e o código não resolveu, `encontrado` é false e as métricas vêm
+  // zeradas — a tela mostra o motivo em vez de gráficos vazios sem explicação.
+  filtroCatmat: FiltroCatmat | null;
 }
 
 export interface MetricsFilterInput {
@@ -54,6 +67,8 @@ export interface MetricsFilterInput {
   prioridade?:     string;
   principioAtivo?: string;
   organizacaoId?:  string;
+  /** CATMAT (até 6 dígitos) ou registro ANVISA (13) — mesmo filtro da lista. */
+  catmat?:         string;
 }
 
 // Status considerados "resolvidos"
@@ -81,7 +96,42 @@ const FLUXO_DJUD: Record<string, number> = {
 };
 const ordemFluxo = (status: string) => FLUXO_DJUD[status] ?? 999;
 
+/** Painel zerado — usado quando o código pesquisado não existe no catálogo. */
+function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
+  return {
+    totalDemandas: 0,
+    demandasAtivas: 0,
+    demandasCriticas: 0,
+    taxaResolucao: 0,
+    totalValorEstimado: 0,
+    topMedicamentosDistribution: [],
+    areaTematicaDistribution: [],
+    objetoAcaoDistribution: [],
+    fornecedorDistribution: [],
+    demandasTimeline: [],
+    tribunalTimeline: [],
+    valorTimeline: [],
+    valorTribunalTimeline: [],
+    topMedicamentosValor: [],
+    statusDistribution: [],
+    prioridadeDistribution: [],
+    regiaoBrasilDistribution: [],
+    trfRegiaoDistribution: [],
+    ufResidenciaDistribution: [],
+    topResponsaveis: [],
+    formaCumprimentoDistribution: [],
+    areaFinalisticaDistribution: [],
+    filtroCatmat,
+  };
+}
+
 export async function getMetricsData(filters: MetricsFilterInput): Promise<MetricsData> {
+  // Filtro por código: resolvido antes de tudo, para devolver o motivo quando
+  // não há como filtrar em vez de um painel vazio sem explicação.
+  const codigo = filters.catmat?.trim() ?? "";
+  const filtroCatmat = codigo ? await resolverFiltroCatmat(codigo) : null;
+  if (filtroCatmat && !filtroCatmat.encontrado) return metricsVazio(filtroCatmat);
+
   // WHERE clause Prisma ORM
   const where: Prisma.DemandaWhereInput = {};
 
@@ -95,9 +145,11 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   if (filters.principioAtivo)
     where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
+  if (filtroCatmat) where.AND = [whereDemandaPorCatmat(filtroCatmat)];
 
   // WHERE clause para raw SQL
   const sqlConditions: Prisma.Sql[] = [];
+  if (filtroCatmat) sqlConditions.push(sqlDemandaPorCatmat(filtroCatmat));
   if (filters.startDate)     sqlConditions.push(Prisma.sql`"criadoEm" >= ${filters.startDate}`);
   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
   if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
@@ -416,5 +468,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       area:  item.areaFinalisticaMs,
       count: item._count.id,
     })),
+
+    filtroCatmat,
   };
 }
