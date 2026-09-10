@@ -13,9 +13,11 @@ import {
   conteudoAnalise,
   conteudoBps,
   conteudoCmed,
+  conteudoDescartes,
   conteudoEspecificacao,
   conteudoMetodo,
   conteudoObservacoes,
+  conteudoOrcamentos,
   conteudoPncp,
   conteudoReferencias,
   conteudoSiasg,
@@ -70,6 +72,11 @@ async function processarItens(itens: CestaItemDTO[]): Promise<ItemProcessado[]> 
           codigo: cesta.codigo,
           unidade: cesta.unidade,
           uf: cesta.uf,
+          // A pesquisa é refeita, mas a curadoria do item é reaplicada: as
+          // exclusões justificadas e os orçamentos juntados são decisão do
+          // responsável, não resultado de consulta, e não caducam com ela.
+          exclusoes: cesta.exclusoes,
+          orcamentos: cesta.orcamentos,
         });
       } catch (error) {
         console.error("[relatorios/cesta] falha ao pesquisar", cesta.codigo, error);
@@ -91,7 +98,24 @@ async function processarItens(itens: CestaItemDTO[]): Promise<ItemProcessado[]> 
 
 // ── Blocos próprios do relatório de cesta ────────────────────────────────────
 
+/** Valor global da cesta apurado por cada um dos três métodos do art. 6º. */
+function globaisPorMetodo(processados: ItemProcessado[]) {
+  const somar = (fn: (p: ItemProcessado) => number | null | undefined) =>
+    processados.reduce((s, p) => {
+      const v = fn(p);
+      return v == null ? s : s + v * p.cesta.quantidade;
+    }, 0);
+  return {
+    media: somar((p) => p.resultado?.consolidado.porFonte.media),
+    mediana: somar((p) => p.resultado?.recomendacao.precoFinal),
+    menor: somar((p) => p.resultado?.consolidado.porFonte.menor),
+  };
+}
+
 function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPreco: number): string {
+  const preco = (p: ItemProcessado, fn: (r: NonNullable<ItemProcessado["resultado"]>) => number | null) =>
+    p.resultado ? fmtBRL(fn(p.resultado)) : `<span style="color:#c0392b;">n/loc.</span>`;
+
   const linhas = tabela(processados, [
     { label: "#", fn: (_p, i) => String(i + 1) },
     {
@@ -101,18 +125,17 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
           ? `CATMAT ${esc(p.cesta.codigo)}`
           : `Reg. ${esc(p.cesta.codigo)}${p.cesta.catmat ? `<br/><span style="color:#666;">CATMAT ${esc(p.cesta.catmat)}</span>` : ""}`,
     },
-    { label: "Descrição", fn: (p) => esc(p.cesta.descricao.substring(0, 90)) },
+    { label: "Descrição", fn: (p) => esc(p.cesta.descricao.substring(0, 70)) },
     { label: "Unid. fornecimento", fn: (p) => esc(p.cesta.unidade) },
     { label: "UF", fn: (p) => esc(p.cesta.uf || "Todas") },
     { label: "Qtd.", fn: (p) => p.cesta.quantidade.toLocaleString("pt-BR"), right: true },
+    { label: "Média unit.", fn: (p) => preco(p, (r) => r.consolidado.porFonte.media), right: true },
     {
-      label: "Preço unitário",
-      fn: (p) =>
-        p.resultado
-          ? `<strong>${fmtBRL(p.resultado.recomendacao.precoFinal)}</strong>`
-          : `<span style="color:#c0392b;">não localizado</span>`,
+      label: "Mediana unit. (adotada)",
+      fn: (p) => `<strong>${preco(p, (r) => r.recomendacao.precoFinal)}</strong>`,
       right: true,
     },
+    { label: "Menor unit.", fn: (p) => preco(p, (r) => r.consolidado.porFonte.menor), right: true },
     {
       label: "Valor total",
       fn: (p) => (p.valorTotal === null ? "—" : `<strong>${fmtBRL(p.valorTotal, 2)}</strong>`),
@@ -120,18 +143,29 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
     },
   ]);
 
+  const globais = globaisPorMetodo(processados);
+
   return `
-    <p style="font-size:11px;margin-bottom:8px;">A cesta reúne <strong>${processados.length}</strong> item(ns). O preço unitário de cada linha é o preço estimado apurado na data de emissão deste relatório, conforme a metodologia da seção anterior; o valor total é o preço unitário multiplicado pela quantidade demandada.</p>
+    <p style="font-size:11px;margin-bottom:8px;">A cesta reúne <strong>${processados.length}</strong> item(ns). Os preços unitários de cada linha são os apurados na data de emissão deste relatório, conforme a metodologia da seção anterior, nos três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor, todos consolidados por fonte. O <strong>valor total</strong> de cada item usa o método adotado pelo painel (mediana) multiplicado pela quantidade demandada; o teto PMVG da CMED prevalece quando o preço de mercado o supera.</p>
     ${linhas}
-    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:10px;">
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;">
+      <tr>
+        <td style="border:1px solid #ccc;padding:6px 10px;background:#f9fafb;">Valor global se adotada a <strong>média</strong> consolidada por fonte</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">${fmtBRL(globais.media, 2)}</td>
+      </tr>
       <tr style="background:#eef2f7;">
-        <td style="border:1px solid ${AZUL};padding:8px 10px;font-weight:bold;color:${AZUL};">VALOR GLOBAL ESTIMADO DA CESTA</td>
+        <td style="border:1px solid ${AZUL};padding:8px 10px;font-weight:bold;color:${AZUL};">VALOR GLOBAL ESTIMADO DA CESTA — método adotado (<strong>mediana</strong>)</td>
         <td style="border:1px solid ${AZUL};padding:8px 10px;text-align:right;font-weight:bold;font-size:16px;color:${AZUL};">${fmtBRL(valorGlobal, 2)}</td>
       </tr>
+      <tr>
+        <td style="border:1px solid #ccc;padding:6px 10px;background:#f9fafb;">Valor global se adotado o <strong>menor valor</strong> consolidado por fonte</td>
+        <td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">${fmtBRL(globais.menor, 2)}</td>
+      </tr>
     </table>
+    <p style="font-size:10px;color:#444;margin-top:6px;">Os três valores globais acima decorrem das mesmas bases e dos mesmos parâmetros de pesquisa; diferem apenas no método de estimativa aplicado sobre os preços coletados. São apresentados para permitir a comparação exigida pelo art. 6º — a adoção de método diverso da mediana depende de justificativa nos autos.</p>
     ${
       semPreco > 0
-        ? `<p style="font-size:10px;color:#c0392b;margin-top:6px;"><strong>Atenção:</strong> ${semPreco} item(ns) sem preço apurado nas bases consultadas não compõem o valor global. Recomenda-se cotação direta a fornecedores para esses itens.</p>`
+        ? `<p style="font-size:10px;color:#c0392b;margin-top:6px;"><strong>Atenção:</strong> ${semPreco} item(ns) sem preço apurado nas bases consultadas não compõem os valores globais. Recomenda-se juntar orçamento direto de fornecedor (art. 5º, IV) para esses itens.</p>`
         : ""
     }`;
 }
@@ -185,8 +219,20 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     ${conteudoSiasg(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">PNCP — Portal Nacional de Contratações Públicas</strong></div>
     ${conteudoPncp(r)}
-    <div style="margin-top:10px;"><strong style="font-size:11px;">Apuração do preço de referência</strong></div>
+    ${
+      r.orcamentos.length
+        ? `<div style="margin-top:10px;"><strong style="font-size:11px;">Orçamentos diretos de fornecedor (art. 5º, IV)</strong></div>
+    ${conteudoOrcamentos(r)}`
+        : ""
+    }
+    <div style="margin-top:10px;"><strong style="font-size:11px;">Média, mediana e menor valor — por fonte e consolidados (art. 6º)</strong></div>
     ${conteudoAnalise(r, false)}
+    ${
+      r.descartes.length
+        ? `<div style="margin-top:10px;"><strong style="font-size:11px;">Registros desconsiderados e respectivas justificativas</strong></div>
+    ${conteudoDescartes(r)}`
+        : ""
+    }
     ${conteudoObservacoes(r)}`;
 
   return subSecao(rotulo, detalhe);
@@ -202,6 +248,8 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
   const poucasFontes = processados.filter(
     (p) => p.resultado !== null && p.resultado.recomendacao.fontes.length < 3
   );
+  const totalOrcamentos = processados.reduce((s, p) => s + (p.resultado?.orcamentos.length ?? 0), 0);
+  const totalDescartes = processados.reduce((s, p) => s + (p.resultado?.descartes.length ?? 0), 0);
 
   const conclusao = `
     <div style="border:2px solid ${AZUL};padding:12px;margin-bottom:16px;border-radius:4px;background:#eef2f7;">
@@ -226,6 +274,16 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
           : ""
       }
       <li style="font-size:10px;margin-bottom:3px;">Os preços unitários foram apurados individualmente por item, na respectiva unidade de fornecimento, e o PMVG vigente (CMED) foi aplicado como teto obrigatório sempre que o preço de mercado o superou.</li>
+      ${
+        totalOrcamentos > 0
+          ? `<li style="font-size:10px;margin-bottom:3px;">${totalOrcamentos} orçamento(s) apresentado(s) diretamente por fornecedor foram juntados à pesquisa (art. 5º, IV da IN 65/2021) e estão detalhados no item correspondente.</li>`
+          : ""
+      }
+      ${
+        totalDescartes > 0
+          ? `<li style="font-size:10px;margin-bottom:3px;">${totalDescartes} registro(s) foram desconsiderados por decisão fundamentada do responsável (art. 6º, §§ 1º e 2º). Cada descarte consta do detalhamento do respectivo item, com a justificativa, preservando a rastreabilidade dos valores desconsiderados.</li>`
+          : ""
+      }
     </ul>
     <p style="font-size:11px;margin-bottom:6px;"><strong>Validade desta pesquisa:</strong> 90 (noventa) dias, conforme art. 5º, §4º da IN SEGES/ME nº 65/2021 — até <strong>${fmtDateLong(validade)}</strong>.</p>
     <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), BPS 2020–2025, SIASG/Comprasnet (compras judiciais 2002–2021) e PNCP (materiais 2024–2025).</p>
@@ -327,6 +385,20 @@ export async function POST(request: NextRequest) {
             uf: p.cesta.uf,
             quantidade: p.cesta.quantidade,
             precoFinal: p.resultado?.recomendacao.precoFinal ?? null,
+            mediaConsolidada: p.resultado?.recomendacao.mediaConsolidada ?? null,
+            menorConsolidado: p.resultado?.recomendacao.menorConsolidado ?? null,
+            // Rastreabilidade fora do documento: quem descartou o quê e por quê.
+            descartes: (p.resultado?.descartes ?? []).map((d) => ({
+              fonte: d.fonte,
+              id: d.id,
+              preco: d.preco,
+              motivo: d.motivo,
+            })),
+            orcamentos: (p.resultado?.orcamentos ?? []).map((o) => ({
+              fornecedor: o.fornecedor,
+              valorUnitario: o.valorUnitario,
+              considerarNoCalculo: o.considerarNoCalculo,
+            })),
           })),
         },
       },

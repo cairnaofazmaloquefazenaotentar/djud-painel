@@ -1,4 +1,7 @@
+import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
+import { NOME_FONTE_CURADA } from "@/lib/pesquisa-preco-curadoria";
 import type {
+  Estatisticas,
   FonteMercadoResultado,
   RegistroMercado,
   ResultadoPesquisa,
@@ -162,6 +165,12 @@ export function conteudoEspecificacao(resultado: ResultadoPesquisa, especificaca
         <tr><td style="border:1px solid #ccc;padding:4px 8px;background:#f5f5f5;font-weight:bold;">Especificação / Apresentação</td><td style="border:1px solid #ccc;padding:4px 8px;">${esc(especificacao)}</td></tr>
         <tr><td style="border:1px solid #ccc;padding:4px 8px;background:#f5f5f5;font-weight:bold;">Unidade de fornecimento</td><td style="border:1px solid #ccc;padding:4px 8px;">${esc(unidade)}</td></tr>
         ${uf ? `<tr><td style="border:1px solid #ccc;padding:4px 8px;background:#f5f5f5;font-weight:bold;">UF (filtro)</td><td style="border:1px solid #ccc;padding:4px 8px;">${esc(uf)}</td></tr>` : ""}
+        ${filtrosAtivos(resultado.filtros)
+          .map(
+            (c) =>
+              `<tr><td style="border:1px solid #ccc;padding:4px 8px;background:#f5f5f5;font-weight:bold;">${esc(ROTULO_FILTRO[c])} (filtro)</td><td style="border:1px solid #ccc;padding:4px 8px;">${esc(resultado.filtros[c])}</td></tr>`
+          )
+          .join("")}
       </table>`;
 }
 
@@ -172,19 +181,49 @@ export function conteudoMetodo(): string {
         <li><strong>BPS</strong> — Banco de Preços em Saúde (DATASUS/MS): registros de compras hospitalares públicas 2020–2025, por código CATMAT.</li>
         <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
         <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT).</li>
+        <li><strong>Orçamento direto de fornecedor</strong> (art. 5º, IV) — propostas apresentadas diretamente ao órgão, quando juntadas ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
-      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR), e o preço estimado foi calculado como a mediana da distribuição resultante. O preço de referência consolidado corresponde à mediana das medianas apuradas nas fontes BPS, SIASG e PNCP (método das medianas de medianas). Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º).</p>`;
+      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. O preço de referência adotado é a mediana das medianas apuradas por fonte, critério que impede que a base com mais registros determine sozinha o resultado. Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º).</p>`;
 }
 
+/** "EMS — Genérico" / "—" quando a base não registra marca nem fabricante. */
+export function marcaFabricante(r: {
+  marca: string | null;
+  fabricante: string | null;
+}): string {
+  const partes = [r.marca, r.fabricante].filter(Boolean) as string[];
+  if (!partes.length) return "—";
+  // Marca e fabricante iguais viram uma coisa só (o SIASG repete os dois).
+  const unicos = Array.from(new Set(partes.map((p) => p.trim().toUpperCase())));
+  return unicos.join(" / ");
+}
+
+/**
+ * Colunas da amostra de mercado. A unidade de fornecimento não vira coluna:
+ * ela é filtro obrigatório da pesquisa, então é a mesma em todas as linhas.
+ * Empresa vencedora e marca/fabricante são obrigatórias no relatório.
+ */
 function colunasMercado(ultima: Coluna<RegistroMercado>): Coluna<RegistroMercado>[] {
   return [
-    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 60)) },
+    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 45)) },
     { label: "Preço", fn: (r) => fmtBRL(r.preco), right: true },
-    { label: "Unidade", fn: (r) => esc(r.unidade || "—") },
     { label: "Data", fn: (r) => (r.data ? fmtDate(r.data) : "—") },
     { label: "UF", fn: (r) => esc(r.uf || "—") },
+    { label: "Empresa vencedora", fn: (r) => esc((r.fornecedor || "—").substring(0, 32)) },
+    { label: "Marca / Fabricante", fn: (r) => esc(marcaFabricante(r).substring(0, 28)) },
     ultima,
   ];
+}
+
+/** Média, mediana, menor e maior — os três métodos do art. 6º mais o teto da amostra. */
+function boxesEstatisticas(e: Estatisticas): string {
+  return `<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        ${estatBox("Média", fmtBRL(e.media))}
+        ${estatBox("Mediana", fmtBRL(e.mediana), true)}
+        ${estatBox("Menor valor", fmtBRL(e.menor))}
+        ${estatBox("Maior valor", fmtBRL(e.maior))}
+        ${estatBox("Preços no cálculo", String(e.n))}
+      </div>`;
 }
 
 function conteudoMercado(
@@ -193,22 +232,26 @@ function conteudoMercado(
   intro: (f: FonteMercadoResultado) => string,
   ultima: Coluna<RegistroMercado>
 ): string {
+  if (fonte.filtrosNaoSuportados.length > 0) {
+    const campos = fonte.filtrosNaoSuportados.map((c) => ROTULO_FILTRO[c].toLowerCase()).join(" nem ");
+    return `<p style="color:#666;font-style:italic;font-size:11px;">Esta base não registra ${esc(campos)}. Com esse filtro ativo, a fonte foi excluída da apuração do preço de referência.</p>`;
+  }
   if (fonte.total === 0) {
     return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}</p>`;
   }
+  const considerados = fonte.registros.filter((r) => r.excluidoPor === null);
   return `
       <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes. ${
         fonte.outliersRemovidos > 0
           ? `Removidos <strong>${fonte.outliersRemovidos}</strong> outliers pelo método IQR.`
           : "Nenhum outlier identificado."
+      }${
+        fonte.excluidosManualmente > 0
+          ? ` Desconsiderados <strong>${fonte.excluidosManualmente}</strong> registro(s) por decisão fundamentada — ver a seção de registros desconsiderados.`
+          : ""
       }</p>
-      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        ${estatBox("Mínimo (pós-limpeza)", fmtBRL(fonte.precoMin))}
-        ${estatBox("Mediana", fmtBRL(fonte.precoMediana), true)}
-        ${estatBox("Máximo (pós-limpeza)", fmtBRL(fonte.precoMax))}
-        ${estatBox("Registros na amostra", String(fonte.amostra))}
-      </div>
-      ${tabela(fonte.registros, colunasMercado(ultima))}`;
+      ${boxesEstatisticas(fonte.estatisticas)}
+      ${tabela(considerados.slice(0, 10), colunasMercado(ultima))}`;
 }
 
 export function conteudoCmed(resultado: ResultadoPesquisa): string {
@@ -218,10 +261,15 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
     return `<p style="color:#c0392b;font-style:italic;font-size:11px;">Nenhum registro ANVISA com preço CMED vigente para este código na unidade de fornecimento selecionada. Não há preço-teto regulado pela ANVISA para este item.</p>`;
   }
   const capAplica = cmed.registros.some((r) => r.cap);
+  const considerados = cmed.registros.filter((r) => r.excluidoPor === null);
   return `
       <p style="font-size:11px;margin-bottom:8px;">Foram encontrados <strong>${cmed.total}</strong> registro(s) ANVISA com preço na tabela CMED vigente (Câmara de Regulação do Mercado de Medicamentos — ANVISA) para ${item.tipo === "CATMAT" ? `o CATMAT ${esc(item.catmat)}` : `o registro ${esc(item.registro)}`}, na unidade de fornecimento <strong>${esc(unidade)}</strong>. O PMVG da tabela CMED é expresso por embalagem; o valor unitário abaixo corresponde ao PMVG dividido pela quantidade de unidades por embalagem (Qt_Embal).${
         cmed.semQtEmbalagem > 0
           ? ` <strong>${cmed.semQtEmbalagem}</strong> registro(s) sem quantidade por embalagem informada aparecem apenas com o preço por embalagem e não compõem o teto.`
+          : ""
+      }${
+        cmed.excluidosManualmente > 0
+          ? ` <strong>${cmed.excluidosManualmente}</strong> registro(s) desconsiderado(s) por decisão fundamentada não compõem o teto — ver a seção de registros desconsiderados.`
           : ""
       }</p>
       <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
@@ -229,7 +277,7 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
         ${estatBox("PMVG unitário máximo (sem impostos)", fmtBRL(cmed.pmvgUnitMax))}
         ${capAplica ? estatBox("Desconto CAP obrigatório", "21,53% sobre PF", true) : ""}
       </div>
-      ${tabela(cmed.registros.slice(0, 10), [
+      ${tabela(considerados.slice(0, 10), [
         { label: "Registro", fn: (r) => esc(r.registro) },
         { label: "Produto / Apresentação", fn: (r) => `${esc(r.produto || "—")} / ${esc(r.apresentacao || "—")}` },
         { label: "Laboratório", fn: (r) => esc((r.laboratorio || "—").substring(0, 30)) },
@@ -274,40 +322,63 @@ export function conteudoPncp(resultado: ResultadoPesquisa): string {
   );
 }
 
-/** Quantas fontes de mercado (BPS/SIASG/PNCP) apuraram mediana para o item. */
-export function fontesComMediana(resultado: ResultadoPesquisa) {
-  const { bps, siasg, pncp } = resultado.resultados;
-  return [
-    { fonte: "BPS", mediana: bps.precoMediana, n: bps.amostra, removidos: bps.outliersRemovidos },
-    { fonte: "SIASG (judicial)", mediana: siasg.precoMediana, n: siasg.amostra, removidos: siasg.outliersRemovidos },
-    { fonte: "PNCP", mediana: pncp.precoMediana, n: pncp.amostra, removidos: pncp.outliersRemovidos },
-  ].filter((f) => f.mediana !== null);
-}
-
 /** true quando o preço de mercado ficou acima do teto PMVG e o teto prevaleceu. */
 export function pmvgFoiAplicado(resultado: ResultadoPesquisa): boolean {
   const { limitePmvg, precoReferencia } = resultado.recomendacao;
   return limitePmvg !== null && precoReferencia !== null && precoReferencia > limitePmvg;
 }
 
+const th = (label: string, right = false) =>
+  `<th style="border:1px solid #ccc;padding:5px 6px;text-align:${right ? "right" : "left"};">${label}</th>`;
+const td = (valor: string, right = false, extra = "") =>
+  `<td style="border:1px solid #ccc;padding:5px 6px;text-align:${right ? "right" : "left"};${extra}">${valor}</td>`;
+
+/**
+ * Quadro do art. 6º: média, mediana e menor valor de cada fonte e, embaixo, os
+ * dois consolidados. A explicação do que é cada consolidado vai junto — sem
+ * ela, dois números diferentes para "o preço" no mesmo documento confundem
+ * quem instrui o processo.
+ */
 export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = true): string {
-  const { recomendacao } = resultado;
-  const linhas = fontesComMediana(resultado);
+  const { recomendacao, consolidado } = resultado;
+  const linhas = consolidado.fontes;
   const pmvgAplicado = pmvgFoiAplicado(resultado);
+  const { porFonte, porRegistro } = consolidado;
+
+  const linhaConsolidada = (
+    rotulo: string,
+    detalhe: string,
+    e: Estatisticas,
+    destaque: boolean
+  ) => `
+        <tr style="background:${destaque ? "#eef2f7" : "#f4f6f9"};">
+          ${td(
+            `<strong>${rotulo}</strong><br/><span style="font-size:9px;color:#555;font-weight:normal;">${detalhe}</span>`
+          )}
+          ${td(String(e.n), true)}
+          ${td(fmtBRL(e.media), true, destaque ? "font-weight:bold;" : "")}
+          ${td(
+            fmtBRL(e.mediana),
+            true,
+            destaque ? `font-weight:bold;color:${AZUL};font-size:13px;` : "font-weight:bold;"
+          )}
+          ${td(fmtBRL(e.menor), true, destaque ? "font-weight:bold;" : "")}
+        </tr>`;
 
   return `
     ${
       comMetodologia
-        ? `<p style="font-size:11px;margin-bottom:10px;">A metodologia adotada segue o disposto no art. 5º da IN SEGES/ME nº 65/2021: coleta de preços em fontes oficiais pelo código CATMAT e unidade de fornecimento, remoção de valores inexequíveis ou excessivos pelo método do intervalo interquartil (IQR: valores fora de Q1−1,5×IQR ou Q3+1,5×IQR são descartados) e cálculo da mediana como preço estimado.</p>`
+        ? `<p style="font-size:11px;margin-bottom:10px;">A metodologia adotada segue o disposto nos arts. 5º e 6º da IN SEGES/ME nº 65/2021: coleta de preços em fontes oficiais pelo código CATMAT e unidade de fornecimento, desconsideração de valores inexequíveis ou excessivamente elevados pelo método do intervalo interquartil (IQR: valores fora de Q1−1,5×IQR ou Q3+1,5×IQR são descartados) e apuração, para cada fonte, dos três métodos admitidos pelo art. 6º — <strong>média</strong>, <strong>mediana</strong> e <strong>menor valor</strong>.</p>`
         : ""
     }
-    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px;">
       <thead>
         <tr style="background:#e8edf2;">
-          <th style="border:1px solid #ccc;padding:5px 8px;text-align:left;">Fonte</th>
-          <th style="border:1px solid #ccc;padding:5px 8px;text-align:right;">Registros analisados</th>
-          <th style="border:1px solid #ccc;padding:5px 8px;text-align:right;">Outliers removidos</th>
-          <th style="border:1px solid #ccc;padding:5px 8px;text-align:right;">Mediana apurada</th>
+          ${th("Fonte")}
+          ${th("Preços no cálculo", true)}
+          ${th("Média", true)}
+          ${th("Mediana", true)}
+          ${th("Menor valor", true)}
         </tr>
       </thead>
       <tbody>
@@ -315,23 +386,55 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           .map(
             (f, i) => `
           <tr style="background:${i % 2 === 0 ? "#fff" : "#f9fafb"}">
-            <td style="border:1px solid #ccc;padding:5px 8px;">${f.fonte}</td>
-            <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;">${f.n}</td>
-            <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;">${f.removidos}</td>
-            <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;font-weight:bold;">${fmtBRL(f.mediana)}</td>
+            ${td(esc(f.nome))}
+            ${td(String(f.estatisticas.n), true)}
+            ${td(fmtBRL(f.estatisticas.media), true)}
+            ${td(fmtBRL(f.estatisticas.mediana), true, "font-weight:bold;")}
+            ${td(fmtBRL(f.estatisticas.menor), true)}
           </tr>`
           )
           .join("")}
-        <tr style="background:#eef2f7;font-weight:bold;">
-          <td style="border:1px solid #ccc;padding:5px 8px;" colspan="3">Preço de referência (mediana das medianas por fonte)</td>
-          <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;color:${AZUL};font-size:13px;">${fmtBRL(recomendacao.precoReferencia)}</td>
+        ${
+          linhas.length === 0
+            ? `<tr>${td('<span style="color:#c0392b;font-style:italic;">Nenhuma fonte apurou preço para este item e unidade de fornecimento.</span>')}<td colspan="4" style="border:1px solid #ccc;"></td></tr>`
+            : ""
+        }
+        ${linhaConsolidada(
+          "CONSOLIDADO POR FONTE",
+          `cada fonte pesa igual — cálculo sobre as ${porFonte.n} mediana(s) apurada(s) acima`,
+          porFonte,
+          true
+        )}
+        ${linhaConsolidada(
+          "CONSOLIDADO POR REGISTRO",
+          "cada compra pesa igual — todos os registros depurados reunidos num conjunto único",
+          porRegistro,
+          false
+        )}
+      </tbody>
+    </table>
+    <p style="font-size:10px;color:#444;margin-bottom:12px;">
+      <strong>Como ler os consolidados.</strong> O <strong>consolidado por fonte</strong> trata cada base como um voto: as estatísticas incidem sobre as medianas apuradas em cada fonte, de modo que uma base com milhares de registros não sobrepuja outra com poucos. É dele que sai o preço adotado — a <strong>mediana das medianas, ${fmtBRL(recomendacao.precoReferencia)}</strong>. O <strong>consolidado por registro</strong> reúne todos os registros depurados num conjunto único, em que cada compra pesa igual; serve de contraprova da ordem de grandeza, e não como preço de referência, porque a base mais numerosa domina o resultado. Os três métodos do art. 6º estão apresentados em ambos.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
+      <tbody>
+        <tr style="background:#eef2f7;">
+          ${td(
+            `<strong>Preço de referência adotado</strong> — mediana das medianas por fonte (art. 6º, caput)`
+          )}
+          ${td(
+            `<strong style="color:${AZUL};font-size:13px;">${fmtBRL(recomendacao.precoReferencia)}</strong>`,
+            true
+          )}
         </tr>
         ${
           pmvgAplicado
             ? `
         <tr style="background:#fef3cd;">
-          <td style="border:1px solid #ccc;padding:5px 8px;" colspan="3">⚠ Preço de mercado superior ao PMVG unitário — aplicado PMVG sem impostos ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)</td>
-          <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;font-weight:bold;color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</td>
+          ${td(
+            "⚠ Preço de mercado superior ao PMVG unitário — aplicado PMVG sem impostos ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)"
+          )}
+          ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
             : ""
         }
@@ -339,8 +442,8 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           recomendacao.precoReferencia === null && recomendacao.limitePmvg !== null
             ? `
         <tr style="background:#fef3cd;">
-          <td style="border:1px solid #ccc;padding:5px 8px;" colspan="3">Sem preço de mercado nas bases consultadas — adotado o menor PMVG unitário sem impostos (CMED)</td>
-          <td style="border:1px solid #ccc;padding:5px 8px;text-align:right;font-weight:bold;color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</td>
+          ${td("Sem preço apurado nas fontes consultadas — adotado o menor PMVG unitário sem impostos (CMED)")}
+          ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
             : ""
         }
@@ -348,9 +451,72 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
     </table>
     ${
       linhas.length < 3
-        ? `<p style="font-size:10px;color:#c0392b;"><strong>Atenção:</strong> Apenas ${linhas.length} fonte(s) com dados disponíveis. O art. 5º, §3º da IN 65/2021 recomenda consulta a no mínimo 3 fontes. Recomenda-se complementar a pesquisa com cotação direta a fornecedores.</p>`
+        ? `<p style="font-size:10px;color:#c0392b;"><strong>Atenção:</strong> Apenas ${linhas.length} fonte(s) com dados disponíveis. O art. 5º, §3º da IN 65/2021 recomenda consulta a no mínimo 3 fontes. Recomenda-se complementar a pesquisa com orçamento direto de fornecedor (art. 5º, IV).</p>`
         : ""
     }`;
+}
+
+// ── Orçamentos diretos de fornecedor (art. 5º, IV) ───────────────────────────
+
+export function conteudoOrcamentos(resultado: ResultadoPesquisa): string {
+  const { orcamentos, resultados, unidade } = resultado;
+  if (!orcamentos.length) return "";
+  const noCalculo = resultados.orcamentos?.estatisticas.n ?? 0;
+
+  return `
+    <p style="font-size:11px;margin-bottom:8px;">Foram juntadas ao processo <strong>${orcamentos.length}</strong> proposta(s) apresentada(s) diretamente por fornecedor, nos termos do art. 5º, IV da IN SEGES/ME nº 65/2021. ${
+      noCalculo > 0
+        ? `<strong>${noCalculo}</strong> compõe(m) a apuração do preço de referência como fonte adicional; a(s) demais permanece(m) registrada(s) apenas para instrução do processo.`
+        : "Nenhuma foi considerada no cálculo do preço de referência — todas constam apenas para instrução do processo."
+    } Esta fonte não passa pela remoção automática de outliers (IQR): as propostas foram selecionadas pelo responsável, e descartá-las automaticamente contrariaria a própria juntada.</p>
+    ${tabela(orcamentos, [
+      { label: "Fornecedor", fn: (o) => esc(o.fornecedor.substring(0, 38)) },
+      { label: "CNPJ", fn: (o) => esc(o.cnpj || "—") },
+      { label: "Marca / Fabricante", fn: (o) => esc(marcaFabricante(o).substring(0, 30)) },
+      { label: `Valor por ${unidade}`, fn: (o) => `<strong>${fmtBRL(o.valorUnitario)}</strong>`, right: true },
+      { label: "Data", fn: (o) => fmtDate(o.dataOrcamento) },
+      { label: "Validade", fn: (o) => (o.validade ? fmtDate(o.validade) : "—") },
+      { label: "Documento", fn: (o) => esc((o.documento || "—").substring(0, 24)) },
+      {
+        label: "No cálculo",
+        fn: (o) => (o.considerarNoCalculo ? "Sim" : "<span style='color:#c0392b;'>Não</span>"),
+      },
+    ])}
+    ${
+      orcamentos.some((o) => o.observacao)
+        ? `<ul style="margin-top:6px;padding-left:18px;">${orcamentos
+            .filter((o) => o.observacao)
+            .map(
+              (o) =>
+                `<li style="font-size:10px;margin-bottom:2px;"><strong>${esc(o.fornecedor)}:</strong> ${esc(o.observacao)}</li>`
+            )
+            .join("")}</ul>`
+        : ""
+    }`;
+}
+
+// ── Registros desconsiderados (art. 6º, §§ 1º e 2º) ──────────────────────────
+
+/**
+ * Rastreabilidade do descarte: o registro sai do cálculo, mas não do
+ * documento. Sem esta seção, uma exclusão vira um número menor sem explicação.
+ */
+export function conteudoDescartes(resultado: ResultadoPesquisa): string {
+  const { descartes } = resultado;
+  if (!descartes.length) {
+    return `<p style="font-size:11px;color:#666;font-style:italic;">Nenhum registro foi desconsiderado por decisão do responsável nesta pesquisa. Os únicos valores retirados do cálculo foram os classificados como discrepantes pelo método objetivo do intervalo interquartil (IQR), informados fonte a fonte nas seções anteriores.</p>`;
+  }
+  return `
+    <p style="font-size:11px;margin-bottom:8px;">Os <strong>${descartes.length}</strong> registro(s) abaixo foram desconsiderados no cálculo da média, da mediana e do menor valor por decisão fundamentada do responsável pela pesquisa, nos termos do art. 6º, §§ 1º e 2º da IN SEGES/ME nº 65/2021. Permanecem relacionados neste relatório, com a respectiva justificativa, para preservar a rastreabilidade dos valores desconsiderados.</p>
+    ${tabela(descartes, [
+      { label: "Fonte", fn: (d) => esc(NOME_FONTE_CURADA[d.fonte]) },
+      { label: "Registro", fn: (d) => esc((d.descricao || "—").substring(0, 45)) },
+      { label: "Valor", fn: (d) => fmtBRL(d.preco), right: true },
+      { label: "Data", fn: (d) => (d.data ? fmtDate(d.data) : "—") },
+      { label: "UF", fn: (d) => esc(d.uf || "—") },
+      { label: "Fornecedor", fn: (d) => esc((d.fornecedor || "—").substring(0, 26)) },
+      { label: "Justificativa do descarte", fn: (d) => esc(d.motivo) },
+    ])}`;
 }
 
 export function conteudoObservacoes(resultado: ResultadoPesquisa): string {

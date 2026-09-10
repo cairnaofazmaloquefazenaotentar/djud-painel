@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { normalizarExclusoes } from "@/lib/pesquisa-preco-curadoria";
+import type { ExclusaoRegistro, OrcamentoFornecedor } from "@/lib/pesquisa-preco-curadoria";
 import type { TipoCodigo } from "@/lib/pesquisa-preco";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,6 +30,10 @@ export interface CestaItemDTO {
   precoFinal: number | null;
   /** precoFinal × quantidade — null quando não há preço apurado. */
   valorTotal: number | null;
+  /** Registros desconsiderados com justificativa (art. 6º, §§ 1º e 2º). */
+  exclusoes: ExclusaoRegistro[];
+  /** Orçamentos diretos de fornecedor do item (art. 5º, IV). */
+  orcamentos: OrcamentoFornecedor[];
   calculadoEm: string;
   criadoEm: string;
 }
@@ -39,6 +45,22 @@ export interface CestaResumo {
   valorTotal: number;
   /** Itens sem preço apurado — não entram no valor total. */
   itensSemPreco: number;
+  /** Itens com alguma curadoria (exclusão ou orçamento) registrada. */
+  itensCurados: number;
+}
+
+interface LinhaOrcamento {
+  id: string;
+  fornecedor: string;
+  cnpj: string | null;
+  marca: string | null;
+  fabricante: string | null;
+  valorUnitario: number;
+  dataOrcamento: Date;
+  validade: Date | null;
+  documento: string | null;
+  observacao: string | null;
+  considerarNoCalculo: boolean;
 }
 
 interface LinhaCesta {
@@ -54,8 +76,26 @@ interface LinhaCesta {
   precoReferencia: number | null;
   limitePmvg: number | null;
   precoFinal: number | null;
+  exclusoes: unknown;
   calculadoEm: Date;
   criadoEm: Date;
+  orcamentos?: LinhaOrcamento[];
+}
+
+export function orcamentoParaDTO(o: LinhaOrcamento): OrcamentoFornecedor {
+  return {
+    id: o.id,
+    fornecedor: o.fornecedor,
+    cnpj: o.cnpj,
+    marca: o.marca,
+    fabricante: o.fabricante,
+    valorUnitario: o.valorUnitario,
+    dataOrcamento: o.dataOrcamento.toISOString(),
+    validade: o.validade ? o.validade.toISOString() : null,
+    documento: o.documento,
+    observacao: o.observacao,
+    considerarNoCalculo: o.considerarNoCalculo,
+  };
 }
 
 export function paraDTO(r: LinhaCesta): CestaItemDTO {
@@ -73,6 +113,10 @@ export function paraDTO(r: LinhaCesta): CestaItemDTO {
     limitePmvg: r.limitePmvg,
     precoFinal: r.precoFinal,
     valorTotal: r.precoFinal === null ? null : r.precoFinal * r.quantidade,
+    // O JSONB pode ter sido gravado por uma versão anterior do formato — passa
+    // pelo normalizador em vez de confiar no que está no banco.
+    exclusoes: normalizarExclusoes(r.exclusoes),
+    orcamentos: (r.orcamentos ?? []).map(orcamentoParaDTO),
     calculadoEm: r.calculadoEm.toISOString(),
     criadoEm: r.criadoEm.toISOString(),
   };
@@ -81,11 +125,13 @@ export function paraDTO(r: LinhaCesta): CestaItemDTO {
 export function resumir(itens: CestaItemDTO[]): CestaResumo {
   let valorTotal = 0;
   let itensSemPreco = 0;
+  let itensCurados = 0;
   for (const i of itens) {
     if (i.valorTotal === null) itensSemPreco += 1;
     else valorTotal += i.valorTotal;
+    if (i.exclusoes.length > 0 || i.orcamentos.length > 0) itensCurados += 1;
   }
-  return { itens, total: itens.length, valorTotal, itensSemPreco };
+  return { itens, total: itens.length, valorTotal, itensSemPreco, itensCurados };
 }
 
 /** Itens da cesta do usuário, na ordem em que foram adicionados. */
@@ -93,6 +139,7 @@ export async function listarCesta(userId: string): Promise<CestaResumo> {
   const rows = await db.cestaItem.findMany({
     where: { userId },
     orderBy: { criadoEm: "asc" },
+    include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
   });
   return resumir(rows.map(paraDTO));
 }

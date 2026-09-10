@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { codigo, unidade, uf, quantidade, observacao } = parsed.data;
+    const { codigo, unidade, uf, quantidade, observacao, exclusoes, orcamentos } = parsed.data;
 
     if (!classificarCodigo(codigo)) {
       return NextResponse.json(
@@ -63,8 +63,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Refaz a pesquisa antes de gravar: garante que o código/unidade resolvem e
-    // dá o snapshot de preço que a cesta exibe até a emissão do relatório.
-    const resultado = await pesquisarPrecos({ codigo, unidade, uf });
+    // dá o snapshot de preço que a cesta exibe até a emissão do relatório. A
+    // curadoria vinda da tela entra já aqui, para o snapshot refletir o que o
+    // relatório vai apurar.
+    const resultado = await pesquisarPrecos({ codigo, unidade, uf, exclusoes, orcamentos });
     if (!resultado) {
       return NextResponse.json(
         { error: "Código não encontrado no catálogo CATMAT nem nos registros ANVISA (CMED)" },
@@ -94,8 +96,20 @@ export async function POST(request: NextRequest) {
         data: {
           quantidade: Math.min(existente.quantidade + quantidade, QUANTIDADE_MAX),
           ...(observacao === undefined ? {} : { observacao }),
+          // Curadoria só é sobrescrita quando veio na requisição: reenviar o
+          // mesmo item sem curadoria não deve apagar a que já estava lá.
+          ...(exclusoes === undefined ? {} : { exclusoes }),
+          ...(orcamentos === undefined
+            ? {}
+            : {
+                orcamentos: {
+                  deleteMany: {},
+                  create: orcamentos,
+                },
+              }),
           ...precos,
         },
+        include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
       });
       return NextResponse.json({ item: paraDTO(atualizado), duplicado: true });
     }
@@ -121,8 +135,11 @@ export async function POST(request: NextRequest) {
         uf: resultado.uf,
         quantidade,
         observacao: observacao ?? null,
+        exclusoes: exclusoes ?? [],
+        ...(orcamentos?.length ? { orcamentos: { create: orcamentos } } : {}),
         ...precos,
       },
+      include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
     });
 
     return NextResponse.json({ item: paraDTO(criado), duplicado: false }, { status: 201 });

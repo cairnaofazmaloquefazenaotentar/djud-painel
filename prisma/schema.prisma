@@ -689,11 +689,40 @@ model CestaItem {
   precoReferencia Float?                // Snapshot: mediana das medianas (BPS/SIASG/PNCP)
   limitePmvg      Float?                // Snapshot: teto PMVG unitário (CMED ÷ Qt_Embal)
   precoFinal      Float?                // Snapshot: preço unitário sugerido
+  // Registros desconsiderados com justificativa (ExclusaoRegistro[] de
+  // lib/pesquisa-preco-curadoria.ts). Fica no item porque a curadoria é do
+  // item: o relatório da cesta refaz a pesquisa e reaplica estas exclusões.
+  exclusoes       Json?
   calculadoEm     DateTime @default(now())
   criadoEm        DateTime @default(now())
   atualizadoEm    DateTime @updatedAt
+  orcamentos      CestaOrcamento[]
 
   @@index([userId])
   @@index([userId, codigo, unidade])
+  @@schema("public")
+}
+
+// Orçamento apresentado diretamente por fornecedor (IN 65/2021, art. 5º, IV).
+// Fonte de preço adicional do item, indispensável em medicamentos importados,
+// em que nem sempre há contratação pública comparável nas bases oficiais.
+model CestaOrcamento {
+  id                  String    @id @default(cuid())
+  cestaItemId         String
+  cestaItem           CestaItem @relation(fields: [cestaItemId], references: [id], onDelete: Cascade)
+  fornecedor          String                 // Empresa que apresentou a proposta
+  cnpj                String?
+  marca               String?                // Marca do produto ofertado
+  fabricante          String?                // Fabricante do produto ofertado
+  valorUnitario       Float                  // Por unidade de fornecimento da pesquisa
+  dataOrcamento       DateTime
+  validade            DateTime?
+  documento           String?                // Nº da proposta / e-mail / SEI
+  observacao          String?   @db.Text
+  considerarNoCalculo Boolean   @default(true) // false = só registro no relatório
+  criadoEm            DateTime  @default(now())
+  atualizadoEm        DateTime  @updatedAt
+
+  @@index([cestaItemId])
   @@schema("public")
 }

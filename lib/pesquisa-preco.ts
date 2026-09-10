@@ -1,5 +1,34 @@
 import type { CatmatItem, CmedRegistro, PrecoCmed, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import {
+  FONTE_SEM_CAMPO,
+  NOME_FONTE,
+  ROTULO_FILTRO,
+  filtrosAtivos,
+  normalizarFiltros,
+  variantesCnpj,
+  type CampoFiltro,
+  type FiltrosOpcionais,
+  type FonteMercado,
+} from "@/lib/pesquisa-preco-filtros";
+import {
+  ESTATISTICAS_VAZIAS,
+  METODO_ADOTADO,
+  NOME_FONTE_CURADA,
+  calcularEstatisticas,
+  limitesIqr,
+  mapaExclusoes,
+  normalizarExclusoes,
+  normalizarOrcamentos,
+  type Estatisticas,
+  type ExclusaoRegistro,
+  type FonteCurada,
+  type OrcamentoFornecedor,
+  type RegistroDescartado,
+} from "@/lib/pesquisa-preco-curadoria";
+
+export * from "@/lib/pesquisa-preco-filtros";
+export * from "@/lib/pesquisa-preco-curadoria";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preços — lógica compartilhada pela rota de busca
@@ -25,8 +54,22 @@ import { db } from "@/lib/db";
 // alimentando a aba "Preços" (lib/precos-metrics.ts).
 //
 // Metodologia (IN SEGES/ME nº 65/2021): por fonte, remoção de outliers (IQR) e
-// mediana; preço de referência = mediana das medianas (BPS, SIASG, PNCP); o
-// menor PMVG unitário sem impostos (CMED) é aplicado como teto.
+// apuração dos três métodos do art. 6º — média, mediana e menor valor. O preço
+// de referência adotado é a mediana das medianas (BPS, SIASG, PNCP e orçamentos
+// diretos); o menor PMVG unitário sem impostos (CMED) é aplicado como teto.
+//
+// Além dos números por fonte, a pesquisa devolve dois consolidados (art. 6º,
+// "inclusive de forma consolidada"), que respondem a perguntas diferentes:
+//   • POR FONTE   — cada base pesa igual: as estatísticas incidem sobre o vetor
+//                   das medianas das fontes. É daqui que sai o preço adotado.
+//   • POR REGISTRO — cada compra pesa igual: todos os registros das fontes são
+//                   reunidos num conjunto único. Bases com muitos registros
+//                   dominam o resultado, então serve de contraprova, não de
+//                   preço adotado.
+//
+// Curadoria (lib/pesquisa-preco-curadoria.ts): registros podem ser
+// desconsiderados com justificativa antes da emissão do relatório, e
+// orçamentos diretos de fornecedor (art. 5º, IV) entram como fonte adicional.
 //
 // Nota de tipagem: as chamadas ao Prisma (groupBy/findMany/count) ficam sempre
 // em `const` locais e NUNCA em posição de retorno de função com tipo declarado.
@@ -37,8 +80,14 @@ import { db } from "@/lib/db";
 
 /** Tamanho da amostra (registros mais recentes) usada na estatística por fonte. */
 const AMOSTRA = 500;
-/** Registros devolvidos por fonte para exibição (painel e relatório). */
-const REGISTROS_EXIBIDOS = 10;
+/**
+ * Registros devolvidos por fonte. São os mais recentes MAIS todos os
+ * classificados como destoantes pelo IQR — sem esta segunda parte, justamente
+ * os registros que a curadoria precisa examinar poderiam ficar de fora quando
+ * a amostra chega aos 500. Painel e relatório recortam os primeiros para
+ * exibição; a tela de curadoria usa a lista inteira.
+ */
+const REGISTROS_ANALISE = 150;
 
 /** Unidade sintética para registros ANVISA sem unidade de fornecimento na CMED. */
 export const UNIDADE_EMBALAGEM = "EMBALAGEM";
@@ -142,8 +191,6 @@ export interface ItemPesquisa {
   registros: RegistroCmedResumo[];
 }
 
-export type FonteMercado = "bps" | "siasg" | "pncp";
-
 export interface UnidadeOpcao {
   /** Unidade normalizada — valor do filtro obrigatório. */
   unidade: string;
@@ -186,18 +233,46 @@ export interface RegistroMercado {
   uf: string | null;
   modalidade: string | null;
   orgao: string | null;
+  /** Empresa vencedora do certame — vai nominada no relatório. */
   fornecedor: string | null;
+  cnpjFornecedor: string | null;
+  /** Marca e fabricante do produto ofertado (nem toda base registra os dois). */
+  marca: string | null;
+  fabricante: string | null;
   esfera?: string | null;
+  /** Fora da faixa Q1−1,5·IQR … Q3+1,5·IQR — já não entra na estatística. */
+  outlierIqr: boolean;
+  /** Justificativa do descarte manual; null quando o registro foi considerado. */
+  excluidoPor: string | null;
 }
 
 export interface FonteMercadoResultado {
+  /** Filtros opcionais que esta base não possui como campo — ver FONTE_SEM_CAMPO. */
+  filtrosNaoSuportados: CampoFiltro[];
   total: number;
   amostra: number;
-  precoMin: number | null;
-  precoMax: number | null;
-  precoMediana: number | null;
+  /** Média, mediana e menor valor (art. 6º) sobre a amostra já depurada. */
+  estatisticas: Estatisticas;
   outliersRemovidos: number;
+  /** Registros desconsiderados manualmente nesta fonte. */
+  excluidosManualmente: number;
+  /** Amostra para exibição e curadoria — ver REGISTROS_ANALISE. */
   registros: RegistroMercado[];
+}
+
+/**
+ * Consolidação das fontes pelos dois critérios possíveis. Ver o cabeçalho do
+ * arquivo: `porFonte` é o que instrui o processo; `porRegistro` é contraprova.
+ */
+export interface Consolidado {
+  /** Uma entrada por fonte com mediana apurada, na ordem de apresentação. */
+  fontes: Array<{ fonte: FonteCurada; nome: string; estatisticas: Estatisticas }>;
+  /** Medianas das fontes — o vetor sobre o qual `porFonte` é calculado. */
+  medianasPorFonte: number[];
+  /** Cada fonte pesa igual. `porFonte.mediana` é o preço de referência. */
+  porFonte: Estatisticas;
+  /** Cada registro pesa igual: todos os registros depurados reunidos. */
+  porRegistro: Estatisticas;
 }
 
 export interface RegistroCmedPreco {
@@ -217,6 +292,8 @@ export interface RegistroCmedPreco {
   pfUnitario: number | null;
   cap: boolean;
   generico: boolean | null;
+  /** Justificativa do descarte manual; null quando o registro foi considerado. */
+  excluidoPor: string | null;
 }
 
 export interface CmedResultado {
@@ -226,10 +303,16 @@ export interface CmedResultado {
   pmvgUnitMax: number | null;
   /** Registros com preço mas sem Qt_Embal (preço só por embalagem). */
   semQtEmbalagem: number;
+  /** Registros de teto desconsiderados manualmente. */
+  excluidosManualmente: number;
 }
 
 export interface Recomendacao {
+  /** Mediana das medianas por fonte — o método adotado (art. 6º, caput). */
   precoReferencia: number | null;
+  /** Os outros dois métodos do art. 6º, para conferência no relatório. */
+  mediaConsolidada: number | null;
+  menorConsolidado: number | null;
   limitePmvg: number | null;
   precoFinal: number | null;
   metodologia: string;
@@ -241,12 +324,21 @@ export interface ResultadoPesquisa {
   item: ItemPesquisa;
   unidade: string;
   uf: string | null;
+  /** Filtros opcionais já normalizados — o que de fato entrou na consulta. */
+  filtros: FiltrosOpcionais;
   resultados: {
     cmed: CmedResultado;
     bps: FonteMercadoResultado;
     siasg: FonteMercadoResultado;
     pncp: FonteMercadoResultado;
+    /** Cotações diretas informadas pelo usuário; null quando não há nenhuma. */
+    orcamentos: FonteMercadoResultado | null;
   };
+  consolidado: Consolidado;
+  /** Orçamentos diretos como foram informados (inclusive os fora do cálculo). */
+  orcamentos: OrcamentoFornecedor[];
+  /** Registros desconsiderados e o motivo — rastreabilidade do descarte. */
+  descartes: RegistroDescartado[];
   recomendacao: Recomendacao;
 }
 
@@ -254,40 +346,107 @@ export interface ParametrosPesquisa {
   codigo: string;
   unidade: string;
   uf?: string | null;
+  filtros?: Partial<FiltrosOpcionais> | null;
+  /** Registros a desconsiderar, com justificativa (tela de curadoria). */
+  exclusoes?: ExclusaoRegistro[] | unknown;
+  /** Orçamentos diretos de fornecedor (art. 5º, IV). */
+  orcamentos?: OrcamentoFornecedor[] | unknown;
 }
 
-// ── Estatística ──────────────────────────────────────────────────────────────
-
-export function mediana(valores: number[]): number | null {
-  if (!valores.length) return null;
-  const sorted = [...valores].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+/** Comparação tolerante a acento/caixa, usada nos filtros feitos em memória. */
+function contemTexto(valor: string | null | undefined, termo: string): boolean {
+  return normalizarTexto(String(valor ?? "")).includes(normalizarTexto(termo));
 }
 
-/** Remove outliers pelo intervalo interquartil (Q1−1,5·IQR; Q3+1,5·IQR). */
-export function limparOutliers(valores: number[]): { limpo: number[]; removidos: number } {
-  if (valores.length < 4) return { limpo: valores, removidos: 0 };
-  const sorted = [...valores].sort((a, b) => a - b);
-  const q1 = sorted[Math.floor(sorted.length * 0.25)];
-  const q3 = sorted[Math.floor(sorted.length * 0.75)];
-  const iqr = q3 - q1;
-  const lo = q1 - 1.5 * iqr;
-  const hi = q3 + 1.5 * iqr;
-  const limpo = sorted.filter((v) => v >= lo && v <= hi);
-  return { limpo, removidos: sorted.length - limpo.length };
+// ── Estatística e depuração da amostra ───────────────────────────────────────
+//
+// mediana(), calcularEstatisticas() e limitesIqr() vivem em
+// lib/pesquisa-preco-curadoria.ts (módulo puro, reexportado acima) porque a
+// tela precisa deles para pré-visualizar o efeito de uma exclusão.
+
+interface OpcoesConsolidacao {
+  fonte: FonteCurada;
+  filtrosNaoSuportados?: CampoFiltro[];
+  /** Exclusões manuais desta fonte: id do registro → justificativa. */
+  excluidos?: Map<string, string>;
+  /**
+   * Orçamentos não passam por IQR: são poucos e foram escolhidos a dedo pelo
+   * responsável — descartar um automaticamente contrariaria a própria juntada.
+   */
+  semIqr?: boolean;
 }
 
-function consolidar(total: number, registros: RegistroMercado[], amostra: number): FonteMercadoResultado {
-  const { limpo, removidos } = limparOutliers(registros.map((r) => r.preco).filter((v) => v > 0));
+interface AnaliseFonte {
+  resultado: FonteMercadoResultado;
+  /** Preços que compõem a estatística — alimentam o consolidado por registro. */
+  precos: number[];
+  descartes: RegistroDescartado[];
+}
+
+/** Registro como sai da base: `outlierIqr` e `excluidoPor` são decididos aqui. */
+type RegistroBruto = Omit<RegistroMercado, "outlierIqr" | "excluidoPor">;
+
+/**
+ * Estatística de uma fonte a partir da amostra bruta. A ordem importa:
+ * primeiro saem os registros desconsiderados à mão (com justificativa), depois
+ * o IQR trabalha sobre o que sobrou — o contrário deixaria o IQR calibrado por
+ * valores que o responsável já havia rejeitado.
+ */
+function consolidar(
+  total: number,
+  registros: RegistroBruto[],
+  amostra: number,
+  opcoes: OpcoesConsolidacao
+): AnaliseFonte {
+  const excluidos = opcoes.excluidos ?? new Map<string, string>();
+
+  const marcados = registros.map((r) => ({ ...r, excluidoPor: excluidos.get(r.id) ?? null }));
+  const considerados = marcados.filter((r) => r.excluidoPor === null && r.preco > 0);
+
+  const descartes: RegistroDescartado[] = marcados
+    .filter((r) => r.excluidoPor !== null)
+    .map((r) => ({
+      fonte: opcoes.fonte,
+      id: r.id,
+      descricao: r.descricao,
+      preco: r.preco,
+      data: r.data,
+      uf: r.uf,
+      fornecedor: r.fornecedor,
+      motivo: r.excluidoPor as string,
+    }));
+
+  const precos = considerados.map((r) => r.preco);
+  const limites = opcoes.semIqr ? null : limitesIqr(precos);
+  const dentro = limites ? precos.filter((v) => v >= limites.lo && v <= limites.hi) : precos;
+
+  const comOutlier: RegistroMercado[] = marcados.map((r) => ({
+    ...r,
+    outlierIqr:
+      r.excluidoPor === null &&
+      r.preco > 0 &&
+      limites !== null &&
+      (r.preco < limites.lo || r.preco > limites.hi),
+  }));
+
+  // A curadoria precisa ver todos os destoantes, mesmo os que caíram fora dos
+  // REGISTROS_ANALISE mais recentes — são exatamente os candidatos a exclusão.
+  const recentes = comOutlier.slice(0, REGISTROS_ANALISE);
+  const jaListados = new Set(recentes.map((r) => r.id));
+  const destoantes = comOutlier.filter((r) => r.outlierIqr && !jaListados.has(r.id));
+
   return {
-    total,
-    amostra,
-    precoMin: limpo.length ? Math.min(...limpo) : null,
-    precoMax: limpo.length ? Math.max(...limpo) : null,
-    precoMediana: mediana(limpo),
-    outliersRemovidos: removidos,
-    registros: registros.slice(0, REGISTROS_EXIBIDOS),
+    resultado: {
+      filtrosNaoSuportados: opcoes.filtrosNaoSuportados ?? [],
+      total,
+      amostra,
+      estatisticas: calcularEstatisticas(dentro),
+      outliersRemovidos: precos.length - dentro.length,
+      excluidosManualmente: descartes.length,
+      registros: [...recentes, ...destoantes],
+    },
+    precos: dentro,
+    descartes,
   };
 }
 
@@ -572,6 +731,8 @@ interface LinhaBps {
   modalidade: string | null;
   instituicao: string | null;
   fornecedor: string | null;
+  cnpjFornecedor: string | null;
+  fabricante: string | null;
 }
 
 interface LinhaSiasg {
@@ -585,6 +746,9 @@ interface LinhaSiasg {
   modalidade: string | null;
   orgao: string | null;
   fornecedor: string | null;
+  cnpjFornecedor: string | null;
+  fabricante: string | null;
+  marca: string | null;
   esfera: string | null;
 }
 
@@ -599,6 +763,7 @@ interface LinhaPncp {
   modalidade: string | null;
   orgao: string | null;
   fornecedor: string | null;
+  cnpjFornecedor: string | null;
 }
 
 const toISO = (d: Date) => d.toISOString();
@@ -616,22 +781,59 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const brutasSiasg = brutas.siasg.get(unidade) ?? [];
   const brutasPncp = brutas.pncp.get(unidade) ?? [];
 
+  // ── Curadoria: exclusões justificadas e orçamentos diretos ──
+  // Normalizados aqui e não na rota porque as três entradas (busca, relatório
+  // de item e relatório da cesta) chamam esta função com corpos diferentes.
+  const exclusoes: ExclusaoRegistro[] = normalizarExclusoes(p.exclusoes);
+  const excluidosPorFonte = mapaExclusoes(exclusoes);
+  const orcamentos: OrcamentoFornecedor[] = normalizarOrcamentos(p.orcamentos);
+
+  // ── Filtros opcionais ──
+  const filtros = normalizarFiltros(p.filtros);
+  const ativos = filtrosAtivos(filtros);
+  /** Filtros ativos que a fonte não tem como campo — bloqueiam a consulta dela. */
+  const semCampo = (fonte: FonteMercado) => FONTE_SEM_CAMPO[fonte].filter((c) => filtros[c] != null);
+  const contem = (termo: string) => ({ contains: termo, mode: "insensitive" as const });
+  // CNPJ casa por prefixo em qualquer das formas de gravação (com e sem
+  // pontuação) — daí o OR sobre as variantes, montado por fonte porque o nome
+  // da coluna muda (cnpjInstituicao no BPS, cnpjOrgao no PNCP).
+  const cnpjVariantes = variantesCnpj(filtros.cnpjComprador);
+
   const whereBps: Prisma.PrecoBpsWhereInput | null =
-    variantes && brutasBps.length
-      ? { codigoCatmat: { in: variantes.bps }, unidade: { in: brutasBps }, ...(uf ? { uf } : {}) }
+    variantes && brutasBps.length && !semCampo("bps").length
+      ? {
+          codigoCatmat: { in: variantes.bps },
+          unidade: { in: brutasBps },
+          ...(uf ? { uf } : {}),
+          ...(filtros.fornecedor ? { fornecedor: contem(filtros.fornecedor) } : {}),
+          ...(filtros.fabricante ? { fabricante: contem(filtros.fabricante) } : {}),
+          ...(cnpjVariantes
+            ? { OR: cnpjVariantes.map((v) => ({ cnpjInstituicao: { startsWith: v } })) }
+            : {}),
+        }
       : null;
   const whereSiasg: Prisma.PrecoSiasgWhereInput | null =
-    variantes && brutasSiasg.length
+    variantes && brutasSiasg.length && !semCampo("siasg").length
       ? {
           codigoCatmat: { in: variantes.siasg },
           unidade: { in: brutasSiasg },
           acaoJudicial: true,
           ...(uf ? { uf } : {}),
+          ...(filtros.fornecedor ? { fornecedor: contem(filtros.fornecedor) } : {}),
+          ...(filtros.fabricante ? { fabricante: contem(filtros.fabricante) } : {}),
         }
       : null;
   const wherePncp: Prisma.PrecoPncpWhereInput | null =
-    variantes && brutasPncp.length
-      ? { codItemCatalogo: { in: variantes.pncp }, unidade: { in: brutasPncp }, ...(uf ? { uf } : {}) }
+    variantes && brutasPncp.length && !semCampo("pncp").length
+      ? {
+          codItemCatalogo: { in: variantes.pncp },
+          unidade: { in: brutasPncp },
+          ...(uf ? { uf } : {}),
+          ...(filtros.fornecedor ? { fornecedor: contem(filtros.fornecedor) } : {}),
+          ...(cnpjVariantes
+            ? { OR: cnpjVariantes.map((v) => ({ cnpjOrgao: { startsWith: v } })) }
+            : {}),
+        }
       : null;
 
   // Registros ANVISA da unidade escolhida (a CMED é filtrada pela unidade do registro).
@@ -657,6 +859,8 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         modalidade: true,
         instituicao: true,
         fornecedor: true,
+        cnpjFornecedor: true,
+        fabricante: true,
       },
     });
     return rows;
@@ -678,6 +882,9 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         modalidade: true,
         orgao: true,
         fornecedor: true,
+        cnpjFornecedor: true,
+        fabricante: true,
+        marca: true,
         esfera: true,
       },
     });
@@ -700,6 +907,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         modalidade: true,
         orgao: true,
         fornecedor: true,
+        cnpjFornecedor: true,
       },
     });
     return rows;
@@ -739,7 +947,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       contarPncp(),
     ]);
 
-  const bps = consolidar(
+  const analiseBps = consolidar(
     totalBps,
     bpsRows.map((r) => ({
       id: r.id,
@@ -752,10 +960,14 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       modalidade: r.modalidade,
       orgao: r.instituicao,
       fornecedor: r.fornecedor,
+      cnpjFornecedor: r.cnpjFornecedor,
+      marca: null,
+      fabricante: r.fabricante,
     })),
-    bpsRows.length
+    bpsRows.length,
+    { fonte: "bps", filtrosNaoSuportados: semCampo("bps"), excluidos: excluidosPorFonte.get("bps") }
   );
-  const siasg = consolidar(
+  const analiseSiasg = consolidar(
     totalSiasg,
     siasgRows.map((r) => ({
       id: r.id,
@@ -768,11 +980,19 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       modalidade: r.modalidade,
       orgao: r.orgao,
       fornecedor: r.fornecedor,
+      cnpjFornecedor: r.cnpjFornecedor,
+      marca: r.marca,
+      fabricante: r.fabricante,
       esfera: r.esfera,
     })),
-    siasgRows.length
+    siasgRows.length,
+    {
+      fonte: "siasg",
+      filtrosNaoSuportados: semCampo("siasg"),
+      excluidos: excluidosPorFonte.get("siasg"),
+    }
   );
-  const pncp = consolidar(
+  const analisePncp = consolidar(
     totalPncp,
     pncpRows.map((r) => ({
       id: r.id,
@@ -785,12 +1005,57 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       modalidade: r.modalidade,
       orgao: r.orgao,
       fornecedor: r.fornecedor,
+      cnpjFornecedor: r.cnpjFornecedor,
+      marca: null,
+      fabricante: null,
     })),
-    pncpRows.length
+    pncpRows.length,
+    {
+      fonte: "pncp",
+      filtrosNaoSuportados: semCampo("pncp"),
+      excluidos: excluidosPorFonte.get("pncp"),
+    }
   );
 
+  // Orçamentos diretos de fornecedor (art. 5º, IV) — informados pelo usuário,
+  // não consultados em base. Entram como uma fonte a mais, sem IQR.
+  // "Somente registro" é tratado como exclusão com motivo declarado: o
+  // orçamento aparece no relatório, fora do cálculo, como o usuário pediu.
+  const foraDoCalculo = new Map<string, string>(excluidosPorFonte.get("orcamentos"));
+  for (const o of orcamentos) {
+    if (!o.considerarNoCalculo && !foraDoCalculo.has(o.id)) {
+      foraDoCalculo.set(o.id, "Marcado como somente registro pelo responsável pela pesquisa");
+    }
+  }
+  const analiseOrcamentos = orcamentos.length
+    ? consolidar(
+        orcamentos.length,
+        orcamentos.map((o) => ({
+          id: o.id,
+          descricao: [o.marca, o.fabricante].filter(Boolean).join(" — ") || o.fornecedor,
+          unidade,
+          preco: o.valorUnitario,
+          qtd: null,
+          data: o.dataOrcamento,
+          uf: null,
+          modalidade: "Orçamento direto",
+          orgao: null,
+          fornecedor: o.fornecedor,
+          cnpjFornecedor: o.cnpj,
+          marca: o.marca,
+          fabricante: o.fabricante,
+        })),
+        orcamentos.length,
+        { fonte: "orcamentos", semIqr: true, excluidos: foraDoCalculo }
+      )
+    : null;
+
+  const bps = analiseBps.resultado;
+  const siasg = analiseSiasg.resultado;
+  const pncp = analisePncp.resultado;
+
   // CMED: preço por embalagem → por unidade de fornecimento (÷ Qt_Embal).
-  const cmedRegistros: RegistroCmedPreco[] = cmedRows.map((r) => {
+  const cmedTodos: RegistroCmedPreco[] = cmedRows.map((r) => {
     const meta = r.registro ? porRegistro.get(r.registro) : undefined;
     const qt =
       unidade === UNIDADE_EMBALAGEM
@@ -814,9 +1079,24 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       pfUnitario: porUnidade(r.pf0),
       cap: r.cap,
       generico: meta?.generico ?? null,
+      excluidoPor: excluidosPorFonte.get("cmed")?.get(r.id) ?? null,
     };
   });
-  const pmvgUnitarios = cmedRegistros
+  // Fabricante recorta também o teto: o PMVG passa a ser o do laboratório
+  // escolhido. Casa tanto pelo laboratório da tabela de preços quanto pelo
+  // fabricante do registro ANVISA — nem toda linha traz os dois preenchidos.
+  const cmedRegistros = filtros.fabricante
+    ? cmedTodos.filter(
+        (r) =>
+          contemTexto(r.laboratorio, filtros.fabricante as string) ||
+          contemTexto(porRegistro.get(r.registro)?.fabricante, filtros.fabricante as string)
+      )
+    : cmedTodos;
+
+  // Registro CMED desconsiderado não forma teto — mas continua listado, com o
+  // motivo ao lado, para que a leitura do relatório reconstitua a decisão.
+  const cmedConsiderados = cmedRegistros.filter((r) => r.excluidoPor === null);
+  const pmvgUnitarios = cmedConsiderados
     .map((r) => r.pmvgUnitario)
     .filter((v): v is number => v != null && v > 0);
   const cmed: CmedResultado = {
@@ -824,26 +1104,53 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     registros: cmedRegistros,
     pmvgUnitMin: pmvgUnitarios.length ? Math.min(...pmvgUnitarios) : null,
     pmvgUnitMax: pmvgUnitarios.length ? Math.max(...pmvgUnitarios) : null,
-    semQtEmbalagem: cmedRegistros.filter((r) => r.pmvgUnitario == null).length,
+    semQtEmbalagem: cmedConsiderados.filter((r) => r.pmvgUnitario == null).length,
+    excluidosManualmente: cmedRegistros.length - cmedConsiderados.length,
   };
 
-  // ── Recomendação (IN 65/2021) ──
-  const fontes: string[] = [];
-  const medianas: number[] = [];
-  if (bps.precoMediana !== null) {
-    fontes.push("BPS");
-    medianas.push(bps.precoMediana);
-  }
-  if (siasg.precoMediana !== null) {
-    fontes.push("SIASG");
-    medianas.push(siasg.precoMediana);
-  }
-  if (pncp.precoMediana !== null) {
-    fontes.push("PNCP");
-    medianas.push(pncp.precoMediana);
+  // ── Consolidação (art. 6º — média, mediana e menor valor) ──
+  //
+  // Duas leituras, ambas no relatório (ver o cabeçalho do arquivo):
+  //   porFonte    — cada base pesa igual; é dela que sai o preço adotado.
+  //   porRegistro — cada compra pesa igual; contraprova da anterior.
+  const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = [
+    { fonte: "bps", analise: analiseBps },
+    { fonte: "siasg", analise: analiseSiasg },
+    { fonte: "pncp", analise: analisePncp },
+  ];
+  if (analiseOrcamentos) analises.push({ fonte: "orcamentos", analise: analiseOrcamentos });
+
+  const comMediana = analises.filter((a) => a.analise.resultado.estatisticas.mediana !== null);
+  const fontes = comMediana.map((a) => NOME_FONTE_CURADA[a.fonte]);
+  const medianas = comMediana.map((a) => a.analise.resultado.estatisticas.mediana as number);
+
+  const consolidado: Consolidado = {
+    fontes: comMediana.map((a) => ({
+      fonte: a.fonte,
+      nome: NOME_FONTE_CURADA[a.fonte],
+      estatisticas: a.analise.resultado.estatisticas,
+    })),
+    medianasPorFonte: medianas,
+    porFonte: medianas.length ? calcularEstatisticas(medianas) : { ...ESTATISTICAS_VAZIAS },
+    porRegistro: calcularEstatisticas(analises.flatMap((a) => a.analise.precos)),
+  };
+  const descartes = analises.flatMap((a) => a.analise.descartes);
+  for (const r of cmedRegistros) {
+    if (r.excluidoPor === null) continue;
+    descartes.push({
+      fonte: "cmed",
+      id: r.id,
+      descricao: `${r.produto || r.substancia || "Registro CMED"} — ${r.apresentacao || "—"} (reg. ${r.registro})`,
+      preco: r.pmvgUnitario ?? r.pmvgEmbalagem,
+      data: null,
+      uf: null,
+      fornecedor: r.laboratorio,
+      motivo: r.excluidoPor,
+    });
   }
 
-  const precoReferencia = mediana(medianas);
+  // ── Recomendação (IN 65/2021) ──
+  const precoReferencia = consolidado.porFonte.mediana;
   const limitePmvg = cmed.pmvgUnitMin;
   const pmvgAplicado =
     limitePmvg !== null && precoReferencia !== null && precoReferencia > limitePmvg;
@@ -851,6 +1158,27 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const capAplica = cmedRegistros.some((r) => r.cap);
 
   const observacoes: string[] = [];
+  if (ativos.length) {
+    observacoes.push(
+      `Filtros adicionais aplicados: ${ativos
+        .map((c) => `${ROTULO_FILTRO[c]} "${filtros[c]}"`)
+        .join("; ")}. Os preços apurados consideram somente os registros que atendem a esses critérios.`
+    );
+    for (const fonte of ["bps", "siasg", "pncp"] as FonteMercado[]) {
+      const faltando = semCampo(fonte);
+      if (!faltando.length) continue;
+      observacoes.push(
+        `${NOME_FONTE[fonte]} não registra ${faltando
+          .map((c) => ROTULO_FILTRO[c].toLowerCase())
+          .join(" nem ")}; a fonte foi excluída da apuração enquanto esse filtro estiver ativo.`
+      );
+    }
+    if (filtros.fabricante && cmedTodos.length > cmedRegistros.length) {
+      observacoes.push(
+        `CMED: ${cmedTodos.length - cmedRegistros.length} de ${cmedTodos.length} registro(s) ANVISA descartado(s) por não corresponderem ao fabricante informado.`
+      );
+    }
+  }
   if (item.tipo === "REGISTRO" && !item.catmat) {
     observacoes.push(
       "Registro ANVISA sem CATMAT associado: as bases de mercado (BPS, SIASG, PNCP) não podem ser consultadas por código. Resultado limitado ao preço CMED."
@@ -873,7 +1201,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   if (fontes.length < 3) {
     observacoes.push(
-      `Apenas ${fontes.length} fonte(s) de mercado com dados para este item e unidade. Recomenda-se busca adicional.`
+      `Apenas ${fontes.length} fonte(s) com dados para este item e unidade. Recomenda-se busca adicional ou orçamento direto de fornecedor (art. 5º, IV).`
     );
   }
   if (bps.total === 0 && siasg.total === 0 && pncp.total === 0) {
@@ -881,18 +1209,40 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
   }
+  if (analiseOrcamentos) {
+    const noCalculo = analiseOrcamentos.resultado.estatisticas.n;
+    observacoes.push(
+      `${orcamentos.length} orçamento(s) direto(s) de fornecedor juntado(s) ao processo (art. 5º, IV da IN 65/2021); ${noCalculo} considerado(s) no cálculo do preço de referência.`
+    );
+  }
+  if (descartes.length) {
+    observacoes.push(
+      `${descartes.length} registro(s) desconsiderado(s) por decisão fundamentada do responsável (art. 6º, §§ 1º e 2º). Cada descarte está relacionado no relatório com a respectiva justificativa.`
+    );
+  }
 
   return {
     item,
     unidade,
     uf,
-    resultados: { cmed, bps, siasg, pncp },
+    filtros,
+    resultados: {
+      cmed,
+      bps,
+      siasg,
+      pncp,
+      orcamentos: analiseOrcamentos?.resultado ?? null,
+    },
+    consolidado,
+    orcamentos,
+    descartes,
     recomendacao: {
       precoReferencia,
+      mediaConsolidada: consolidado.porFonte.media,
+      menorConsolidado: consolidado.porFonte.menor,
       limitePmvg,
       precoFinal,
-      metodologia:
-        "Mediana das medianas por fonte (IN SEGES/ME nº 65/2021); teto = menor PMVG unitário sem impostos (CMED ÷ Qt_Embal)",
+      metodologia: METODO_ADOTADO,
       fontes,
       observacoes,
     },

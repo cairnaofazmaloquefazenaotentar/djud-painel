@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CestaItemDTO, CestaResumo } from "@/lib/cesta";
+import type { ExclusaoRegistro, OrcamentoFornecedor } from "@/lib/pesquisa-preco-curadoria";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta da Pesquisa de Preços — a fonte da verdade é o banco (por usuário), não
@@ -41,6 +42,9 @@ export interface AdicionarItemArgs {
   uf: string | null;
   quantidade?: number;
   observacao?: string | null;
+  /** Curadoria feita na tela de pesquisa, gravada junto com o item. */
+  exclusoes?: ExclusaoRegistro[];
+  orcamentos?: OrcamentoFornecedor[];
 }
 
 export function useAdicionarItemCesta() {
@@ -66,7 +70,13 @@ export function useAtualizarItemCesta() {
   return useMutation<
     { item: CestaItemDTO },
     Error,
-    { id: string; quantidade?: number; observacao?: string | null }
+    {
+      id: string;
+      quantidade?: number;
+      observacao?: string | null;
+      exclusoes?: ExclusaoRegistro[];
+      orcamentos?: OrcamentoFornecedor[];
+    }
   >({
     mutationFn: async ({ id, ...dados }) => {
       const res = await fetch(`/api/precos/cesta/${encodeURIComponent(id)}`, {

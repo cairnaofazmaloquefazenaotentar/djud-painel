@@ -64,20 +64,39 @@ export function useItemPesquisa(codigo: string | null) {
   });
 }
 
+/**
+ * Parâmetros submetidos ao clicar em "Buscar". Os três primeiros são os
+ * filtros obrigatórios; UF e os campos de "Mais filtros" são recortes
+ * opcionais — `null` quando não preenchidos.
+ */
 export interface ParametrosBusca {
   codigo: string;
   unidade: string;
   uf: string | null;
+  fornecedor: string | null;
+  fabricante: string | null;
+  cnpjComprador: string | null;
 }
 
 /** Pesquisa consolidada — dispara apenas quando os parâmetros são submetidos. */
 export function usePesquisaPrecos(params: ParametrosBusca | null) {
   return useQuery<ResultadoPesquisa>({
-    queryKey: ["precos-buscar", params?.codigo, params?.unidade, params?.uf],
+    queryKey: [
+      "precos-buscar",
+      params?.codigo,
+      params?.unidade,
+      params?.uf,
+      params?.fornecedor,
+      params?.fabricante,
+      params?.cnpjComprador,
+    ],
     queryFn: async () => {
       if (!params) throw new Error("Parâmetros de pesquisa ausentes");
       const sp = new URLSearchParams({ codigo: params.codigo, unidade: params.unidade });
       if (params.uf) sp.set("uf", params.uf);
+      if (params.fornecedor) sp.set("fornecedor", params.fornecedor);
+      if (params.fabricante) sp.set("fabricante", params.fabricante);
+      if (params.cnpjComprador) sp.set("cnpjComprador", params.cnpjComprador);
       const res = await fetch(`/api/precos/buscar?${sp.toString()}`);
       if (!res.ok) await lerErro(res, "Erro na pesquisa de preços");
       return res.json();

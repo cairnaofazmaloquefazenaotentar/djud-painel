@@ -31,7 +31,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { status: 400 }
       );
     }
-    const { quantidade, observacao } = parsed.data;
+    const { quantidade, observacao, exclusoes, orcamentos } = parsed.data;
 
     const item = await db.cestaItem.findFirst({
       where: { id, userId: session.user.id as string },
@@ -40,12 +40,28 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: "Item não encontrado na sua cesta" }, { status: 404 });
     }
 
-    const atualizado = await db.cestaItem.update({
-      where: { id: item.id },
-      data: {
-        ...(quantidade === undefined ? {} : { quantidade }),
-        ...(observacao === undefined ? {} : { observacao }),
-      },
+    // Orçamentos são substituídos em bloco (ver atualizarItemCestaSchema). Em
+    // transação para o item nunca ficar sem a lista antiga e sem a nova.
+    const atualizado = await db.$transaction(async (tx) => {
+      if (orcamentos !== undefined) {
+        await tx.cestaOrcamento.deleteMany({ where: { cestaItemId: item.id } });
+        if (orcamentos.length) {
+          await tx.cestaOrcamento.createMany({
+            data: orcamentos.map((o) => ({ ...o, cestaItemId: item.id })),
+          });
+        }
+      }
+      const linha = await tx.cestaItem.update({
+        where: { id: item.id },
+        data: {
+          ...(quantidade === undefined ? {} : { quantidade }),
+          ...(observacao === undefined ? {} : { observacao }),
+          // Lista vazia apaga a curadoria; `undefined` deixa como está.
+          ...(exclusoes === undefined ? {} : { exclusoes }),
+        },
+        include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
+      });
+      return linha;
     });
 
     return NextResponse.json({ item: paraDTO(atualizado) });

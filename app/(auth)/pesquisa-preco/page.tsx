@@ -10,9 +10,14 @@ import {
   FileText,
   Info,
   Loader2,
+  Minus,
+  Plus,
+  ListChecks,
   Search,
   ShieldCheck,
   ShoppingCart,
+  SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,10 +33,24 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Label } from "@/components/ui/label";
 import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-preco/material-search";
 import { CestaSheet } from "@/components/pesquisa-preco/cesta-sheet";
+import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
 import { useAdicionarItemCesta } from "@/hooks/useCesta";
+// Os filtros opcionais vêm do módulo puro: importar lib/pesquisa-preco aqui
+// arrastaria o Prisma para o bundle do navegador (ver o cabeçalho de lá).
+import {
+  ROTULO_FILTRO,
+  formatarCnpj,
+  type CampoFiltro,
+  type FiltrosOpcionais,
+} from "@/lib/pesquisa-preco-filtros";
+import type {
+  ExclusaoRegistro,
+  OrcamentoFornecedor,
+} from "@/lib/pesquisa-preco-curadoria";
 import type {
   CmedResultado,
+  Consolidado,
   FonteMercadoResultado,
   ItemPesquisa,
   Recomendacao,
@@ -59,6 +78,10 @@ const fmtDate = (d: string | Date) =>
 
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
 
+const CAMPOS_FILTRO = Object.keys(ROTULO_FILTRO) as CampoFiltro[];
+
+const listarFiltros = (f: FiltrosOpcionais) => CAMPOS_FILTRO.filter((c) => f[c] != null);
+
 const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
   "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
@@ -71,13 +94,18 @@ function SourcePanel({
   color,
   stats,
   loading,
+  comFiltros,
 }: {
   label: string;
   color: string;
   stats: FonteMercadoResultado | null;
   loading: boolean;
+  /** Há filtro opcional ativo — muda a leitura de um resultado vazio. */
+  comFiltros: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Filtro pedido que esta base não tem como campo: ela nem foi consultada.
+  const semCampo = stats?.filtrosNaoSuportados ?? [];
 
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
@@ -86,7 +114,7 @@ function SourcePanel({
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${color}`} />
           <span className="font-semibold text-sm truncate">{label}</span>
         </div>
-        {stats && (
+        {stats && semCampo.length === 0 && (
           <Badge variant="outline" className="text-xs shrink-0">
             {fmtInt(stats.total)} registros
           </Badge>
@@ -103,31 +131,53 @@ function SourcePanel({
         <p className="text-sm text-muted-foreground">Realize uma pesquisa para ver resultados.</p>
       )}
 
-      {!loading && stats && stats.total === 0 && (
+      {!loading && stats && semCampo.length > 0 && (
+        <p className="text-sm text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>
+            Esta base não registra {semCampo.map((c) => ROTULO_FILTRO[c].toLowerCase()).join(" nem ")} —
+            fonte fora da apuração enquanto o filtro estiver ativo.
+          </span>
+        </p>
+      )}
+
+      {!loading && stats && semCampo.length === 0 && stats.total === 0 && (
         <p className="text-sm text-muted-foreground">
-          Nenhum registro para este código e unidade de fornecimento.
+          {comFiltros
+            ? "Nenhum registro atende aos filtros aplicados."
+            : "Nenhum registro para este código e unidade de fornecimento."}
         </p>
       )}
 
       {!loading && stats && stats.total > 0 && (
         <>
-          <div className="grid grid-cols-3 gap-3 text-center">
+          {/* Os três métodos do art. 6º (média, mediana e menor valor) e o teto
+              da amostra — a mediana em destaque por ser a adotada. */}
+          <div className="grid grid-cols-4 gap-2 text-center">
             <div>
-              <p className="text-xs text-muted-foreground">Mínimo</p>
-              <p className="text-sm font-medium">{fmt(stats.precoMin)}</p>
+              <p className="text-xs text-muted-foreground">Média</p>
+              <p className="text-sm font-medium">{fmt(stats.estatisticas.media)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground font-semibold">Mediana</p>
-              <p className="text-sm font-bold text-primary">{fmt(stats.precoMediana)}</p>
+              <p className="text-sm font-bold text-primary">{fmt(stats.estatisticas.mediana)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Máximo</p>
-              <p className="text-sm font-medium">{fmt(stats.precoMax)}</p>
+              <p className="text-xs text-muted-foreground">Menor</p>
+              <p className="text-sm font-medium">{fmt(stats.estatisticas.menor)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Maior</p>
+              <p className="text-sm font-medium">{fmt(stats.estatisticas.maior)}</p>
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground text-center">
-            Amostra de {fmtInt(stats.amostra)} registro(s) mais recente(s)
+            {fmtInt(stats.estatisticas.n)} preço(s) no cálculo, de uma amostra de{" "}
+            {fmtInt(stats.amostra)} registro(s) mais recente(s)
             {stats.outliersRemovidos > 0 ? ` · ${stats.outliersRemovidos} outlier(s) removido(s) (IQR)` : ""}
+            {stats.excluidosManualmente > 0
+              ? ` · ${stats.excluidosManualmente} desconsiderado(s) com justificativa`
+              : ""}
           </p>
 
           {stats.registros.length > 0 && (
@@ -144,15 +194,23 @@ function SourcePanel({
                   </>
                 ) : (
                   <>
-                    <ChevronDown className="h-3.5 w-3.5 mr-1" /> Ver últimos {stats.registros.length} registros
+                    <ChevronDown className="h-3.5 w-3.5 mr-1" /> Ver últimos{" "}
+                    {Math.min(stats.registros.length, 20)} registros
                   </>
                 )}
               </Button>
               {expanded && (
                 <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto">
-                  {stats.registros.map((r) => (
-                    <div key={r.id} className="rounded border p-2 text-xs space-y-0.5">
-                      <p className="font-medium truncate">{r.descricao}</p>
+                  {stats.registros.slice(0, 20).map((r) => (
+                    <div
+                      key={r.id}
+                      className={`rounded border p-2 text-xs space-y-0.5 ${
+                        r.excluidoPor ? "border-destructive/50 bg-destructive/5" : ""
+                      }`}
+                    >
+                      <p className={`font-medium truncate ${r.excluidoPor ? "line-through opacity-70" : ""}`}>
+                        {r.descricao}
+                      </p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
                         <span className="font-semibold text-foreground">{fmt(r.preco)}</span>
                         {r.unidade && <span>/{r.unidade}</span>}
@@ -161,7 +219,23 @@ function SourcePanel({
                         {r.esfera && <span>{r.esfera}</span>}
                         {r.modalidade && <span>{r.modalidade}</span>}
                         {r.orgao && <span className="truncate max-w-[14rem]">{r.orgao}</span>}
+                        {r.outlierIqr && (
+                          <Badge variant="secondary" className="h-4 text-[10px]">fora do IQR</Badge>
+                        )}
                       </div>
+                      {/* Empresa vencedora e marca/fabricante — vão para o relatório. */}
+                      {(r.fornecedor || r.marca || r.fabricante) && (
+                        <p className="text-muted-foreground truncate">
+                          {r.fornecedor ? `Vencedora: ${r.fornecedor}` : ""}
+                          {(r.marca || r.fabricante) && r.fornecedor ? " · " : ""}
+                          {r.marca || r.fabricante
+                            ? `Marca/fabr.: ${[r.marca, r.fabricante].filter(Boolean).join(" / ")}`
+                            : ""}
+                        </p>
+                      )}
+                      {r.excluidoPor && (
+                        <p className="text-destructive">Desconsiderado: {r.excluidoPor}</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -180,10 +254,13 @@ function CmedPanel({
   data,
   unidade,
   loading,
+  fabricante,
 }: {
   data: CmedResultado | null;
   unidade: string | null;
   loading: boolean;
+  /** Filtro de fabricante em vigor — recorta também o teto PMVG. */
+  fabricante: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -194,6 +271,9 @@ function CmedPanel({
           <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
           <span className="font-semibold text-sm">CMED — Teto PMVG</span>
           <Badge variant="secondary" className="text-xs">ANVISA</Badge>
+          {fabricante && (
+            <Badge variant="outline" className="text-xs font-normal">{fabricante}</Badge>
+          )}
         </div>
         {data && <Badge variant="outline" className="text-xs shrink-0">{data.total} registro(s)</Badge>}
       </div>
@@ -210,7 +290,8 @@ function CmedPanel({
 
       {!loading && data && data.total === 0 && (
         <p className="text-sm text-amber-600">
-          Nenhum registro ANVISA com preço CMED vigente para este código e unidade.
+          Nenhum registro ANVISA{fabricante ? " do fabricante informado" : ""} com preço CMED vigente
+          para este código e unidade.
         </p>
       )}
 
@@ -279,10 +360,12 @@ function CmedPanel({
 
 function RecomendacaoPanel({
   rec,
+  consolidado,
   unidade,
   loading,
 }: {
   rec: Recomendacao | null;
+  consolidado: Consolidado | null;
   unidade: string | null;
   loading: boolean;
 }) {
@@ -312,7 +395,9 @@ function RecomendacaoPanel({
         <div className="text-center">
           <p className="text-xs text-muted-foreground mb-1">Preço de Referência</p>
           <p className="text-2xl font-bold text-primary">{fmt(rec.precoReferencia)}</p>
-          <p className="text-[10px] text-muted-foreground mt-1">Mediana das medianas (BPS, SIASG, PNCP)</p>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Mediana das medianas por fonte (art. 6º)
+          </p>
         </div>
         <div className="text-center">
           <p className="text-xs text-muted-foreground mb-1">Teto PMVG unitário</p>
@@ -333,6 +418,62 @@ function RecomendacaoPanel({
           </p>
         </div>
       </div>
+
+      {/* Art. 6º: os três métodos, por fonte e consolidados de duas maneiras. */}
+      {consolidado && consolidado.fontes.length > 0 && (
+        <div className="rounded-md border bg-card/60 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b bg-muted/50 text-muted-foreground">
+                <th className="px-2 py-1.5 text-left font-medium">Fonte</th>
+                <th className="px-2 py-1.5 text-right font-medium">Preços</th>
+                <th className="px-2 py-1.5 text-right font-medium">Média</th>
+                <th className="px-2 py-1.5 text-right font-medium">Mediana</th>
+                <th className="px-2 py-1.5 text-right font-medium">Menor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {consolidado.fontes.map((f) => (
+                <tr key={f.fonte} className="border-b last:border-0">
+                  <td className="px-2 py-1.5">{f.nome}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(f.estatisticas.n)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(f.estatisticas.media)}</td>
+                  <td className="px-2 py-1.5 text-right tabular-nums font-medium">
+                    {fmt(f.estatisticas.mediana)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right tabular-nums">{fmt(f.estatisticas.menor)}</td>
+                </tr>
+              ))}
+              <tr className="border-t bg-primary/10 font-semibold">
+                <td className="px-2 py-1.5">
+                  Consolidado por fonte
+                  <span className="block font-normal text-[10px] text-muted-foreground">
+                    cada fonte pesa igual — base do preço adotado
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(consolidado.porFonte.n)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmt(consolidado.porFonte.media)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums text-primary">
+                  {fmt(consolidado.porFonte.mediana)}
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmt(consolidado.porFonte.menor)}</td>
+              </tr>
+              <tr className="bg-muted/40">
+                <td className="px-2 py-1.5">
+                  Consolidado por registro
+                  <span className="block font-normal text-[10px] text-muted-foreground">
+                    cada compra pesa igual — contraprova
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmtInt(consolidado.porRegistro.n)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmt(consolidado.porRegistro.media)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmt(consolidado.porRegistro.mediana)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums">{fmt(consolidado.porRegistro.menor)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
@@ -399,7 +540,22 @@ export default function PesquisaPrecoPage() {
   const [uf, setUf] = useState("todos");
   const [params, setParams] = useState<ParametrosBusca | null>(null);
 
+  // "Mais filtros" — recorte opcional, recolhido por padrão.
+  const [maisFiltros, setMaisFiltros] = useState(false);
+  const [fornecedor, setFornecedor] = useState("");
+  const [fabricante, setFabricante] = useState("");
+  const [cnpjComprador, setCnpjComprador] = useState("");
+
   const [modalOpen, setModalOpen] = useState(false);
+  // Curadoria da pesquisa em tela: exclusões justificadas e orçamentos
+  // diretos. Estado efêmero — segue junto com o pedido do relatório; quem
+  // precisa guardar isso entre sessões usa a cesta, que grava no banco.
+  const [curadoriaOpen, setCuradoriaOpen] = useState(false);
+  // "relatorio" = a conferência foi aberta a caminho da emissão e encadeia na
+  // modal de metadados; "revisar" = o usuário só quis ajustar a pesquisa.
+  const [curadoriaDestino, setCuradoriaDestino] = useState<"revisar" | "relatorio">("revisar");
+  const [exclusoes, setExclusoes] = useState<ExclusaoRegistro[]>([]);
+  const [orcamentos, setOrcamentos] = useState<OrcamentoFornecedor[]>([]);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [avisoCesta, setAvisoCesta] = useState<{ texto: string; erro: boolean } | null>(null);
   const [relMeta, setRelMeta] = useState({
@@ -425,8 +581,14 @@ export default function PesquisaPrecoPage() {
 
   const adicionarCesta = useAdicionarItemCesta();
 
-  // O aviso vale para a pesquisa que está na tela.
-  useEffect(() => setAvisoCesta(null), [params]);
+  // O aviso e a curadoria valem para a pesquisa que está na tela: outra
+  // pesquisa, outros registros — manter exclusões de ids antigos aplicaria
+  // justificativa de um item ao resultado de outro.
+  useEffect(() => {
+    setAvisoCesta(null);
+    setExclusoes([]);
+    setOrcamentos([]);
+  }, [params]);
 
   // Unidade: única opção → pré-seleciona; opção que sumiu → limpa.
   useEffect(() => {
@@ -443,18 +605,48 @@ export default function PesquisaPrecoPage() {
     setParams(null);
   }, []);
 
-  const canSubmit = !!material && !!unidade && !carregandoItem;
+  // O backend descarta texto com 1 caractere e CNPJ com menos de 8 dígitos
+  // (normalizarFiltros). Bloqueamos a busca nesse caso em vez de ignorar em
+  // silêncio: o relatório não pode declarar um filtro que não foi aplicado.
+  const digitosCnpj = cnpjComprador.replace(/\D/g, "");
+  const fornecedorCurto = fornecedor.trim().length === 1;
+  const fabricanteCurto = fabricante.trim().length === 1;
+  const cnpjCurto = digitosCnpj.length > 0 && digitosCnpj.length < 8;
+  const filtrosInvalidos = fornecedorCurto || fabricanteCurto || cnpjCurto;
+  const qtdFiltros = [fornecedor.trim(), fabricante.trim(), digitosCnpj].filter(Boolean).length;
+
+  const canSubmit = !!material && !!unidade && !carregandoItem && !filtrosInvalidos;
+
+  const limparFiltros = useCallback(() => {
+    setFornecedor("");
+    setFabricante("");
+    setCnpjComprador("");
+  }, []);
 
   const handleSearch = useCallback(() => {
     if (!material || !unidade) return;
-    setParams({ codigo: material.codigo, unidade, uf: uf !== "todos" ? uf : null });
-  }, [material, unidade, uf]);
+    setParams({
+      codigo: material.codigo,
+      unidade,
+      uf: uf !== "todos" ? uf : null,
+      fornecedor: fornecedor.trim() || null,
+      fabricante: fabricante.trim() || null,
+      cnpjComprador: cnpjComprador.trim() || null,
+    });
+  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador]);
 
   const handleAdicionarCesta = useCallback(() => {
     if (!params) return;
     setAvisoCesta(null);
     adicionarCesta.mutate(
-      { codigo: params.codigo, unidade: params.unidade, uf: params.uf, quantidade: 1 },
+      {
+        codigo: params.codigo,
+        unidade: params.unidade,
+        uf: params.uf,
+        quantidade: 1,
+        exclusoes,
+        orcamentos,
+      },
       {
         onSuccess: (r) =>
           setAvisoCesta({
@@ -466,7 +658,7 @@ export default function PesquisaPrecoPage() {
         onError: (e) => setAvisoCesta({ texto: e.message, erro: true }),
       }
     );
-  }, [adicionarCesta, params]);
+  }, [adicionarCesta, exclusoes, orcamentos, params]);
 
   const handleGerarRelatorio = useCallback(async () => {
     if (!result || !params) return;
@@ -477,7 +669,7 @@ export default function PesquisaPrecoPage() {
       const res = await fetch("/api/relatorios/pesquisa-preco", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, ...relMeta }),
+        body: JSON.stringify({ ...params, ...relMeta, exclusoes, orcamentos }),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -496,7 +688,7 @@ export default function PesquisaPrecoPage() {
       setGerandoPdf(false);
       setModalOpen(false);
     }
-  }, [result, params, relMeta]);
+  }, [result, params, relMeta, exclusoes, orcamentos]);
 
   if (!canSearch) {
     return (
@@ -509,6 +701,10 @@ export default function PesquisaPrecoPage() {
 
   const error = (erroBusca as Error | null)?.message ?? null;
   const unidadePesquisada = result?.unidade ?? null;
+  // O que o backend de fato aplicou — pode diferir do que está digitado se o
+  // usuário mexeu nos campos depois de buscar.
+  const filtrosAplicados = result ? listarFiltros(result.filtros) : [];
+  const curadoriaAtiva = exclusoes.length + orcamentos.length;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -547,7 +743,7 @@ export default function PesquisaPrecoPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_8rem_auto] md:items-end">
+        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_8rem] md:items-start">
           <div className="space-y-1.5">
             <Label className="text-xs">
               Unidade de fornecimento <span className="text-destructive">*</span>
@@ -595,6 +791,106 @@ export default function PesquisaPrecoPage() {
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        {/* Filtros opcionais — recolhidos até o usuário pedir */}
+        <div className="border-t pt-3 space-y-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 -ml-2 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setMaisFiltros((v) => !v)}
+            aria-expanded={maisFiltros}
+            aria-controls="mais-filtros"
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5 mr-1.5" />
+            Mais filtros
+            {maisFiltros ? (
+              <Minus className="h-3.5 w-3.5 ml-1.5" />
+            ) : (
+              <Plus className="h-3.5 w-3.5 ml-1.5" />
+            )}
+            {!maisFiltros && qtdFiltros > 0 && (
+              <Badge variant="secondary" className="ml-2 h-4 px-1.5 text-[10px]">
+                {qtdFiltros}
+              </Badge>
+            )}
+          </Button>
+
+          {maisFiltros && (
+            <div id="mais-filtros" className="grid gap-3 md:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs" htmlFor="filtro-fornecedor">Fornecedor</Label>
+                <Input
+                  id="filtro-fornecedor"
+                  placeholder="Ex.: ALTERMED"
+                  value={fornecedor}
+                  onChange={(e) => setFornecedor(e.target.value)}
+                />
+                <p className={`text-[11px] ${fornecedorCurto ? "text-destructive" : "text-muted-foreground"}`}>
+                  {fornecedorCurto
+                    ? "Informe ao menos 2 caracteres."
+                    : "Trecho do nome de quem vendeu — BPS, SIASG e PNCP."}
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs" htmlFor="filtro-fabricante">Fabricante</Label>
+                <Input
+                  id="filtro-fabricante"
+                  placeholder="Ex.: EMS"
+                  value={fabricante}
+                  onChange={(e) => setFabricante(e.target.value)}
+                />
+                <p className={`text-[11px] ${fabricanteCurto ? "text-destructive" : "text-muted-foreground"}`}>
+                  {fabricanteCurto
+                    ? "Informe ao menos 2 caracteres."
+                    : "Trecho do laboratório — BPS, SIASG e CMED (recorta o teto PMVG). O PNCP não registra fabricante."}
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs" htmlFor="filtro-cnpj">CNPJ Comprador</Label>
+                <Input
+                  id="filtro-cnpj"
+                  inputMode="numeric"
+                  placeholder="00.000.000/0000-00"
+                  value={cnpjComprador}
+                  onChange={(e) => setCnpjComprador(formatarCnpj(e.target.value))}
+                />
+                <p className={`text-[11px] ${cnpjCurto ? "text-destructive" : "text-muted-foreground"}`}>
+                  {cnpjCurto
+                    ? "Informe ao menos a raiz do CNPJ (8 dígitos)."
+                    : "Órgão que comprou — completo ou só a raiz (BPS e PNCP). O SIASG não registra."}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="mr-auto flex flex-wrap items-center gap-2">
+            {/* Sem isto, o Buscar fica desabilitado sem motivo à vista. */}
+            {filtrosInvalidos && !maisFiltros && (
+              <button
+                type="button"
+                className="text-xs text-destructive underline underline-offset-2"
+                onClick={() => setMaisFiltros(true)}
+              >
+                Filtro opcional incompleto — revisar em “Mais filtros”.
+              </button>
+            )}
+            {qtdFiltros > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={limparFiltros}
+              >
+                <X className="h-3.5 w-3.5 mr-1" />
+                Limpar filtros opcionais
+              </Button>
+            )}
+          </div>
           <Button onClick={handleSearch} disabled={!canSubmit || loading}>
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Search className="h-4 w-4 mr-2" />}
             {loading ? "Buscando…" : "Buscar"}
@@ -610,6 +906,18 @@ export default function PesquisaPrecoPage() {
         {material && detalhe && <ItemResumo item={detalhe.item} unidades={unidades} />}
       </div>
 
+      {/* Filtros opcionais desta pesquisa */}
+      {result && filtrosAplicados.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-muted-foreground">Filtros aplicados:</span>
+          {filtrosAplicados.map((c) => (
+            <Badge key={c} variant="secondary" className="font-normal">
+              {ROTULO_FILTRO[c]}: {result.filtros[c]}
+            </Badge>
+          ))}
+        </div>
+      )}
+
       {/* Ações do resultado */}
       {result && (
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -620,6 +928,28 @@ export default function PesquisaPrecoPage() {
               {avisoCesta.texto}
             </span>
           )}
+          {filtrosAplicados.length > 0 && (
+            <span className="text-[11px] text-muted-foreground max-w-xs text-right leading-snug">
+              A cesta guarda código, unidade e UF: o relatório consolidado refaz a pesquisa
+              <strong> sem</strong> os filtros opcionais. A curadoria (descartes e orçamentos)
+              vai junto.
+            </span>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => {
+              setCuradoriaDestino("revisar");
+              setCuradoriaOpen(true);
+            }}
+          >
+            <ListChecks className="h-4 w-4 mr-2" />
+            Revisar registros
+            {curadoriaAtiva > 0 && (
+              <Badge variant="secondary" className="ml-2 h-5 px-1.5 text-[10px]">
+                {curadoriaAtiva}
+              </Badge>
+            )}
+          </Button>
           <Button
             variant="outline"
             onClick={handleAdicionarCesta}
@@ -633,11 +963,47 @@ export default function PesquisaPrecoPage() {
             Adicionar à cesta
           </Button>
           {canReport && (
-            <Button variant="outline" onClick={() => setModalOpen(true)}>
+            // A emissão passa pela tela de conferência: é lá que os valores
+            // destoantes são desconsiderados, de forma justificada, antes de
+            // o documento ser gerado (art. 6º, §§ 1º e 2º da IN 65/2021).
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCuradoriaDestino("relatorio");
+                setCuradoriaOpen(true);
+              }}
+            >
               <FileText className="h-4 w-4 mr-2" />
               Gerar Relatório IN 65/2021
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Resumo da curadoria em vigor nesta pesquisa */}
+      {result && curadoriaAtiva > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-muted-foreground">Curadoria aplicada:</span>
+          {exclusoes.length > 0 && (
+            <Badge variant="destructive" className="font-normal">
+              {exclusoes.length} registro(s) desconsiderado(s) com justificativa
+            </Badge>
+          )}
+          {orcamentos.length > 0 && (
+            <Badge variant="secondary" className="font-normal">
+              {orcamentos.length} orçamento(s) de fornecedor
+            </Badge>
+          )}
+          <button
+            type="button"
+            className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            onClick={() => {
+              setExclusoes([]);
+              setOrcamentos([]);
+            }}
+          >
+            limpar
+          </button>
         </div>
       )}
 
@@ -651,29 +1017,42 @@ export default function PesquisaPrecoPage() {
 
       {/* Recomendação */}
       {(result || loading) && (
-        <RecomendacaoPanel rec={result?.recomendacao ?? null} unidade={unidadePesquisada} loading={loading} />
+        <RecomendacaoPanel
+          rec={result?.recomendacao ?? null}
+          consolidado={result?.consolidado ?? null}
+          unidade={unidadePesquisada}
+          loading={loading}
+        />
       )}
 
       {/* Painéis por fonte */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CmedPanel data={result?.resultados.cmed ?? null} unidade={unidadePesquisada} loading={loading} />
+        <CmedPanel
+          data={result?.resultados.cmed ?? null}
+          unidade={unidadePesquisada}
+          loading={loading}
+          fabricante={result?.filtros.fabricante ?? null}
+        />
         <SourcePanel
           label="BPS — Banco de Preços em Saúde"
           color="bg-blue-500"
           stats={result?.resultados.bps ?? null}
           loading={loading}
+          comFiltros={filtrosAplicados.length > 0}
         />
         <SourcePanel
           label="SIASG — Compras Judiciais"
           color="bg-amber-500"
           stats={result?.resultados.siasg ?? null}
           loading={loading}
+          comFiltros={filtrosAplicados.length > 0}
         />
         <SourcePanel
           label="PNCP — Portal Nacional (2024–2025)"
           color="bg-emerald-500"
           stats={result?.resultados.pncp ?? null}
           loading={loading}
+          comFiltros={filtrosAplicados.length > 0}
         />
       </div>
 
@@ -688,6 +1067,26 @@ export default function PesquisaPrecoPage() {
           aplicado como teto obrigatório. Registros ANVISA sem CATMAT retornam apenas o preço CMED.
         </p>
       </div>
+
+      {/* Conferência dos valores antes de emitir o documento */}
+      <CuradoriaDialog
+        aberto={curadoriaOpen}
+        onOpenChange={setCuradoriaOpen}
+        titulo="Conferir valores antes de gerar o relatório"
+        base={result ?? null}
+        parametros={params}
+        exclusoesIniciais={exclusoes}
+        orcamentosIniciais={orcamentos}
+        rotuloConfirmar={
+          curadoriaDestino === "relatorio" ? "Continuar para o relatório" : "Aplicar à pesquisa"
+        }
+        onConfirmar={({ exclusoes: e, orcamentos: o }) => {
+          setExclusoes(e);
+          setOrcamentos(o);
+          setCuradoriaOpen(false);
+          if (curadoriaDestino === "relatorio") setModalOpen(true);
+        }}
+      />
 
       {/* Modal — metadados do relatório */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
@@ -706,6 +1105,11 @@ export default function PesquisaPrecoPage() {
                 {" · "}Unidade: {result.unidade}
                 {result.uf ? ` · UF: ${result.uf}` : ""}
               </p>
+              {filtrosAplicados.length > 0 && (
+                <p className="text-muted-foreground">
+                  {filtrosAplicados.map((c) => `${ROTULO_FILTRO[c]}: ${result.filtros[c]}`).join(" · ")}
+                </p>
+              )}
             </div>
           )}
           <div className="grid gap-3 py-2">

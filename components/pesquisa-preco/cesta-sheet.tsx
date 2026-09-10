@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   FileText,
+  ListChecks,
   Loader2,
   Minus,
   Plus,
@@ -45,7 +46,9 @@ import {
   useRemoverItemCesta,
 } from "@/hooks/useCesta";
 import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
+import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import type { CestaItemDTO } from "@/lib/cesta";
+import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta da Pesquisa de Preços — painel lateral com os itens que o usuário
@@ -71,6 +74,41 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
 
   const [qtd, setQtd] = useState(String(item.quantidade));
   const [obs, setObs] = useState(item.observacao ?? "");
+
+  // Curadoria do item: a pesquisa é refeita sob demanda ao abrir o diálogo,
+  // porque a cesta só guarda código/unidade/UF — os registros a conferir são
+  // os da data de hoje, os mesmos que o relatório vai usar.
+  const [curadoriaOpen, setCuradoriaOpen] = useState(false);
+  const [base, setBase] = useState<ResultadoPesquisa | null>(null);
+  const [erroBase, setErroBase] = useState<string | null>(null);
+
+  const abrirCuradoria = useCallback(async () => {
+    setCuradoriaOpen(true);
+    setBase(null);
+    setErroBase(null);
+    try {
+      const res = await fetch("/api/precos/buscar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          codigo: item.codigo,
+          unidade: item.unidade,
+          uf: item.uf,
+          exclusoes: item.exclusoes,
+          orcamentos: item.orcamentos,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Não foi possível carregar a pesquisa deste item");
+      }
+      setBase(await res.json());
+    } catch (e) {
+      setErroBase(e instanceof Error ? e.message : "Erro ao carregar a pesquisa");
+    }
+  }, [item.codigo, item.exclusoes, item.orcamentos, item.uf, item.unidade]);
+
+  const curadoriaAtiva = item.exclusoes.length + item.orcamentos.length;
 
   // Reflete mudanças vindas do servidor (ex.: item adicionado de novo somou qtd).
   useEffect(() => setQtd(String(item.quantidade)), [item.quantidade]);
@@ -187,12 +225,49 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
         }}
       />
 
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[11px]"
+          disabled={ocupado}
+          onClick={abrirCuradoria}
+        >
+          <ListChecks className="mr-1 h-3 w-3" />
+          Revisar registros e orçamentos
+        </Button>
+        {curadoriaAtiva > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            {item.exclusoes.length > 0 && `${item.exclusoes.length} descarte(s)`}
+            {item.exclusoes.length > 0 && item.orcamentos.length > 0 && " · "}
+            {item.orcamentos.length > 0 && `${item.orcamentos.length} orçamento(s)`}
+          </span>
+        )}
+      </div>
+
       {atualizar.isError && (
         <p className="text-[11px] text-destructive">{atualizar.error.message}</p>
       )}
       {remover.isError && (
         <p className="text-[11px] text-destructive">{remover.error.message}</p>
       )}
+      {erroBase && <p className="text-[11px] text-destructive">{erroBase}</p>}
+
+      <CuradoriaDialog
+        aberto={curadoriaOpen}
+        onOpenChange={setCuradoriaOpen}
+        titulo={`Conferir valores — ${item.descricao.substring(0, 70)}`}
+        base={base}
+        parametros={{ codigo: item.codigo, unidade: item.unidade, uf: item.uf }}
+        exclusoesIniciais={item.exclusoes}
+        orcamentosIniciais={item.orcamentos}
+        rotuloConfirmar="Salvar na cesta"
+        onConfirmar={async ({ exclusoes, orcamentos }) => {
+          await atualizar.mutateAsync({ id: item.id, exclusoes, orcamentos });
+          setCuradoriaOpen(false);
+        }}
+      />
     </div>
   );
 }
@@ -327,6 +402,12 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                       {cesta?.itensSemPreco} item(ns) sem preço apurado não entram no total.
                     </p>
                   )}
+                  {(cesta?.itensCurados ?? 0) > 0 && (
+                    <p className="text-[11px] text-muted-foreground">
+                      {cesta?.itensCurados} item(ns) com curadoria registrada — descartes
+                      justificados e/ou orçamentos de fornecedor serão reaplicados no relatório.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-2">
@@ -392,7 +473,9 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
           </DialogHeader>
           <p className="text-sm text-muted-foreground -mt-2">
             {fmtInt(total)} item(ns) serão pesquisados novamente para que o documento traga os
-            preços da data de emissão. Os campos institucionais são opcionais.
+            preços da data de emissão. Os registros desconsiderados e os orçamentos de
+            fornecedor salvos em cada item são reaplicados na nova apuração. Os campos
+            institucionais são opcionais.
           </p>
           <div className="grid gap-3 py-1">
             <div className="grid grid-cols-2 gap-3">

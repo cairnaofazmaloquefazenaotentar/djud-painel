@@ -15,9 +15,11 @@ import {
   conteudoAnalise,
   conteudoBps,
   conteudoCmed,
+  conteudoDescartes,
   conteudoEspecificacao,
   conteudoMetodo,
   conteudoObservacoes,
+  conteudoOrcamentos,
   conteudoPncp,
   conteudoReferencias,
   conteudoSiasg,
@@ -60,26 +62,39 @@ function gerarHTML(resultado: ResultadoPesquisa, especificacaoInformada: string,
     <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), BPS 2020–2025, SIASG/Comprasnet (compras judiciais 2002–2021) e PNCP (materiais 2024–2025).</p>
     ${blocoAssinaturas(meta)}`;
 
-  const corpo = [
+  // A seção de orçamentos só existe quando há proposta juntada, então a
+  // numeração é sequencial e não fixa — um número pulado num documento que
+  // instrui processo administrativo dá margem a dúvida sobre folha faltante.
+  let n = 0;
+  const secoes: string[] = [
     secao(
-      1,
+      ++n,
       "Identificação do Objeto",
       `<p style="font-size:11px;">O presente relatório tem por objeto a pesquisa de preços para aquisição de <strong>${esc(item.descricao)}</strong> (${linhaCodigo(resultado)}), na unidade de fornecimento <strong>${esc(unidade)}</strong>, conforme demanda constante no processo identificado acima.</p>`
     ),
     secao(
-      2,
+      ++n,
       "Especificação Técnica do Item",
       conteudoEspecificacao(resultado, especificacaoDoItem(resultado, especificacaoInformada))
     ),
-    secao(3, "Método de Pesquisa de Preços", conteudoMetodo()),
-    secao(4, "Resultado por Fonte — CMED/ANVISA (Preço-Teto Regulatório por Unidade)", conteudoCmed(resultado)),
-    secao(5, "Resultado por Fonte — BPS (Banco de Preços em Saúde)", conteudoBps(resultado)),
-    secao(6, "Resultado por Fonte — SIASG/Comprasnet (Compras com Ação Judicial)", conteudoSiasg(resultado)),
-    secao(7, "Resultado por Fonte — PNCP (Portal Nacional de Contratações Públicas)", conteudoPncp(resultado)),
-    secao(8, "Análise Estatística e Apuração do Preço de Referência", conteudoAnalise(resultado)),
-    secao(9, "Conclusão, Recomendação, Validade e Responsável", conclusao),
-    secao(10, "Referências Normativas", conteudoReferencias()),
-  ].join("\n");
+    secao(++n, "Método de Pesquisa de Preços", conteudoMetodo()),
+    secao(++n, "Resultado por Fonte — CMED/ANVISA (Preço-Teto Regulatório por Unidade)", conteudoCmed(resultado)),
+    secao(++n, "Resultado por Fonte — BPS (Banco de Preços em Saúde)", conteudoBps(resultado)),
+    secao(++n, "Resultado por Fonte — SIASG/Comprasnet (Compras com Ação Judicial)", conteudoSiasg(resultado)),
+    secao(++n, "Resultado por Fonte — PNCP (Portal Nacional de Contratações Públicas)", conteudoPncp(resultado)),
+  ];
+  if (resultado.orcamentos.length > 0) {
+    secoes.push(
+      secao(++n, "Resultado por Fonte — Orçamentos Diretos de Fornecedor (art. 5º, IV)", conteudoOrcamentos(resultado))
+    );
+  }
+  secoes.push(
+    secao(++n, "Média, Mediana e Menor Valor — por Fonte e Consolidados (art. 6º)", conteudoAnalise(resultado)),
+    secao(++n, "Registros Desconsiderados e Respectivas Justificativas", conteudoDescartes(resultado)),
+    secao(++n, "Conclusão, Recomendação, Validade e Responsável", conclusao),
+    secao(++n, "Referências Normativas", conteudoReferencias())
+  );
+  const corpo = secoes.join("\n");
 
   return paginaHTML({
     tituloDocumento: `Relatório de Pesquisa de Preços — ${item.descricao.substring(0, 120)}`,
@@ -106,6 +121,13 @@ export async function POST(request: NextRequest) {
       codigo,
       unidade,
       uf,
+      fornecedor = null,
+      fabricante = null,
+      cnpjComprador = null,
+      // Curadoria feita na tela anterior à emissão: registros desconsiderados
+      // com justificativa e orçamentos diretos de fornecedor.
+      exclusoes = [],
+      orcamentos = [],
       orgao = "",
       responsavel = "",
       cargo = "",
@@ -131,6 +153,9 @@ export async function POST(request: NextRequest) {
       codigo: String(codigo),
       unidade: String(unidade),
       uf: ufNorm,
+      filtros: { fornecedor, fabricante, cnpjComprador },
+      exclusoes,
+      orcamentos,
     });
     if (!resultado) {
       return NextResponse.json(
@@ -160,10 +185,28 @@ export async function POST(request: NextRequest) {
           descricao: resultado.item.descricao,
           unidade: resultado.unidade,
           uf: resultado.uf,
+          filtros: resultado.filtros,
           orgao,
           processo,
           precoFinal: resultado.recomendacao.precoFinal,
+          precoReferencia: resultado.recomendacao.precoReferencia,
+          mediaConsolidada: resultado.recomendacao.mediaConsolidada,
+          menorConsolidado: resultado.recomendacao.menorConsolidado,
           fontes: resultado.recomendacao.fontes,
+          // Rastreabilidade do descarte também fora do documento: o log de
+          // auditoria guarda quem excluiu o quê e por quê.
+          descartes: resultado.descartes.map((d) => ({
+            fonte: d.fonte,
+            id: d.id,
+            preco: d.preco,
+            motivo: d.motivo,
+          })),
+          orcamentos: resultado.orcamentos.map((o) => ({
+            fornecedor: o.fornecedor,
+            cnpj: o.cnpj,
+            valorUnitario: o.valorUnitario,
+            considerarNoCalculo: o.considerarNoCalculo,
+          })),
         },
       },
     });
