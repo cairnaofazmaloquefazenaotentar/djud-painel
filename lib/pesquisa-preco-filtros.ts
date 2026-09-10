@@ -27,12 +27,19 @@ export type FonteMercado = "bps" | "siasg" | "pncp";
 // `filtrosNaoSuportados` da fonte e para as observações da recomendação.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface FiltrosOpcionais {
+/**
+ * `type` e não `interface` de propósito: este objeto é gravado inteiro no
+ * `metadata` (Json) do AuditLog quando um relatório é emitido. O TypeScript só
+ * dá index signature implícita a alias de tipo — uma interface pode receber
+ * declaration merging depois e por isso não é aceita em `Prisma.InputJsonObject`.
+ * Trocar por `interface` quebra o build em app/api/relatorios/pesquisa-preco.
+ */
+export type FiltrosOpcionais = {
   fornecedor: string | null;
   fabricante: string | null;
   /** Sempre pontuado (00.000.000/0000-00), completo ou parcial a partir da raiz. */
   cnpjComprador: string | null;
-}
+};
 
 export type CampoFiltro = keyof FiltrosOpcionais;
 

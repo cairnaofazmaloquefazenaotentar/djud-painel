@@ -206,7 +206,17 @@ export function marcaFabricante(r: {
 function colunasMercado(ultima: Coluna<RegistroMercado>): Coluna<RegistroMercado>[] {
   return [
     { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 45)) },
-    { label: "Preço", fn: (r) => fmtBRL(r.preco), right: true },
+    {
+      // Um valor descartado pelo IQR continua na amostra impressa, mas riscado:
+      // sem a marca, quem lê vê um preço dez vezes menor que a mediana ao lado
+      // dela e não tem como saber que ele ficou fora do cálculo.
+      label: "Preço",
+      fn: (r) =>
+        r.outlierIqr
+          ? `<span style="text-decoration:line-through;color:#c0392b;">${fmtBRL(r.preco)}</span> <sup>*</sup>`
+          : fmtBRL(r.preco),
+      right: true,
+    },
     { label: "Data", fn: (r) => (r.data ? fmtDate(r.data) : "—") },
     { label: "UF", fn: (r) => esc(r.uf || "—") },
     { label: "Empresa vencedora", fn: (r) => esc((r.fornecedor || "—").substring(0, 32)) },
@@ -240,6 +250,7 @@ function conteudoMercado(
     return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}</p>`;
   }
   const considerados = fonte.registros.filter((r) => r.excluidoPor === null);
+  const exibidos = considerados.slice(0, 10);
   return `
       <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes. ${
         fonte.outliersRemovidos > 0
@@ -251,7 +262,12 @@ function conteudoMercado(
           : ""
       }</p>
       ${boxesEstatisticas(fonte.estatisticas)}
-      ${tabela(considerados.slice(0, 10), colunasMercado(ultima))}`;
+      ${tabela(exibidos, colunasMercado(ultima))}
+      ${
+        exibidos.some((r) => r.outlierIqr)
+          ? `<p style="font-size:9px;color:#666;margin-top:3px;"><sup>*</sup> Valor riscado: descartado do cálculo da média, da mediana e do menor valor por estar fora do intervalo interquartil (Q1−1,5×IQR a Q3+1,5×IQR). Permanece listado para rastreabilidade.</p>`
+          : ""
+      }`;
 }
 
 export function conteudoCmed(resultado: ResultadoPesquisa): string {
