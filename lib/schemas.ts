@@ -79,6 +79,7 @@ export const filterMetricsSchema = z.object({
   prioridade: z.string().optional(),
   principioAtivo: z.string().optional(),
   organizacaoId: z.string().optional(),
+  eixoDataValor: z.enum(["pagamento", "processo"]).optional(),
 });
 
 export type FilterMetricsInput = z.infer<typeof filterMetricsSchema>;

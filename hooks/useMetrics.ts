@@ -10,6 +10,7 @@ interface UseMetricsOptions {
   prioridade?: string;
   principioAtivo?: string;
   organizacaoId?: string;
+  eixoDataValor?: "pagamento" | "processo";
 }
 
 export function useMetrics(options: UseMetricsOptions = {}) {
@@ -23,6 +24,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       prioridade: options.prioridade,
       principioAtivo: options.principioAtivo,
       organizacaoId: options.organizacaoId,
+      eixoDataValor: options.eixoDataValor,
     },
   ];
 
@@ -48,6 +50,9 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       }
       if (options.organizacaoId) {
         params.append("organizacaoId", options.organizacaoId);
+      }
+      if (options.eixoDataValor) {
+        params.append("eixoDataValor", options.eixoDataValor);
       }
 
       const response = await fetch(`/api/demandas/metrics?${params.toString()}`);

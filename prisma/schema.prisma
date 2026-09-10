@@ -596,3 +596,43 @@ model RelatorioGerado {
   @@index([criadoEm])
   @@schema("public")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SIAFI — pagamentos realizados via Ordem Bancária (OB) para autores de ações
+// judiciais, importados do Excel de pagamentos SIAFI fornecido pelo DJUD.
+// Chave de cruzamento com Redmine: regexp_replace(d."numeroProcesso", '\D', '', 'g')
+// = p."numeroProcesso" (campo já gravado com dígitos puros).
+// Um processo pode ter MÚLTIPLOS pagamentos (várias linhas por nº judicial).
+// ─────────────────────────────────────────────────────────────────────────────
+model SiafiPagamento {
+  id               String    @id @default(cuid())
+
+  // Chave de cruzamento — dígitos puros do "Nº Processo Judicial"
+  numeroProcesso   String
+
+  // Valores financeiros
+  valorOB          Decimal             // "Valor OB" — valor pago ao autor
+  valorProcesso    Decimal?            // "Valor Processo" — valor total do processo (opcional)
+
+  // Data do pagamento
+  dtPagtoSiafi     DateTime?           // "Dt Pagto SIAFI"
+
+  // Campos contextuais
+  ano              String?             // "Ano"
+  nomeAutor        String?             // "Nome Pessoa (Autor)"
+  nrOB             String?             // "Nº OB"
+  tipoTransferencia String?            // "Tipo de Transferência"
+  assuntoGeral     String?             // "Assunto Geral"
+  uf               String?             // "UF"
+  municipio        String?             // "Município"
+  varaExecucao     String?             // "Vara Execução"
+  trf              String?             // "TRFs"
+  observacao       String?   @db.Text  // "Observação"
+
+  criadoEm         DateTime  @default(now())
+
+  @@index([numeroProcesso])
+  @@index([dtPagtoSiafi])
+  @@index([ano])
+  @@schema("sismat")
+}
