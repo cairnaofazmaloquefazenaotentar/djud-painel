@@ -12,6 +12,7 @@ interface UseMetricsOptions {
   organizacaoId?: string;
   /** CATMAT (até 6 dígitos) ou registro ANVISA (13). */
   catmat?: string;
+  eixoDataValor?: "pagamento" | "processo";
 }
 
 /** Query string comum ao painel e às exportações — mesma leitura, mesmo recorte. */
@@ -24,6 +25,7 @@ export function paramsDeMetrics(options: UseMetricsOptions): URLSearchParams {
   if (options.principioAtivo) params.append("principioAtivo", options.principioAtivo);
   if (options.organizacaoId) params.append("organizacaoId", options.organizacaoId);
   if (options.catmat) params.append("catmat", options.catmat);
+  if (options.eixoDataValor) params.append("eixoDataValor", options.eixoDataValor);
   return params;
 }
 
@@ -41,6 +43,7 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       principioAtivo: options.principioAtivo,
       organizacaoId: options.organizacaoId,
       catmat: options.catmat,
+      eixoDataValor: options.eixoDataValor,
     },
   ];
 

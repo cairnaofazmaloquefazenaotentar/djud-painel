@@ -175,6 +175,7 @@ export default function DashboardPage() {
   // 13 dígitos e cada tecla dispararia a resolução de um código parcial.
   const [catmatInput, setCatmatInput] = useState("");
   const [catmat,      setCatmat]      = useState("");
+  const [eixoDataValor, setEixoDataValor] = useState<"pagamento" | "processo">("pagamento");
   useEffect(() => {
     const t = setTimeout(() => setCatmat(catmatInput.replace(/[^\d.\-]/g, "").trim()), 450);
     return () => clearTimeout(t);
@@ -199,7 +200,7 @@ export default function DashboardPage() {
     catmat:         catmat || undefined,
   };
 
-  const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
+  const { data: metrics, isLoading, error } = useMetrics({ ...metricsFilters, eixoDataValor });
   const { data: autoresData, isLoading: autoresLoading } = useAutoresMetrics({
     startDate: metricsFilters.startDate,
     endDate:   metricsFilters.endDate,
@@ -538,6 +539,34 @@ export default function DashboardPage() {
                   {/* A.2) Valores */}
                   {activeTab === "valores" && (
                     <div className="space-y-6">
+                      {/* Toggle eixo de data */}
+                      <div className="flex items-center gap-3 px-1">
+                        <span className="text-xs text-muted-foreground font-medium">Eixo de data:</span>
+                        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-0.5">
+                          <button
+                            onClick={() => setEixoDataValor("pagamento")}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              eixoDataValor === "pagamento"
+                                ? "bg-background text-foreground shadow-sm border border-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            <Coins className="h-3 w-3" />
+                            Data do pagamento (SIAFI)
+                          </button>
+                          <button
+                            onClick={() => setEixoDataValor("processo")}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              eixoDataValor === "processo"
+                                ? "bg-background text-foreground shadow-sm border border-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            <FileText className="h-3 w-3" />
+                            Data do processo (Redmine)
+                          </button>
+                        </div>
+                      </div>
                       <Section icon={<Coins className="h-4 w-4" />} title="Série Histórica de Valores" subtitle="Evolução mensal do valor total dos processos (R$)" full>
                         <ValorTimelineChart data={metrics.valorTimeline} />
                       </Section>

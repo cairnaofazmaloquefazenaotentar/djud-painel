@@ -68,6 +68,7 @@ export const listDemandaSchema = z.object({
   regiaoBrasil: z.string().optional(),
   // CATMAT (até 6 dígitos) ou registro ANVISA (13) — ver lib/demandas-catmat.ts
   catmat: z.string().optional(),
+  eixoDataValor: z.enum(["pagamento", "processo"]).optional(),
 });
 
 export type CreateDemandaInput = z.infer<typeof createDemandaSchema>;
@@ -83,6 +84,7 @@ export const filterMetricsSchema = z.object({
   organizacaoId: z.string().optional(),
   /** CATMAT (até 6 dígitos) ou registro ANVISA (13) — ver lib/demandas-catmat.ts. */
   catmat: z.string().optional(),
+  eixoDataValor: z.enum(["pagamento", "processo"]).optional(),
 });
 
 export type FilterMetricsInput = z.infer<typeof filterMetricsSchema>;
