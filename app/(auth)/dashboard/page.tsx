@@ -21,6 +21,7 @@ import { SismatEntradasView } from "@/components/dashboard/sismat-dashboard";
 import { SismatSaidasPuraView } from "@/components/dashboard/sismat-saidas-pura-view";
 import { SismatEstoqueView } from "@/components/dashboard/sismat-estoque-view";
 import { SismatSaidasView } from "@/components/dashboard/sismat-saidas-view";
+import { SiafiIndicadoresView } from "@/components/dashboard/siafi-indicadores-view";
 import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
 import { RankingAnualChart } from "@/components/dashboard/charts/ranking-anual-chart";
 import { paramsDeMetrics, useMetrics } from "@/hooks/useMetrics";
@@ -111,9 +112,10 @@ const TENDENCIAS_TABS = [
 ] as const;
 
 const INDICADORES_TABS = [
-  { value: "principios-ativos",  label: "Princípios Ativos",     icon: <Pill className="h-3.5 w-3.5" /> },
-  { value: "ranking-anual",      label: "Ranking por Ano",       icon: <CalendarRange className="h-3.5 w-3.5" /> },
-  { value: "indicadores-saidas", label: "Indicadores de Saídas", icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
+  { value: "principios-ativos",  label: "Princípios Ativos",       icon: <Pill className="h-3.5 w-3.5" /> },
+  { value: "ranking-anual",      label: "Ranking por Ano",         icon: <CalendarRange className="h-3.5 w-3.5" /> },
+  { value: "indicadores-saidas", label: "Indicadores de Saídas",   icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
+  { value: "indicadores-valor",  label: "Indicadores de Valor",    icon: <Coins className="h-3.5 w-3.5" /> },
 ] as const;
 
 const INTERNOS_TABS = [
@@ -339,10 +341,11 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Conteúdo: componentes de estoque sem filtros ────────────────── */}
-      {activeTab === "entradas"          && <SismatEntradasView />}
-      {activeTab === "saidas"            && <SismatSaidasPuraView />}
-      {activeTab === "entradas-saidas"   && <SismatEstoqueView />}
+      {activeTab === "entradas"           && <SismatEntradasView />}
+      {activeTab === "saidas"             && <SismatSaidasPuraView />}
+      {activeTab === "entradas-saidas"    && <SismatEstoqueView />}
       {activeTab === "indicadores-saidas" && <SismatSaidasView />}
+      {activeTab === "indicadores-valor"  && <SiafiIndicadoresView />}
 
       {/* ── Conteúdo: abas que usam dados do Redmine ─────────────────── */}
       {needsRedmine(activeTab) && (
@@ -501,12 +504,37 @@ export default function DashboardPage() {
               {/* Conteúdo */}
               {!isLoading && metrics && (
                 <div className="space-y-6">
-                  {/* Indicadores */}
+                  {/* Indicadores — KPIs variam conforme a aba ativa */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <MetricCard label="Total de Processos" value={metrics.totalDemandas.toLocaleString("pt-BR")} icon={<FileText className="h-5 w-5" />} />
-                    <MetricCard label="Passivo Ativo" value={metrics.demandasAtivas.toLocaleString("pt-BR")} icon={<Activity className="h-5 w-5" />} description="Processos não concluídos" />
-                    <MetricCard label="Demandas Críticas" value={metrics.demandasCriticas.toLocaleString("pt-BR")} icon={<AlertTriangle className="h-5 w-5" />} description="Prioridade Alta ou Crítica" />
-                    <MetricCard label="Taxa de Resolução" value={`${metrics.taxaResolucao.toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} description="Processos finalizados" />
+                    {activeTab === "valores" ? (
+                      <>
+                        <MetricCard
+                          label="Valor Total (SIAFI)"
+                          value={fmtBRLCompacto(metrics.totalValorEstimado)}
+                          icon={<Coins className="h-5 w-5" />}
+                          description="Soma dos pagamentos registrados no SIAFI"
+                        />
+                        <MetricCard
+                          label="Processos com Valor"
+                          value={metrics.demandasComValor.toLocaleString("pt-BR")}
+                          icon={<Hash className="h-5 w-5" />}
+                          description="Processos com pagamento SIAFI identificado"
+                        />
+                        <MetricCard
+                          label="Cobertura SIAFI"
+                          value={`${metrics.totalDemandas > 0 ? ((metrics.demandasComValor / metrics.totalDemandas) * 100).toFixed(1) : "0.0"}%`}
+                          icon={<TrendingUp className="h-5 w-5" />}
+                          description="Fração de processos com valor no SIAFI"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <MetricCard label="Passivo Ativo" value={metrics.demandasAtivas.toLocaleString("pt-BR")} icon={<Activity className="h-5 w-5" />} description="Processos não concluídos" />
+                        <MetricCard label="Demandas Críticas" value={metrics.demandasCriticas.toLocaleString("pt-BR")} icon={<AlertTriangle className="h-5 w-5" />} description="Prioridade Alta ou Crítica" />
+                        <MetricCard label="Taxa de Resolução" value={`${metrics.taxaResolucao.toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} description="Processos finalizados" />
+                      </>
+                    )}
                   </div>
 
                   {/* A.1) Contagem */}

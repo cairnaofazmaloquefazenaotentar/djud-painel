@@ -14,6 +14,7 @@ export interface MetricsData {
   demandasCriticas:    number;   // prioridade Alta + Crítica
   taxaResolucao:       number;
   totalValorEstimado:  number;
+  demandasComValor:    number;   // processos com ao menos um pagamento SIAFI registrado
 
   // ── Dimensionamento da demanda ───────────────────────────────────────────────
   topMedicamentosDistribution:  Array<{ medicamento: string | null; count: number }>;
@@ -45,6 +46,13 @@ export interface MetricsData {
   regiaoBrasilDistribution:  Array<{ regiao: string | null; count: number }>;
   trfRegiaoDistribution:     Array<{ trf: number | null; count: number }>;
   ufResidenciaDistribution:  Array<{ uf: string | null; count: number }>;
+
+  // ── Indicadores de Valor SIAFI — distribuições geográficas e operacionais ────
+  // Calculadas pelo mesmo JOIN sismat."SiafiPagamento" × Demanda das séries de valor.
+  valorPorRegiao: Array<{ regiao: string | null; valor: number }>;
+  valorPorUF:     Array<{ uf: string | null; valor: number }>;    // top 15
+  valorPorTrf:    Array<{ trf: number | null; valor: number }>;
+  valorPorStatus: Array<{ status: string | null; valor: number }>;
 
   // ── Operacional ─────────────────────────────────────────────────────────────
   topResponsaveis:              Array<{ id: string; name: string | null; count: number }>;
@@ -104,6 +112,7 @@ function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
     demandasCriticas: 0,
     taxaResolucao: 0,
     totalValorEstimado: 0,
+    demandasComValor: 0,
     topMedicamentosDistribution: [],
     areaTematicaDistribution: [],
     objetoAcaoDistribution: [],
@@ -121,6 +130,10 @@ function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
     topResponsaveis: [],
     formaCumprimentoDistribution: [],
     areaFinalisticaDistribution: [],
+    valorPorRegiao: [],
+    valorPorUF: [],
+    valorPorTrf: [],
+    valorPorStatus: [],
     filtroCatmat,
   };
 }
@@ -211,6 +224,11 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     valorTimelineRaw,
     valorTribunalTimelineRaw,
     topMedicamentosValorRaw,
+    demandasComValorRows,
+    valorPorRegiaoRaw,
+    valorPorUFRaw,
+    valorPorTrfRaw,
+    valorPorStatusRaw,
   ] = await Promise.all([
     // Total de processos
     db.demanda.count({ where }),
@@ -390,6 +408,58 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       ORDER BY valor DESC
       LIMIT 15
     `,
+
+    // ── Processos com ao menos um pagamento SIAFI registrado (cobertura) ────────
+    db.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(DISTINCT d.id)::bigint AS count
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+    `,
+
+    // ── Valor pago por região do Brasil ────────────────────────────────────────
+    db.$queryRaw<Array<{ regiao: string | null; valor: number }>>`
+      SELECT d."regiaoBrasil" AS regiao, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."regiaoBrasil" IS NOT NULL
+      GROUP BY d."regiaoBrasil"
+      ORDER BY valor DESC
+    `,
+
+    // ── Valor pago por UF de residência (top 15) ────────────────────────────────
+    db.$queryRaw<Array<{ uf: string | null; valor: number }>>`
+      SELECT d."ufResidencia" AS uf, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."ufResidencia" IS NOT NULL
+      GROUP BY d."ufResidencia"
+      ORDER BY valor DESC
+      LIMIT 15
+    `,
+
+    // ── Valor pago por TRF Região ────────────────────────────────────────────────
+    db.$queryRaw<Array<{ trf: number | null; valor: number }>>`
+      SELECT d."trfRegiao" AS trf, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."trfRegiao" BETWEEN 1 AND 6
+      GROUP BY d."trfRegiao"
+      ORDER BY valor DESC
+    `,
+
+    // ── Valor pago por status do processo ────────────────────────────────────────
+    db.$queryRaw<Array<{ status: string | null; valor: number }>>`
+      SELECT d.status, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+      GROUP BY d.status
+      ORDER BY valor DESC
+    `,
   ]);
 
   // Buscar nomes dos top responsáveis
@@ -426,6 +496,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
 
   const totalDemandas      = totalCount;
   const totalValorEstimado = (totalValueRows[0]?.valor as number | null | undefined) ?? 0;
+  const demandasComValor   = Number(demandasComValorRows[0]?.count ?? 0);
   const taxaResolucao      = totalDemandas > 0 ? (resolvedCount / totalDemandas) * 100 : 0;
 
   return {
@@ -435,6 +506,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     demandasCriticas:   criticasCount,
     taxaResolucao:      Math.round(taxaResolucao * 100) / 100,
     totalValorEstimado,
+    demandasComValor,
 
     // Dimensionamento
     topMedicamentosDistribution: topMedicamentosCounts.map((item) => ({
@@ -519,6 +591,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       area:  item.areaFinalisticaMs,
       count: item._count.id,
     })),
+
+    // Distribuições de valor SIAFI
+    valorPorRegiao: valorPorRegiaoRaw.map((r) => ({ regiao: r.regiao, valor: Number(r.valor) || 0 })),
+    valorPorUF:     valorPorUFRaw.map((r)     => ({ uf: r.uf,         valor: Number(r.valor) || 0 })),
+    valorPorTrf:    valorPorTrfRaw.map((r)    => ({ trf: r.trf,       valor: Number(r.valor) || 0 })),
+    valorPorStatus: valorPorStatusRaw.map((r) => ({ status: r.status, valor: Number(r.valor) || 0 })),
+
     filtroCatmat,
   };
 }
