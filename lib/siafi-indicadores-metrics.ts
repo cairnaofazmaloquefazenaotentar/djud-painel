@@ -5,12 +5,13 @@ import { Prisma } from "@prisma/client";
 // Indicadores de Valor SIAFI — Demanda × SiafiPagamento
 //
 // Cruza sismat."SiafiPagamento" com "Demanda" pelo número do processo (sem
-// dígitos não-numéricos).  Traz CRM, OAB, grupo temático, região, UF, TRF e
-// status diretamente da tabela "Demanda" (campos Redmine importados).
+// dígitos não-numéricos). Traz grupo temático (areaTematica), região, UF,
+// TRF e status diretamente da tabela "Demanda".
 //
-// Espelha a estrutura de sismat-saidas-redmine-metrics.ts, mas sem o HHI e
-// sem as séries temporais — o usuário pediu a mesma estrutura visual de
-// SismatSaidasView.
+// Nota: CRM e OAB não estão em "Demanda" — pertencem a
+// sismat."RedmineSeiAtributos", que se liga a SismatSaida pelo SEI extraído
+// do campo destinatario. Como Demanda não carrega o SEI, esse cruzamento não
+// é feito aqui.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Tipos exportados ──────────────────────────────────────────────────────────
@@ -32,14 +33,12 @@ export interface FiltroOpcao {
   count: number;
 }
 
-export const SIAFI_FILTROS = ["grupo", "regiao", "uf", "status", "crm", "oab"] as const;
+export const SIAFI_FILTROS = ["grupo", "regiao", "uf", "status"] as const;
 export type SiafiIndicadoresFiltro = (typeof SIAFI_FILTROS)[number];
 export type SiafiIndicadoresFiltros = Partial<Record<SiafiIndicadoresFiltro, string>>;
 
 export interface SiafiIndicadoresOverview {
   kpis:      SiafiKpis;
-  porCrm:    RankItem[]; // Top 15 por valor pago
-  porOab:    RankItem[]; // Top 15 por valor pago
   porGrupo:  RankItem[];
   porRegiao: RankItem[];
   porUF:     RankItem[]; // Top 15
@@ -50,16 +49,14 @@ export interface SiafiIndicadoresOverview {
 }
 
 export interface SiafiProcessoRow {
-  processo:  string;
+  processo:    string;
   medicamento: string;
-  valor:     number;
-  crm:       string;
-  oab:       string;
-  grupo:     string;
-  regiao:    string;
-  uf:        string;
-  trf:       string;
-  status:    string;
+  valor:       number;
+  grupo:       string;
+  regiao:      string;
+  uf:          string;
+  trf:         string;
+  status:      string;
 }
 
 export interface SiafiIndicadoresTabela {
@@ -69,27 +66,12 @@ export interface SiafiIndicadoresTabela {
   limite: number;
 }
 
-// ── Helpers de colunas derivadas ──────────────────────────────────────────────
-
-/** Chave CRM no formato "12345/SP" ou "" quando vazio. */
-const CRM_KEY = Prisma.sql`
-  CASE WHEN COALESCE(d."crm", '') = '' THEN ''
-       ELSE d."crm" || '/' || COALESCE(NULLIF(d."ufCrm", ''), 'NA')
-  END
-`;
-
-/** Chave OAB no formato "12345/SP" ou "" quando vazio. */
-const OAB_KEY = Prisma.sql`
-  CASE WHEN COALESCE(d."oab", '') = '' THEN ''
-       ELSE d."oab" || '/' || COALESCE(NULLIF(d."ufOab", ''), 'NA')
-  END
-`;
-
 // ── Base JOIN (Demanda ← SiafiPagamento) ─────────────────────────────────────
 
 const SIAFI_JOIN = Prisma.sql`
   JOIN sismat."SiafiPagamento" p
     ON p."numeroProcesso" = regexp_replace(COALESCE(d."numeroProcesso", ''), '\\D', '', 'g')
+       AND COALESCE(d."numeroProcesso", '') != ''
 `;
 
 // ── Helpers de filtro dinâmico ────────────────────────────────────────────────
@@ -99,30 +81,22 @@ type RawFiltro = Partial<{
   regiao: string;
   uf:     string;
   status: string;
-  crm:    string; // "12345/SP"
-  oab:    string; // "67890/RJ"
 }>;
 
 /**
- * Constrói a cláusula WHERE extra para os filtros selecionados.
+ * Constrói a cláusula AND … para os filtros selecionados.
  * Retorna Prisma.sql`` vazio quando nenhum filtro está ativo.
+ * O resultado é PREFIXADO com AND para ser colado depois de WHERE existente.
  */
 function whereFiltros(f: RawFiltro): Prisma.Sql {
   const partes: Prisma.Sql[] = [];
-  if (f.grupo)  partes.push(Prisma.sql`d."grupoTematico" = ${f.grupo}`);
-  if (f.regiao) partes.push(Prisma.sql`d."regiaoBrasil"  = ${f.regiao}`);
-  if (f.uf)     partes.push(Prisma.sql`d."ufResidencia"  = ${f.uf}`);
-  if (f.status) partes.push(Prisma.sql`d."status"        = ${f.status}`);
-  if (f.crm) {
-    const [crmNum, crmUf] = f.crm.split("/");
-    partes.push(Prisma.sql`d."crm" = ${crmNum} AND COALESCE(NULLIF(d."ufCrm",''),'NA') = ${crmUf ?? "NA"}`);
-  }
-  if (f.oab) {
-    const [oabNum, oabUf] = f.oab.split("/");
-    partes.push(Prisma.sql`d."oab" = ${oabNum} AND COALESCE(NULLIF(d."ufOab",''),'NA') = ${oabUf ?? "NA"}`);
-  }
+  if (f.grupo)  partes.push(Prisma.sql`d."areaTematica" = ${f.grupo}`);
+  if (f.regiao) partes.push(Prisma.sql`d."regiaoBrasil" = ${f.regiao}`);
+  if (f.uf)     partes.push(Prisma.sql`d."ufResidencia" = ${f.uf}`);
+  if (f.status) partes.push(Prisma.sql`d."status"       = ${f.status}`);
   if (!partes.length) return Prisma.sql``;
-  return partes.reduce((acc, cur) => Prisma.sql`${acc} AND ${cur}`);
+  const cond = partes.reduce((acc, cur) => Prisma.sql`${acc} AND ${cur}`);
+  return Prisma.sql`AND ${cond}`;
 }
 
 // ── Tipos intermediários das queries raw ──────────────────────────────────────
@@ -138,8 +112,6 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
 
   const [
     kpiRows,
-    crmRows,
-    oabRows,
     grupoRows,
     regiaoRows,
     ufRows,
@@ -149,8 +121,6 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     opRegiaoRows,
     opUfRows,
     opStatusRows,
-    opCrmRows,
-    opOabRows,
   ] = await Promise.all([
     // KPIs globais
     db.$queryRaw<KpiRow[]>`
@@ -159,38 +129,18 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
         COUNT(DISTINCT d.id)::bigint               AS processos,
         COUNT(DISTINCT d."principioAtivo")::bigint AS medicamentos,
         COUNT(*)::bigint                           AS pagamentos
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
     `,
-    // Top 15 CRM
+    // Por Grupo Temático (areaTematica)
     db.$queryRaw<RankRow[]>`
-      SELECT ${CRM_KEY} AS chave, SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
-      ${SIAFI_JOIN}
-      ${BASE_WHERE} AND d."crm" IS NOT NULL AND d."crm" != ''
-      GROUP BY d."crm", d."ufCrm"
-      ORDER BY valor DESC
-      LIMIT 15
-    `,
-    // Top 15 OAB
-    db.$queryRaw<RankRow[]>`
-      SELECT ${OAB_KEY} AS chave, SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
-      ${SIAFI_JOIN}
-      ${BASE_WHERE} AND d."oab" IS NOT NULL AND d."oab" != ''
-      GROUP BY d."oab", d."ufOab"
-      ORDER BY valor DESC
-      LIMIT 15
-    `,
-    // Por Grupo Temático
-    db.$queryRaw<RankRow[]>`
-      SELECT COALESCE(d."grupoTematico", '(sem grupo)') AS chave,
+      SELECT COALESCE(d."areaTematica", '(sem grupo)') AS chave,
              SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
-      GROUP BY d."grupoTematico"
+      GROUP BY d."areaTematica"
       ORDER BY valor DESC
       LIMIT 15
     `,
@@ -198,7 +148,7 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     db.$queryRaw<RankRow[]>`
       SELECT COALESCE(d."regiaoBrasil", '(sem região)') AS chave,
              SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       GROUP BY d."regiaoBrasil"
@@ -208,7 +158,7 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     db.$queryRaw<RankRow[]>`
       SELECT COALESCE(d."ufResidencia", '(sem UF)') AS chave,
              SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       GROUP BY d."ufResidencia"
@@ -219,7 +169,7 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     db.$queryRaw<RankRow[]>`
       SELECT COALESCE(d."trfRegiao"::text, '(sem TRF)') AS chave,
              SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       GROUP BY d."trfRegiao"
@@ -229,7 +179,7 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     db.$queryRaw<RankRow[]>`
       SELECT COALESCE(d."status", '(sem status)') AS chave,
              SUM(p."valorOB")::float8 AS valor
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       GROUP BY d."status"
@@ -238,39 +188,31 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     `,
     // Opções de filtro: Grupo
     db.$queryRaw<OpRow[]>`
-      SELECT COALESCE(d."grupoTematico", '') AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."grupoTematico" IS NOT NULL AND d."grupoTematico" != ''
-      GROUP BY d."grupoTematico" ORDER BY chave
+      SELECT d."areaTematica" AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
+      FROM public."Demanda" d ${SIAFI_JOIN} ${BASE_WHERE}
+        AND d."areaTematica" IS NOT NULL AND d."areaTematica" != ''
+      GROUP BY d."areaTematica" ORDER BY chave
     `,
     // Opções: Região
     db.$queryRaw<OpRow[]>`
-      SELECT COALESCE(d."regiaoBrasil", '') AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."regiaoBrasil" IS NOT NULL AND d."regiaoBrasil" != ''
+      SELECT d."regiaoBrasil" AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
+      FROM public."Demanda" d ${SIAFI_JOIN} ${BASE_WHERE}
+        AND d."regiaoBrasil" IS NOT NULL AND d."regiaoBrasil" != ''
       GROUP BY d."regiaoBrasil" ORDER BY chave
     `,
     // Opções: UF
     db.$queryRaw<OpRow[]>`
-      SELECT COALESCE(d."ufResidencia", '') AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."ufResidencia" IS NOT NULL AND d."ufResidencia" != ''
+      SELECT d."ufResidencia" AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
+      FROM public."Demanda" d ${SIAFI_JOIN} ${BASE_WHERE}
+        AND d."ufResidencia" IS NOT NULL AND d."ufResidencia" != ''
       GROUP BY d."ufResidencia" ORDER BY chave
     `,
     // Opções: Status
     db.$queryRaw<OpRow[]>`
-      SELECT COALESCE(d."status", '') AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."status" IS NOT NULL AND d."status" != ''
+      SELECT d."status" AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
+      FROM public."Demanda" d ${SIAFI_JOIN} ${BASE_WHERE}
+        AND d."status" IS NOT NULL AND d."status" != ''
       GROUP BY d."status" ORDER BY chave
-    `,
-    // Opções: CRM
-    db.$queryRaw<OpRow[]>`
-      SELECT ${CRM_KEY} AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."crm" IS NOT NULL AND d."crm" != ''
-      GROUP BY d."crm", d."ufCrm" ORDER BY cnt DESC LIMIT 300
-    `,
-    // Opções: OAB
-    db.$queryRaw<OpRow[]>`
-      SELECT ${OAB_KEY} AS chave, COUNT(DISTINCT d.id)::bigint AS cnt
-      FROM "Demanda" d ${SIAFI_JOIN} ${BASE_WHERE} AND d."oab" IS NOT NULL AND d."oab" != ''
-      GROUP BY d."oab", d."ufOab" ORDER BY cnt DESC LIMIT 300
     `,
   ]);
 
@@ -288,15 +230,13 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
     v: r.valor,
   }));
 
-  const overview: SiafiIndicadoresOverview = {
+  return {
     kpis: {
       valor:        kpi.valor,
       processos:    Number(kpi.processos),
       medicamentos: Number(kpi.medicamentos),
       pagamentos:   Number(kpi.pagamentos),
     },
-    porCrm:    toRankItems(crmRows),
-    porOab:    toRankItems(oabRows),
     porGrupo:  toRankItems(grupoRows),
     porRegiao: toRankItems(regiaoRows),
     porUF:     toRankItems(ufRows),
@@ -307,13 +247,9 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
       regiao: toOpcoes(opRegiaoRows),
       uf:     toOpcoes(opUfRows),
       status: toOpcoes(opStatusRows),
-      crm:    toOpcoes(opCrmRows),
-      oab:    toOpcoes(opOabRows),
     },
     hasData: kpi.valor > 0 || Number(kpi.processos) > 0,
   };
-
-  return overview;
 }
 
 // ── getSiafiIndicadoresTabela ─────────────────────────────────────────────────
@@ -321,16 +257,14 @@ export async function getSiafiIndicadoresOverview(): Promise<SiafiIndicadoresOve
 const LIMITE_DEFAULT = 500;
 
 interface TabelaRow {
-  processo:   string;
+  processo:    string;
   medicamento: string;
-  valor:      number;
-  crm:        string;
-  oab:        string;
-  grupo:      string;
-  regiao:     string;
-  uf:         string;
-  trf:        string | null;
-  status:     string;
+  valor:       number;
+  grupo:       string;
+  regiao:      string;
+  uf:          string;
+  trf:         string | null;
+  status:      string;
 }
 
 interface TabelaKpiRow {
@@ -356,14 +290,14 @@ export async function getSiafiIndicadoresTabela(
         COUNT(DISTINCT d.id)::bigint               AS processos,
         COUNT(DISTINCT d."principioAtivo")::bigint AS medicamentos,
         COUNT(*)::bigint                           AS pagamentos
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       ${filtroExtra}
     `,
     db.$queryRaw<TotalRow[]>`
-      SELECT COUNT(*)::bigint AS total
-      FROM "Demanda" d
+      SELECT COUNT(DISTINCT d."numeroProcesso")::bigint AS total
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       ${filtroExtra}
@@ -373,21 +307,18 @@ export async function getSiafiIndicadoresTabela(
         COALESCE(d."numeroProcesso", '')          AS processo,
         COALESCE(d."principioAtivo", '')          AS medicamento,
         COALESCE(SUM(p."valorOB"), 0)::float8     AS valor,
-        ${CRM_KEY}                                AS crm,
-        ${OAB_KEY}                                AS oab,
-        COALESCE(d."grupoTematico", '')           AS grupo,
+        COALESCE(d."areaTematica", '')            AS grupo,
         COALESCE(d."regiaoBrasil", '')            AS regiao,
         COALESCE(d."ufResidencia", '')            AS uf,
         d."trfRegiao"::text                       AS trf,
         COALESCE(d."status", '')                  AS status
-      FROM "Demanda" d
+      FROM public."Demanda" d
       ${SIAFI_JOIN}
       ${BASE_WHERE}
       ${filtroExtra}
       GROUP BY
         d."numeroProcesso", d."principioAtivo",
-        d."crm", d."ufCrm", d."oab", d."ufOab",
-        d."grupoTematico", d."regiaoBrasil", d."ufResidencia",
+        d."areaTematica", d."regiaoBrasil", d."ufResidencia",
         d."trfRegiao", d."status"
       ORDER BY valor DESC
       LIMIT ${limite}
@@ -408,8 +339,6 @@ export async function getSiafiIndicadoresTabela(
       processo:    r.processo,
       medicamento: r.medicamento,
       valor:       r.valor,
-      crm:         r.crm,
-      oab:         r.oab,
       grupo:       r.grupo,
       regiao:      r.regiao,
       uf:          r.uf,

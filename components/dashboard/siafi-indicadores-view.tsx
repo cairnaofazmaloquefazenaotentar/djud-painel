@@ -13,7 +13,6 @@ import type {
 import { MetricCard } from "./metric-card";
 import { SismatPieChart, type SismatPieDatum } from "./charts/sismat-pie-chart";
 import { fmtBRL, fmtBRLCompact, colorAt } from "./charts/sismat-format";
-import { Combobox } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
 import {
   BarChart,
@@ -29,8 +28,6 @@ import {
   Coins,
   FileText,
   Pill,
-  Stethoscope,
-  Scale,
   Layers,
   MapPin,
   ClipboardCheck,
@@ -45,8 +42,12 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 // Indicadores de Valor SIAFI — Demanda × SiafiPagamento
 //
-// Rankings CRM/OAB, distribuições geográficas e por grupo, filtros por
-// atributo e tabela de processos. Espelha a estrutura de SismatSaidasView.
+// Distribuições geográficas, por grupo temático e tribunal, filtros por
+// atributo e tabela de processos.
+//
+// Nota: CRM e OAB não estão em "Demanda" — pertencem a
+// sismat."RedmineSeiAtributos", que se liga a SismatSaida pelo SEI.
+// Como Demanda não carrega o SEI, esses campos não são expostos aqui.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const selectCn =
@@ -56,24 +57,22 @@ const FILTROS_SELECT: { key: SiafiIndicadoresFiltro; lbl: string }[] = [
   { key: "grupo",  lbl: "Grupo Temático" },
   { key: "regiao", lbl: "Região Brasil" },
   { key: "uf",     lbl: "UF" },
-  { key: "status", lbl: "Status Redmine" },
+  { key: "status", lbl: "Status" },
 ];
 
 const FILTROS_VAZIOS: Record<SiafiIndicadoresFiltro, string> = {
-  grupo: "", regiao: "", uf: "", status: "", crm: "", oab: "",
+  grupo: "", regiao: "", uf: "", status: "",
 };
 
 const COLUNAS_TABELA: { key: string; lbl: string }[] = [
-  { key: "processo",   lbl: "Processo / SEI" },
+  { key: "processo",    lbl: "Processo" },
   { key: "medicamento", lbl: "Medicamento" },
-  { key: "valor",      lbl: "Valor (R$)" },
-  { key: "crm",        lbl: "CRM" },
-  { key: "oab",        lbl: "OAB" },
-  { key: "grupo",      lbl: "Grupo Temático" },
-  { key: "regiao",     lbl: "Região" },
-  { key: "uf",         lbl: "UF" },
-  { key: "trf",        lbl: "TRF" },
-  { key: "status",     lbl: "Status Redmine" },
+  { key: "valor",       lbl: "Valor (R$)" },
+  { key: "grupo",       lbl: "Grupo Temático" },
+  { key: "regiao",      lbl: "Região" },
+  { key: "uf",          lbl: "UF" },
+  { key: "trf",         lbl: "TRF" },
+  { key: "status",      lbl: "Status" },
 ];
 
 // ── Painel ────────────────────────────────────────────────────────────────────
@@ -274,24 +273,6 @@ export function SiafiIndicadoresView() {
         />
       </div>
 
-      {/* ── Top CRM / OAB ────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Panel
-          icon={<Stethoscope className="h-4 w-4" />}
-          title="Top 15 por Número CRM"
-          subtitle="Prescritores com maior valor pago pelo SIAFI (por Demanda)"
-        >
-          <RankingBarChart items={over.porCrm} height={360} maxLabel={18} />
-        </Panel>
-        <Panel
-          icon={<Scale className="h-4 w-4" />}
-          title="Top 15 por Número OAB"
-          subtitle="Advogados com maior valor pago pelo SIAFI (por Demanda)"
-        >
-          <RankingBarChart items={over.porOab} height={360} maxLabel={18} />
-        </Panel>
-      </div>
-
       {/* ── Distribuições ────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Panel icon={<Layers className="h-4 w-4" />} title="Por Grupo Temático">
@@ -305,10 +286,19 @@ export function SiafiIndicadoresView() {
         <Panel icon={<Landmark className="h-4 w-4" />} title="Por Tribunal (TRF)">
           <Distribuicao items={over.porTrf} />
         </Panel>
-        <Panel icon={<ClipboardCheck className="h-4 w-4" />} title="Por Status Redmine">
+        <Panel icon={<ClipboardCheck className="h-4 w-4" />} title="Por Status">
           <Distribuicao items={over.porStatus} />
         </Panel>
       </div>
+
+      {/* ── Top UFs ──────────────────────────────────────────────────────── */}
+      <Panel
+        icon={<MapPin className="h-4 w-4" />}
+        title="Top 15 UFs"
+        subtitle="Unidades da Federação com maior valor pago pelo SIAFI"
+      >
+        <RankingBarChart items={over.porUF} height={360} maxLabel={4} />
+      </Panel>
 
       {/* ── Filtros ──────────────────────────────────────────────────────── */}
       <Panel
@@ -316,7 +306,7 @@ export function SiafiIndicadoresView() {
         title="Filtros"
         subtitle="Regem os totais filtrados e a tabela abaixo (os gráficos acima são globais)"
       >
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
           {FILTROS_SELECT.map(({ key, lbl }) => (
             <div key={key} className="space-y-1">
               <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -336,32 +326,6 @@ export function SiafiIndicadoresView() {
               </select>
             </div>
           ))}
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              CRM
-            </label>
-            <Combobox
-              value={filtros.crm}
-              onChange={(v) => setF("crm", v)}
-              options={over.opcoes.crm.map((o) => ({ value: o.value, count: o.count }))}
-              placeholder="Todos"
-              searchPlaceholder="Buscar CRM…"
-              allLabel="Todos"
-            />
-          </div>
-          <div className="space-y-1">
-            <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              OAB
-            </label>
-            <Combobox
-              value={filtros.oab}
-              onChange={(v) => setF("oab", v)}
-              options={over.opcoes.oab.map((o) => ({ value: o.value, count: o.count }))}
-              placeholder="Todos"
-              searchPlaceholder="Buscar OAB…"
-              allLabel="Todos"
-            />
-          </div>
           <div className="flex items-end">
             <Button variant="outline" size="sm" onClick={limpar} disabled={!temFiltro} className="gap-1.5">
               <FilterX className="h-3.5 w-3.5" />
@@ -448,8 +412,6 @@ export function SiafiIndicadoresView() {
                   <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate font-mono text-[11px]" title={r.processo}>{r.processo}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap max-w-[260px] truncate" title={r.medicamento}>{r.medicamento}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap text-right font-semibold tabular-nums text-primary">{fmtBRL(r.valor)}</td>
-                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.crm}>{r.crm}</td>
-                  <td className="px-3 py-1.5 whitespace-nowrap max-w-[140px] truncate" title={r.oab}>{r.oab}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap max-w-[220px] truncate" title={r.grupo}>{r.grupo}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{r.regiao}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap">{r.uf}</td>

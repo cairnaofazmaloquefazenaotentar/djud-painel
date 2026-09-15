@@ -61,6 +61,10 @@ const FONTES = {
     tabela: Prisma.sql`sismat."SismatPmvg"`,
     colunas: ["criadoEm"],
   },
+  siafiPagamento: {
+    tabela: Prisma.sql`sismat."SiafiPagamento"`,
+    colunas: ["criadoEm"],
+  },
 } as const satisfies Record<string, Fonte>;
 
 export type FonteDados = keyof typeof FONTES;
