@@ -21,7 +21,6 @@ import { SismatEntradasView } from "@/components/dashboard/sismat-dashboard";
 import { SismatSaidasPuraView } from "@/components/dashboard/sismat-saidas-pura-view";
 import { SismatEstoqueView } from "@/components/dashboard/sismat-estoque-view";
 import { SismatSaidasView } from "@/components/dashboard/sismat-saidas-view";
-import { SiafiIndicadoresView } from "@/components/dashboard/siafi-indicadores-view";
 import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
 import { RankingAnualChart } from "@/components/dashboard/charts/ranking-anual-chart";
 import { paramsDeMetrics, useMetrics } from "@/hooks/useMetrics";
@@ -115,7 +114,6 @@ const INDICADORES_TABS = [
   { value: "principios-ativos",  label: "Princípios Ativos",       icon: <Pill className="h-3.5 w-3.5" /> },
   { value: "ranking-anual",      label: "Ranking por Ano",         icon: <CalendarRange className="h-3.5 w-3.5" /> },
   { value: "indicadores-saidas", label: "Indicadores de Saídas",   icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
-  { value: "indicadores-valor",  label: "Indicadores de Valor",    icon: <Coins className="h-3.5 w-3.5" /> },
 ] as const;
 
 const INTERNOS_TABS = [
@@ -345,7 +343,6 @@ export default function DashboardPage() {
       {activeTab === "saidas"             && <SismatSaidasPuraView />}
       {activeTab === "entradas-saidas"    && <SismatEstoqueView />}
       {activeTab === "indicadores-saidas" && <SismatSaidasView />}
-      {activeTab === "indicadores-valor"  && <SiafiIndicadoresView />}
 
       {/* ── Conteúdo: abas que usam dados do Redmine ─────────────────── */}
       {needsRedmine(activeTab) && (
