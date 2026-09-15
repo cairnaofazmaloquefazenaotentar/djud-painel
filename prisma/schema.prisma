@@ -725,6 +725,7 @@ model CestaOrcamento {
 
   @@index([cestaItemId])
   @@schema("public")
+}
 
 // SIAFI — pagamentos realizados via Ordem Bancária (OB) para autores de ações
 // judiciais, importados do Excel de pagamentos SIAFI fornecido pelo DJUD.
