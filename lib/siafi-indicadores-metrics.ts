@@ -121,8 +121,8 @@ function whereFiltros(f: RawFiltro): Prisma.Sql {
     const [oabNum, oabUf] = f.oab.split("/");
     partes.push(Prisma.sql`d."oab" = ${oabNum} AND COALESCE(NULLIF(d."ufOab",''),'NA') = ${oabUf ?? "NA"}`);
   }
-  if (!partes.length) return Prisma.empty;
-  return Prisma.join(partes.map((p) => Prisma.sql`AND ${p}`), " ");
+  if (!partes.length) return Prisma.sql``;
+  return partes.reduce((acc, cur) => Prisma.sql`${acc} AND ${cur}`);
 }
 
 // ── Tipos intermediários das queries raw ──────────────────────────────────────
@@ -370,7 +370,7 @@ export async function getSiafiIndicadoresTabela(
     `,
     db.$queryRaw<TabelaRow[]>`
       SELECT
-        COALESCE(d."numeroProcesso", d."sei", '') AS processo,
+        COALESCE(d."numeroProcesso", '')          AS processo,
         COALESCE(d."principioAtivo", '')          AS medicamento,
         COALESCE(SUM(p."valorOB"), 0)::float8     AS valor,
         ${CRM_KEY}                                AS crm,
@@ -385,7 +385,7 @@ export async function getSiafiIndicadoresTabela(
       ${BASE_WHERE}
       ${filtroExtra}
       GROUP BY
-        d."numeroProcesso", d."sei", d."principioAtivo",
+        d."numeroProcesso", d."principioAtivo",
         d."crm", d."ufCrm", d."oab", d."ufOab",
         d."grupoTematico", d."regiaoBrasil", d."ufResidencia",
         d."trfRegiao", d."status"
