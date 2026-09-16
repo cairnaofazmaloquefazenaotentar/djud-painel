@@ -2,12 +2,12 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
-import { apiPath } from "@/lib/url";
   ItemPesquisa,
   ResultadoPesquisa,
   Sugestoes,
   UnidadeOpcao,
 } from "@/lib/pesquisa-preco";
+import { apiPath } from "@/lib/url";
 
 async function lerErro(res: Response, padrao: string): Promise<never> {
   let mensagem = padrao;

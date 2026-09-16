@@ -37,7 +37,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-import { apiPath } from "@/lib/url";
   Activity,
   AlertTriangle,
   TrendingUp,
@@ -63,6 +62,7 @@ import { apiPath } from "@/lib/url";
   Download,
   FileSpreadsheet,
 } from "lucide-react";
+import { apiPath } from "@/lib/url";
 
 // ─── Seção com título padronizado ────────────────────────────────────────────
 function Section({
