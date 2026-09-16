@@ -1,0 +1,2 @@
+material,materialCodigo,materialNome,progSaude,fornecedor,destinatario,destinatarioCodigo,esfera,ufNome,uf,tipoDestinatario,mesAnoBaixa,dtBaixa,qtdEntregue,qtdPedido,valorItem,valorTotal
+MEDICAMENTO EXEMPLO 50MG,123456,MEDICAMENTO EXEMPLO,DEMANDA JUDICIAL - Aquisição,Fornecedor Exemplo,NOME DO AUTOR 25000.000001/2026-11,789,FEDERAL,MATO GROSSO DO SUL,MS,PESSOA FISICA,AGO 2026,2026-08-01,30,30,100.25,3007.50

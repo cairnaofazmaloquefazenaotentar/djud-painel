@@ -30,6 +30,7 @@ import {
 } from "@/lib/pesquisa-preco-curadoria";
 import { formatarCnpj } from "@/lib/pesquisa-preco-filtros";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
+import { apiPath } from "@/lib/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Curadoria da pesquisa — a tela que antecede a emissão do relatório.
@@ -670,7 +671,7 @@ export function CuradoriaDialog({
       setCalculando(true);
       setErro(null);
       try {
-        const res = await fetch("/api/precos/buscar", {
+        const res = await fetch(apiPath("/api/precos/buscar"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...parametros, exclusoes: listaExclusoes, orcamentos }),

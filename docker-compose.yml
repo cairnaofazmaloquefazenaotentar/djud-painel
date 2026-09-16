@@ -1,0 +1,20 @@
+services:
+  djud-painel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: djud-painel
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "127.0.0.1:3095:3000"
+    volumes:
+      - /mnt/data/djud-painel-data/uploads:/app/public/uploads
+    networks:
+      - rede_docker
+
+networks:
+  rede_docker:
+    external: true

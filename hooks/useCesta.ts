@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CestaItemDTO, CestaResumo } from "@/lib/cesta";
 import type { ExclusaoRegistro, OrcamentoFornecedor } from "@/lib/pesquisa-preco-curadoria";
+import { apiPath } from "@/lib/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta da Pesquisa de Preços — a fonte da verdade é o banco (por usuário), não
@@ -27,7 +28,7 @@ export function useCesta(enabled = true) {
   return useQuery<CestaResumo>({
     queryKey: CESTA_KEY,
     queryFn: async () => {
-      const res = await fetch("/api/precos/cesta");
+      const res = await fetch(apiPath("/api/precos/cesta"));
       if (!res.ok) await lerErro(res, "Erro ao carregar a cesta");
       return res.json();
     },
@@ -51,7 +52,7 @@ export function useAdicionarItemCesta() {
   const qc = useQueryClient();
   return useMutation<{ item: CestaItemDTO; duplicado: boolean }, Error, AdicionarItemArgs>({
     mutationFn: async (args) => {
-      const res = await fetch("/api/precos/cesta", {
+      const res = await fetch(apiPath("/api/precos/cesta"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(args),
@@ -79,7 +80,7 @@ export function useAtualizarItemCesta() {
     }
   >({
     mutationFn: async ({ id, ...dados }) => {
-      const res = await fetch(`/api/precos/cesta/${encodeURIComponent(id)}`, {
+      const res = await fetch(apiPath(`/api/precos/cesta/${encodeURIComponent(id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dados),
@@ -97,7 +98,7 @@ export function useRemoverItemCesta() {
   const qc = useQueryClient();
   return useMutation<{ removido: string }, Error, string>({
     mutationFn: async (id) => {
-      const res = await fetch(`/api/precos/cesta/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await fetch(apiPath(`/api/precos/cesta/${encodeURIComponent(id)}`), { method: "DELETE" });
       if (!res.ok) await lerErro(res, "Erro ao remover o item");
       return res.json();
     },
@@ -111,7 +112,7 @@ export function useEsvaziarCesta() {
   const qc = useQueryClient();
   return useMutation<CestaResumo, Error, void>({
     mutationFn: async () => {
-      const res = await fetch("/api/precos/cesta", { method: "DELETE" });
+      const res = await fetch(apiPath("/api/precos/cesta"), { method: "DELETE" });
       if (!res.ok) await lerErro(res, "Erro ao esvaziar a cesta");
       return res.json();
     },

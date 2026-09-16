@@ -6,6 +6,7 @@ import type {
   SismatSaidasDimensao,
 } from "@/lib/sismat-saidas-metrics";
 import type { SismatPeriodo } from "@/lib/sismat-metrics";
+import { apiPath } from "@/lib/url";
 
 export function useSismatSaidasMetrics(
   dimension: SismatSaidasDimensao,
@@ -17,7 +18,7 @@ export function useSismatSaidasMetrics(
     queryFn: async () => {
       const params = new URLSearchParams({ dimension, period });
       if (subMaterial) params.set("subMaterial", subMaterial);
-      const res = await fetch(`/api/sismat/saidas/metrics?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/sismat/saidas/metrics?${params.toString()}`));
       if (!res.ok) throw new Error("Erro ao carregar métricas de saídas SISMAT");
       return res.json();
     },

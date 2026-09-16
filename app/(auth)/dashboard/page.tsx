@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+import { apiPath } from "@/lib/url";
   Activity,
   AlertTriangle,
   TrendingUp,
@@ -226,7 +227,7 @@ export default function DashboardPage() {
       const params = paramsDeMetrics(metricsFilters);
       params.set("format", formato);
       if (activeTab === "ranking-anual") params.set("rankingAnual", "1");
-      const res = await fetch(`/api/demandas/metrics/export?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/demandas/metrics/export?${params.toString()}`));
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         janela?.close();

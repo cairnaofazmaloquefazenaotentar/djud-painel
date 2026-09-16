@@ -1,0 +1,13 @@
+{
+  "carga": "djud-2026-08-competencia-08-v1",
+  "origem": "Sistema de origem responsavel",
+  "periodo_referencia": "2026-08",
+  "responsavel": "nome.sobrenome@saude.gov.br",
+  "arquivos": [
+    {
+      "nome": "demandas.csv",
+      "linhas": 1,
+      "sha256": "preencher-com-o-hash-sha256-do-arquivo"
+    }
+  ]
+}

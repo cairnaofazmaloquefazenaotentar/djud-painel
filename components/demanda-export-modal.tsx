@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Download, Mail, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
+import { apiPath } from "@/lib/url";
 
 interface DemandaExportModalProps {
   isOpen: boolean;
@@ -25,7 +26,7 @@ export function DemandaExportModal({
 
   const handleDownloadPDF = () => {
     // Abrir novo janela para imprimir/salvar como PDF
-    window.open(`/api/demandas/${demandaId}/export-pdf`, "_blank");
+    window.open(apiPath(`/api/demandas/${demandaId}/export-pdf`), "_blank");
     onClose();
   };
 
@@ -40,7 +41,7 @@ export function DemandaExportModal({
     setSuccess(null);
 
     try {
-      const response = await fetch("/api/relatorios/email", {
+      const response = await fetch(apiPath("/api/relatorios/email"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -175,7 +176,7 @@ export default function DemandaDetailPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch(`/api/demandas/${demandaId}`);
+        const res = await fetch(apiPath(`/api/demandas/${demandaId}`));
         if (res.ok) {
           setDemanda(await res.json());
         } else {

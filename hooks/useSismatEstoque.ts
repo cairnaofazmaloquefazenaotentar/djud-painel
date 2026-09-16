@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SismatPeriodo } from "@/lib/sismat-metrics";
 import type { SismatEstoqueData } from "@/lib/sismat-estoque-metrics";
+import { apiPath } from "@/lib/url";
 
 export function useSismatEstoque(period: SismatPeriodo, materialNome?: string) {
   return useQuery<SismatEstoqueData>({
@@ -10,7 +11,7 @@ export function useSismatEstoque(period: SismatPeriodo, materialNome?: string) {
     queryFn: async () => {
       const params = new URLSearchParams({ period });
       if (materialNome) params.set("materialNome", materialNome);
-      const res = await fetch(`/api/sismat/estoque?${params}`);
+      const res = await fetch(apiPath(`/api/sismat/estoque?${params}`));
       if (!res.ok) throw new Error("Erro ao carregar métricas de estoque SISMAT");
       return res.json();
     },

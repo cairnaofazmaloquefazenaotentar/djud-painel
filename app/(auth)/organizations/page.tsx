@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Trash2, Edit2, Lock, Building2, Users, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 import { rolePermissions } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 interface Organization {
@@ -56,7 +57,7 @@ export default function OrganizationsPage() {
     try {
       const params = new URLSearchParams({ page, pageSize: "20" });
       if (busca) params.append("busca", busca);
-      const res = await fetch(`/api/organizations?${params}`);
+      const res = await fetch(apiPath(`/api/organizations?${params}`));
       if (res.ok) {
         const data = await res.json();
         setOrganizations(data.data);
@@ -96,7 +97,7 @@ export default function OrganizationsPage() {
     setFormError("");
     try {
       const method = editingOrg ? "PUT" : "POST";
-      const url    = editingOrg ? `/api/organizations/${editingOrg.id}` : "/api/organizations";
+      const url    = apiPath(editingOrg ? `/api/organizations/${editingOrg.id}` : "/api/organizations");
       const res    = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -123,7 +124,7 @@ export default function OrganizationsPage() {
     if (!deleteDialog.orgId) return;
     const orgName = deleteDialog.orgName;
     try {
-      const res = await fetch(`/api/organizations/${deleteDialog.orgId}`, { method: "DELETE" });
+      const res = await fetch(apiPath(`/api/organizations/${deleteDialog.orgId}`), { method: "DELETE" });
       setDeleteDialog({ open: false });
       if (res.ok) {
         fetchOrganizations();

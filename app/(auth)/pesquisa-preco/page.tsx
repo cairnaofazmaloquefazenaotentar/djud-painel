@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
+import { apiPath } from "@/lib/url";
 import {
   AlertTriangle,
   ChevronDown,
@@ -666,7 +667,7 @@ export default function PesquisaPrecoPage() {
     const newWin = window.open("", "_blank");
     setGerandoPdf(true);
     try {
-      const res = await fetch("/api/relatorios/pesquisa-preco", {
+      const res = await fetch(apiPath("/api/relatorios/pesquisa-preco"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...params, ...relMeta, exclusoes, orcamentos }),

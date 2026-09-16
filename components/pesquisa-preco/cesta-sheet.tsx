@@ -49,6 +49,7 @@ import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import type { CestaItemDTO } from "@/lib/cesta";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
+import { apiPath } from "@/lib/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta da Pesquisa de Preços — painel lateral com os itens que o usuário
@@ -87,7 +88,7 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
     setBase(null);
     setErroBase(null);
     try {
-      const res = await fetch("/api/precos/buscar", {
+      const res = await fetch(apiPath("/api/precos/buscar"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -300,7 +301,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
     setGerando(true);
     setErroRelatorio(null);
     try {
-      const res = await fetch("/api/relatorios/cesta", {
+      const res = await fetch(apiPath("/api/relatorios/cesta"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(meta),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 
 export interface PrincipioAtivoOption {
   value: string;
@@ -16,7 +17,7 @@ export function usePrincipiosAtivos() {
   return useQuery<PrincipioAtivoOption[]>({
     queryKey: ["principios-ativos"],
     queryFn: async () => {
-      const res = await fetch("/api/demandas/principios-ativos");
+      const res = await fetch(apiPath("/api/demandas/principios-ativos"));
       if (!res.ok) throw new Error("Erro ao carregar princípios ativos");
       const data = await res.json();
       return data.items as PrincipioAtivoOption[];

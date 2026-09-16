@@ -15,6 +15,7 @@ import {
 } from "@/components/backoffice";
 import { formatDateTime } from "@/lib/utils";
 import { ENTITY_LABELS, parseChanges } from "@/lib/log-labels";
+import { apiPath } from "@/lib/url";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -69,7 +70,7 @@ export default function LogsPage() {
         if (dataInicio) params.append("dataInicio", dataInicio);
         if (dataFim) params.append("dataFim", dataFim);
 
-        const res = await fetch(`/api/logs?${params.toString()}`);
+        const res = await fetch(apiPath(`/api/logs?${params.toString()}`));
         if (res.ok) {
           const data = await res.json();
           setLogs(data.data);
@@ -95,7 +96,7 @@ export default function LogsPage() {
     if (dataInicio) params.append("dataInicio", dataInicio);
     if (dataFim) params.append("dataFim", dataFim);
 
-    const res = await fetch(`/api/logs?${params.toString()}`);
+    const res = await fetch(apiPath(`/api/logs?${params.toString()}`));
     if (!res.ok) return;
     const data = await res.json();
 

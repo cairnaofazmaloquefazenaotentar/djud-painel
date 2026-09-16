@@ -66,8 +66,13 @@ export async function GET(
     // Buscar arquivo do filesystem (MVP com local storage)
     let fileBuffer: Buffer;
     try {
-      const filePath = join(process.cwd(), "public", attachment.storagePath);
-      fileBuffer = await readFile(filePath);
+      const uploadPath = join(process.cwd(), "public", "uploads", attachment.storagePath);
+      try {
+        fileBuffer = await readFile(uploadPath);
+      } catch {
+        const legacyPath = join(process.cwd(), "public", attachment.storagePath);
+        fileBuffer = await readFile(legacyPath);
+      }
     } catch (err) {
       console.error("Error reading file:", err);
       return NextResponse.json(

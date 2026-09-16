@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { AttachmentsManager } from "@/components/attachments-manager";
 import { DemandaExportModal } from "@/components/demanda-export-modal";
 import { Loader2, Download } from "lucide-react";
+import { apiPath } from "@/lib/url";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
@@ -153,8 +154,8 @@ export default function EditDemandaPage() {
     const loadData = async () => {
       try {
         const [orgRes, userRes] = await Promise.all([
-          fetch("/api/organizations"),
-          fetch("/api/users?pageSize=100"),
+          fetch(apiPath("/api/organizations")),
+          fetch(apiPath("/api/users?pageSize=100")),
         ]);
         if (orgRes.ok) setOrganizations((await orgRes.json()).data || []);
         if (userRes.ok) setResponsaveis((await userRes.json()).data || []);
@@ -168,8 +169,8 @@ export default function EditDemandaPage() {
       const loadDemanda = async () => {
         try {
           const [demandaRes, attachmentsRes] = await Promise.all([
-            fetch(`/api/demandas/${demandaId}`),
-            fetch(`/api/demandas/${demandaId}/attachments`),
+            fetch(apiPath(`/api/demandas/${demandaId}`)),
+            fetch(apiPath(`/api/demandas/${demandaId}/attachments`)),
           ]);
           if (demandaRes.ok) {
             const d: Demanda = await demandaRes.json();
@@ -232,7 +233,7 @@ export default function EditDemandaPage() {
       };
 
       const res = await fetch(
-        isNew ? "/api/demandas" : `/api/demandas/${demandaId}`,
+        apiPath(isNew ? "/api/demandas" : `/api/demandas/${demandaId}`),
         {
           method: isNew ? "POST" : "PUT",
           headers: { "Content-Type": "application/json" },

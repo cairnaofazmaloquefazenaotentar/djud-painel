@@ -2,6 +2,7 @@
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type {
+import { apiPath } from "@/lib/url";
   ItemPesquisa,
   ResultadoPesquisa,
   Sugestoes,
@@ -30,7 +31,7 @@ export function useSugestoesMaterial(q: string) {
     queryKey: ["precos-catmat-sugestoes", termo],
     queryFn: async () => {
       const params = new URLSearchParams({ q: termo });
-      const res = await fetch(`/api/precos/catmat?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/precos/catmat?${params.toString()}`));
       if (!res.ok) await lerErro(res, "Erro ao buscar sugestões");
       return res.json();
     },
@@ -54,7 +55,7 @@ export function useItemPesquisa(codigo: string | null) {
   return useQuery<ItemComUnidades>({
     queryKey: ["precos-catmat-item", codigo],
     queryFn: async () => {
-      const res = await fetch(`/api/precos/catmat/${encodeURIComponent(codigo as string)}`);
+      const res = await fetch(apiPath(`/api/precos/catmat/${encodeURIComponent(codigo as string)}`));
       if (!res.ok) await lerErro(res, "Erro ao carregar o item");
       return res.json();
     },
@@ -97,7 +98,7 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       if (params.fornecedor) sp.set("fornecedor", params.fornecedor);
       if (params.fabricante) sp.set("fabricante", params.fabricante);
       if (params.cnpjComprador) sp.set("cnpjComprador", params.cnpjComprador);
-      const res = await fetch(`/api/precos/buscar?${sp.toString()}`);
+      const res = await fetch(apiPath(`/api/precos/buscar?${sp.toString()}`));
       if (!res.ok) await lerErro(res, "Erro na pesquisa de preços");
       return res.json();
     },

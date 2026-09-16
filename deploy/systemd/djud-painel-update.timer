@@ -1,0 +1,11 @@
+[Unit]
+Description=Verifica novas versoes aprovadas do DJUD Painel a cada 15 minutos
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=djud-painel-update.service
+
+[Install]
+WantedBy=timers.target

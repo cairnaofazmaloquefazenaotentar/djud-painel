@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 
 /**
  * Busca a lista de valores distintos da coluna `material` (nome específico)
@@ -20,7 +21,7 @@ export function useSismatSubMaterials(
     queryKey: ["sismat-sub-materials", type, materialNome],
     queryFn: async () => {
       const params = new URLSearchParams({ materialNome });
-      const res = await fetch(`${endpoint}?${params.toString()}`);
+      const res = await fetch(apiPath(`${endpoint}?${params.toString()}`));
       if (!res.ok) throw new Error("Erro ao carregar sub-materiais");
       const json = await res.json();
       return json.materials as string[];

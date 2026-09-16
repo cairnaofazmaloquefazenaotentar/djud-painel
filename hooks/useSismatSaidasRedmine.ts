@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { apiPath } from "@/lib/url";
 import type {
   SaidasRedmineOverview,
   SaidasRedmineTabela,
@@ -15,7 +16,7 @@ export function useSaidasRedmineOverview() {
   return useQuery<SaidasRedmineOverview>({
     queryKey: ["sismat-saidas-redmine-overview"],
     queryFn: async () => {
-      const res = await fetch("/api/sismat/saidas/redmine");
+      const res = await fetch(apiPath("/api/sismat/saidas/redmine"));
       if (!res.ok) {
         throw new Error("Erro ao carregar o cruzamento Saídas × Redmine");
       }
@@ -41,7 +42,7 @@ export function useSaidasRedmineTabela(filtros: SaidasRedmineFiltros) {
   return useQuery<SaidasRedmineTabela>({
     queryKey: ["sismat-saidas-redmine-tabela", qs],
     queryFn: async () => {
-      const res = await fetch(`/api/sismat/saidas/redmine/tabela${qs ? `?${qs}` : ""}`);
+      const res = await fetch(apiPath(`/api/sismat/saidas/redmine/tabela${qs ? `?${qs}` : ""}`));
       if (!res.ok) {
         throw new Error("Erro ao filtrar o cruzamento Saídas × Redmine");
       }

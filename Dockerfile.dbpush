@@ -1,0 +1,7 @@
+# syntax=docker/dockerfile:1.7
+FROM djud-painel-builder AS dbpush
+RUN --mount=type=secret,id=djud_env,target=/run/secrets/djud_env \
+    set -a && . /run/secrets/djud_env && set +a \
+    && DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed 's/@pg-main:5432/@127.0.0.1:5432/')" \
+    && export DATABASE_URL \
+    && ./node_modules/.bin/prisma db push

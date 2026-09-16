@@ -26,6 +26,7 @@ import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
 import type { FiltroCatmat } from "@/lib/demandas-catmat";
+import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
 interface Demanda {
@@ -218,7 +219,7 @@ export default function DemandasPage() {
         if (catmat) params.append("catmat", catmat);
 
         console.log("🔄 Buscando demandas...", params.toString());
-        const res = await fetch(`/api/demandas?${params.toString()}`);
+        const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
 
         if (res.ok) {
           const data = await res.json();
@@ -252,7 +253,7 @@ export default function DemandasPage() {
     const numero = deleteDialog.demandaNumero;
 
     try {
-      const res = await fetch(`/api/demandas/${deleteDialog.demandaId}`, {
+      const res = await fetch(apiPath(`/api/demandas/${deleteDialog.demandaId}`), {
         method: "DELETE",
       });
 
@@ -281,7 +282,7 @@ export default function DemandasPage() {
     if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
     if (catmat) params.append("catmat", catmat);
 
-    const res = await fetch(`/api/demandas?${params.toString()}`);
+    const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       toast.error(err.error || "Erro ao exportar demandas.");
@@ -364,7 +365,7 @@ export default function DemandasPage() {
       if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
       if (catmat) params.append("catmat", catmat);
 
-      const res = await fetch(`/api/demandas?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
       if (!res.ok) { toast.error("Erro ao buscar dados.", { id: "xlsx-export" }); return; }
       const { data } = await res.json();
 
@@ -406,7 +407,7 @@ export default function DemandasPage() {
     let failed = 0;
 
     for (const id of selectedIds) {
-      const res = await fetch(`/api/demandas/${id}`, { method: "DELETE" });
+      const res = await fetch(apiPath(`/api/demandas/${id}`), { method: "DELETE" });
       if (res.ok) success++;
       else failed++;
     }

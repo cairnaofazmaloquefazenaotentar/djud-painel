@@ -46,6 +46,7 @@ next-env.d.ts
 
 *.xlsx
 *.csv
+!docs/modelos-carga/*.csv
 
 # backups de importacao (CSV dump antes do replace)
 /backups

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { paramsDeMetrics, type UseMetricsOptions } from "@/hooks/useMetrics";
 import type { RankingAnualData } from "@/lib/metrics-ranking-anual";
+import { apiPath } from "@/lib/url";
 
 /**
  * Rankings do painel abertos em série anual. Consulta separada de useMetrics
@@ -25,7 +26,7 @@ export function useRankingAnual(options: UseMetricsOptions = {}, enabled = true)
     ],
     queryFn: async () => {
       const params = paramsDeMetrics(options);
-      const res = await fetch(`/api/demandas/metrics/ranking-anual?${params.toString()}`);
+      const res = await fetch(apiPath(`/api/demandas/metrics/ranking-anual?${params.toString()}`));
       if (!res.ok) throw new Error("Erro ao carregar o ranking anual");
       return res.json();
     },

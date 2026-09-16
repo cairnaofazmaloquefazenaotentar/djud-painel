@@ -1,0 +1,12 @@
+.git
+.next
+node_modules
+npm-debug.log*
+.env*
+.djud-db-pass.tmp
+*.xlsx
+*.csv
+coverage
+build
+logs
+public/uploads
