@@ -17,7 +17,6 @@ export const SISMAT_PERIODOS = ["monthly", "yearly"] as const;
 export type SismatPeriodo = (typeof SISMAT_PERIODOS)[number];
 
 /** Movimentações contadas como gasto (aquisição). */
-export const TIPOS_AQUISICAO = ["ENTRADA ORÇAMENTÁRIA", "EXTRA-ORÇ. / AQUISIÇÃO"] as const;
 
 /** Rótulos legíveis por dimensão (singular). */
 export const SISMAT_DIM_LABELS: Record<SismatDimensao, string> = {
@@ -79,7 +78,6 @@ export async function getSismatMetrics(
   // então buscamos e agregamos em memória (sem SQL cru — evita injeção e é rápido).
   const rows = await db.sismatEntrada.findMany({
     where: {
-      tipoMovimentacao: { in: [...TIPOS_AQUISICAO] },
       dtRecebimento: { not: null },
       ...(subMaterial ? { material: subMaterial } : {}),
     },

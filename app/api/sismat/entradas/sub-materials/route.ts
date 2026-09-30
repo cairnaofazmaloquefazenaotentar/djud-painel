@@ -2,7 +2,6 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { TIPOS_AQUISICAO } from "@/lib/sismat-metrics";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -24,7 +23,6 @@ export async function GET(request: NextRequest) {
 
     const rows = await db.sismatEntrada.findMany({
       where: {
-        tipoMovimentacao: { in: [...TIPOS_AQUISICAO] },
         materialNome,
         material: { not: "" },
       },

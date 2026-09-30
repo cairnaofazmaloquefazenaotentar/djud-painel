@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createDemandaSchema, listDemandaSchema } from "@/lib/schemas";
 import { createAuditLog } from "@/lib/audit";
+import { resolverFiltroCatmat, whereDemandaPorCatmat, type FiltroCatmat } from "@/lib/demandas-catmat";
 import { hasPermission } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -36,6 +37,9 @@ export async function GET(request: NextRequest) {
     const regiaoBrasil = searchParams.get("regiaoBrasil");
     const dataEntradaDe = searchParams.get("dataEntradaDe");
     const dataEntradaAte = searchParams.get("dataEntradaAte");
+    // CATMAT ou registro ANVISA — a Demanda não guarda o código, então ele é
+    // traduzido para a(s) substância(s) do catálogo (lib/demandas-catmat.ts).
+    const catmat = searchParams.get("catmat")?.trim() || "";
 
     const skip = (params.page - 1) * params.pageSize;
 
@@ -54,6 +58,22 @@ export async function GET(request: NextRequest) {
       where.dataEntradaDJUD = {};
       if (dataEntradaDe) where.dataEntradaDJUD.gte = new Date(dataEntradaDe);
       if (dataEntradaAte) where.dataEntradaDJUD.lte = new Date(dataEntradaAte);
+    }
+
+    // Filtro por código: resolve primeiro para devolver o motivo quando não há
+    // como filtrar, em vez de uma lista vazia sem explicação.
+    let filtroCatmat: FiltroCatmat | null = null;
+    if (catmat) {
+      filtroCatmat = await resolverFiltroCatmat(catmat);
+      if (!filtroCatmat.encontrado) {
+        return NextResponse.json({
+          data: [],
+          pagination: { page: params.page, pageSize: params.pageSize, total: 0, totalPages: 0 },
+          filtroCatmat,
+        });
+      }
+      // AND, não OR: a busca livre (params.busca) já ocupa o where.OR.
+      where.AND = [whereDemandaPorCatmat(filtroCatmat)];
     }
 
     if (params.busca) {
@@ -115,6 +135,7 @@ export async function GET(request: NextRequest) {
         total,
         totalPages: Math.ceil(total / params.pageSize),
       },
+      filtroCatmat,
     });
   } catch (error) {
     if (error instanceof Error) {

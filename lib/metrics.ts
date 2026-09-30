@@ -1,5 +1,11 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
+import {
+  resolverFiltroCatmat,
+  sqlDemandaPorCatmat,
+  whereDemandaPorCatmat,
+  type FiltroCatmat,
+} from "@/lib/demandas-catmat";
 
 export interface MetricsData {
   // ── Indicadores principais ──────────────────────────────────────────────────
@@ -8,6 +14,7 @@ export interface MetricsData {
   demandasCriticas:    number;   // prioridade Alta + Crítica
   taxaResolucao:       number;
   totalValorEstimado:  number;
+  demandasComValor:    number;   // processos com ao menos um pagamento SIAFI registrado
 
   // ── Dimensionamento da demanda ───────────────────────────────────────────────
   topMedicamentosDistribution:  Array<{ medicamento: string | null; count: number }>;
@@ -24,10 +31,9 @@ export interface MetricsData {
   tribunalTimeline: Array<{ mes: Date; trf: number | null; count: number }>;
 
   // ── Séries de valores em R$ — itens 2 e 3.1 ──────────────────────────────────
-  // Observação: valorEstimado só existe em demandas de Cumprimento de Ordem Judicial.
-  // O Redmine não preenche "TRF Região" nessas linhas, então a importação deriva o
-  // tribunal do número CNJ do processo (scripts/import_redmine_base.py). Cobre 99,2%
-  // delas; o resto não tem número de processo ou não é da Justiça Federal.
+  // Valores financeiros vêm de sismat.SiafiPagamento (Valor OB) cruzado pelo nº do processo.
+  // A série temporal usa Dt Pagto SIAFI como eixo de tempo.
+  // valorTribunalTimeline usa trfRegiao da Demanda cruzado com o pagamento SIAFI.
   valorTimeline: Array<{ mes: Date; valor: number }>;
   valorTribunalTimeline: Array<{ mes: Date; trf: number | null; valor: number }>;
   topMedicamentosValor: Array<{ medicamento: string | null; valor: number }>;
@@ -41,10 +47,23 @@ export interface MetricsData {
   trfRegiaoDistribution:     Array<{ trf: number | null; count: number }>;
   ufResidenciaDistribution:  Array<{ uf: string | null; count: number }>;
 
+  // ── Indicadores de Valor SIAFI — distribuições geográficas e operacionais ────
+  // Calculadas pelo mesmo JOIN sismat."SiafiPagamento" × Demanda das séries de valor.
+  valorPorRegiao: Array<{ regiao: string | null; valor: number }>;
+  valorPorUF:     Array<{ uf: string | null; valor: number }>;    // top 15
+  valorPorTrf:    Array<{ trf: number | null; valor: number }>;
+  valorPorStatus: Array<{ status: string | null; valor: number }>;
+
   // ── Operacional ─────────────────────────────────────────────────────────────
   topResponsaveis:              Array<{ id: string; name: string | null; count: number }>;
   formaCumprimentoDistribution: Array<{ forma: string | null; count: number }>;
   areaFinalisticaDistribution:  Array<{ area: string | null; count: number }>;
+  // ── Filtro por CATMAT / registro ANVISA ──────────────────────────────────────
+  // A Demanda não guarda o código: ele é traduzido para substância(s) em
+  // lib/demandas-catmat.ts. `null` quando não houve filtro por código; quando
+  // houve e o código não resolveu, `encontrado` é false e as métricas vêm
+  // zeradas — a tela mostra o motivo em vez de gráficos vazios sem explicação.
+  filtroCatmat: FiltroCatmat | null;
 }
 
 export interface MetricsFilterInput {
@@ -54,6 +73,9 @@ export interface MetricsFilterInput {
   prioridade?:     string;
   principioAtivo?: string;
   organizacaoId?:  string;
+  eixoDataValor?:  "pagamento" | "processo";
+  /** CATMAT (até 6 dígitos) ou registro ANVISA (13) — mesmo filtro da lista. */
+  catmat?:         string;
 }
 
 // Status considerados "resolvidos"
@@ -81,7 +103,48 @@ const FLUXO_DJUD: Record<string, number> = {
 };
 const ordemFluxo = (status: string) => FLUXO_DJUD[status] ?? 999;
 
+
+/** Painel zerado — usado quando o código pesquisado não existe no catálogo. */
+function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
+  return {
+    totalDemandas: 0,
+    demandasAtivas: 0,
+    demandasCriticas: 0,
+    taxaResolucao: 0,
+    totalValorEstimado: 0,
+    demandasComValor: 0,
+    topMedicamentosDistribution: [],
+    areaTematicaDistribution: [],
+    objetoAcaoDistribution: [],
+    fornecedorDistribution: [],
+    demandasTimeline: [],
+    tribunalTimeline: [],
+    valorTimeline: [],
+    valorTribunalTimeline: [],
+    topMedicamentosValor: [],
+    statusDistribution: [],
+    prioridadeDistribution: [],
+    regiaoBrasilDistribution: [],
+    trfRegiaoDistribution: [],
+    ufResidenciaDistribution: [],
+    topResponsaveis: [],
+    formaCumprimentoDistribution: [],
+    areaFinalisticaDistribution: [],
+    valorPorRegiao: [],
+    valorPorUF: [],
+    valorPorTrf: [],
+    valorPorStatus: [],
+    filtroCatmat,
+  };
+}
+
 export async function getMetricsData(filters: MetricsFilterInput): Promise<MetricsData> {
+  // Filtro por código: resolvido antes de tudo, para devolver o motivo quando
+  // não há como filtrar em vez de um painel vazio sem explicação.
+  const codigo = filters.catmat?.trim() ?? "";
+  const filtroCatmat = codigo ? await resolverFiltroCatmat(codigo) : null;
+  if (filtroCatmat && !filtroCatmat.encontrado) return metricsVazio(filtroCatmat);
+
   // WHERE clause Prisma ORM
   const where: Prisma.DemandaWhereInput = {};
 
@@ -95,9 +158,11 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   if (filters.principioAtivo)
     where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
   if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
+  if (filtroCatmat) where.AND = [whereDemandaPorCatmat(filtroCatmat)];
 
   // WHERE clause para raw SQL
   const sqlConditions: Prisma.Sql[] = [];
+  if (filtroCatmat) sqlConditions.push(sqlDemandaPorCatmat(filtroCatmat));
   if (filters.startDate)     sqlConditions.push(Prisma.sql`"criadoEm" >= ${filters.startDate}`);
   if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
   if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
@@ -112,11 +177,29 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   // WHERE específicos para as novas séries.
   // TRF válido = 1..6 (TRF1 a TRF6); valores fora disso são erros de digitação na base.
   const condTrfValido = Prisma.sql`"trfRegiao" BETWEEN 1 AND 6`;
-  const condComValor  = Prisma.sql`"valorEstimado" IS NOT NULL`;
-  const whereTribunal       = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condTrfValido], " AND ")}`;
-  const whereValor          = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condComValor], " AND ")}`;
-  const whereValorTribunal  = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condComValor, condTrfValido], " AND ")}`;
-  const whereFornecedor     = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, Prisma.sql`"fornecedor" IS NOT NULL`], " AND ")}`;
+  const whereTribunal = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condTrfValido], " AND ")}`;
+  const whereFornecedor = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, Prisma.sql`"fornecedor" IS NOT NULL`], " AND ")}`;
+
+  // Condições com alias "d." para queries com JOIN sismat."SiafiPagamento"
+  const sqlConditionsD: Prisma.Sql[] = [Prisma.sql`d."deletedAt" IS NULL`];
+  if (filters.startDate)     sqlConditionsD.push(Prisma.sql`d."criadoEm" >= ${filters.startDate}`);
+  if (filters.endDate)       sqlConditionsD.push(Prisma.sql`d."criadoEm" <= ${filters.endDate}`);
+  if (filters.status)        sqlConditionsD.push(Prisma.sql`d.status = ${filters.status}`);
+  if (filters.prioridade)    sqlConditionsD.push(Prisma.sql`d.prioridade = ${filters.prioridade}`);
+  if (filters.principioAtivo)
+    sqlConditionsD.push(Prisma.sql`d."principioAtivo" ILIKE ${"%%" + filters.principioAtivo + "%%"}`);
+  if (filters.organizacaoId) sqlConditionsD.push(Prisma.sql`d."organizacaoId" = ${filters.organizacaoId}`);
+
+  // JOIN SIAFI — cruza pelo nº do processo (dígitos puros)
+  const SIAFI_JOIN = Prisma.sql`
+    JOIN sismat."SiafiPagamento" p
+      ON p."numeroProcesso" = regexp_replace(COALESCE(d."numeroProcesso", ''), '\\D', '', 'g')
+  `;
+  const whereSiafiBase = Prisma.sql`WHERE ${Prisma.join(sqlConditionsD, " AND ")}`;
+  const whereSiafiTribunal = Prisma.sql`WHERE ${Prisma.join(
+    [...sqlConditionsD, Prisma.sql`d."trfRegiao" BETWEEN 1 AND 6`],
+    " AND "
+  )}`;
 
   // ── Todas as queries em paralelo — ZERO findMany ────────────────────────────
   const [
@@ -124,7 +207,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     resolvedCount,
     ativasCount,
     criticasCount,
-    totalValueAgg,
+    totalValueRows,
     timelineRaw,
     statusCounts,
     prioridadeCounts,
@@ -141,6 +224,11 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     valorTimelineRaw,
     valorTribunalTimelineRaw,
     topMedicamentosValorRaw,
+    demandasComValorRows,
+    valorPorRegiaoRaw,
+    valorPorUFRaw,
+    valorPorTrfRaw,
+    valorPorStatusRaw,
   ] = await Promise.all([
     // Total de processos
     db.demanda.count({ where }),
@@ -154,8 +242,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Demandas críticas (risco elevado)
     db.demanda.count({ where: { ...where, prioridade: { in: PRIORIDADES_RISCO } } }),
 
-    // Valor estimado total
-    db.demanda.aggregate({ where, _sum: { valorEstimado: true } }),
+    // Valor pago total — via SIAFI (soma dos Valores OB por processo)
+    db.$queryRaw<Array<{ valor: number }>>`
+      SELECT COALESCE(SUM(p."valorOB"), 0)::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+    `,
 
     // Série histórica mensal — raw SQL (DATE_TRUNC)
     db.$queryRaw<Array<{ month: Date; count: bigint }>>`
@@ -258,34 +351,114 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       ORDER BY mes ASC
     `,
 
-    // ── NOVO (item 2): Série mensal de VALOR total (R$) ───────────────────────
-    db.$queryRaw<Array<{ mes: Date; valor: number }>>`
-      SELECT DATE_TRUNC('month', "criadoEm") AS mes, SUM("valorEstimado")::float8 AS valor
-      FROM "Demanda"
-      ${whereValor}
-      GROUP BY DATE_TRUNC('month', "criadoEm")
-      ORDER BY mes ASC
-    `,
+    // ── NOVO (item 2): Série mensal de VALOR pago (Dt Pagto SIAFI) ─────────────
+    (() => {
+      if (filters.eixoDataValor === "processo") {
+        return db.$queryRaw<Array<{ mes: Date; valor: number }>>`
+          SELECT DATE_TRUNC('month', d."criadoEm") AS mes, SUM(p."valorOB")::float8 AS valor
+          FROM "Demanda" d
+          ${SIAFI_JOIN}
+          ${whereSiafiBase}
+          GROUP BY DATE_TRUNC('month', d."criadoEm")
+          ORDER BY mes ASC
+        `;
+      }
+      return db.$queryRaw<Array<{ mes: Date; valor: number }>>`
+        SELECT DATE_TRUNC('month', p."dtPagtoSiafi") AS mes, SUM(p."valorOB")::float8 AS valor
+        FROM "Demanda" d
+        ${SIAFI_JOIN}
+        ${whereSiafiBase}
+          AND p."dtPagtoSiafi" IS NOT NULL
+        GROUP BY DATE_TRUNC('month', p."dtPagtoSiafi")
+        ORDER BY mes ASC
+      `;
+    })(),
 
-    // ── NOVO (item 2): Série mensal de VALOR decomposta por Tribunal ──────────
-    // Ficará vazio enquanto as demandas com valor não tiverem trfRegiao na base.
-    db.$queryRaw<Array<{ mes: Date; trf: number | null; valor: number }>>`
-      SELECT DATE_TRUNC('month', "criadoEm") AS mes, "trfRegiao" AS trf, SUM("valorEstimado")::float8 AS valor
-      FROM "Demanda"
-      ${whereValorTribunal}
-      GROUP BY DATE_TRUNC('month', "criadoEm"), "trfRegiao"
-      ORDER BY mes ASC
-    `,
+    // ── NOVO (item 2): Série mensal de VALOR pago decomposta por Tribunal ────────
+    (() => {
+      if (filters.eixoDataValor === "processo") {
+        return db.$queryRaw<Array<{ mes: Date; trf: number | null; valor: number }>>`
+          SELECT DATE_TRUNC('month', d."criadoEm") AS mes, d."trfRegiao" AS trf, SUM(p."valorOB")::float8 AS valor
+          FROM "Demanda" d
+          ${SIAFI_JOIN}
+          ${whereSiafiTribunal}
+          GROUP BY DATE_TRUNC('month', d."criadoEm"), d."trfRegiao"
+          ORDER BY mes ASC
+        `;
+      }
+      return db.$queryRaw<Array<{ mes: Date; trf: number | null; valor: number }>>`
+        SELECT DATE_TRUNC('month', p."dtPagtoSiafi") AS mes, d."trfRegiao" AS trf, SUM(p."valorOB")::float8 AS valor
+        FROM "Demanda" d
+        ${SIAFI_JOIN}
+        ${whereSiafiTribunal}
+          AND p."dtPagtoSiafi" IS NOT NULL
+        GROUP BY DATE_TRUNC('month', p."dtPagtoSiafi"), d."trfRegiao"
+        ORDER BY mes ASC
+      `;
+    })(),
 
-    // ── NOVO (item 3.1): Top 15 Princípios Ativos por VALOR total (R$) ────────
+    // ── NOVO (item 3.1): Top 15 Princípios Ativos por VALOR pago (SIAFI) ────────
     db.$queryRaw<Array<{ medicamento: string | null; valor: number }>>`
-      SELECT "principioAtivo" AS medicamento, SUM("valorEstimado")::float8 AS valor
-      FROM "Demanda"
-      ${whereValor}
-      AND "principioAtivo" IS NOT NULL
-      GROUP BY "principioAtivo"
+      SELECT d."principioAtivo" AS medicamento, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."principioAtivo" IS NOT NULL
+      GROUP BY d."principioAtivo"
       ORDER BY valor DESC
       LIMIT 15
+    `,
+
+    // ── Processos com ao menos um pagamento SIAFI registrado (cobertura) ────────
+    db.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(DISTINCT d.id)::bigint AS count
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+    `,
+
+    // ── Valor pago por região do Brasil ────────────────────────────────────────
+    db.$queryRaw<Array<{ regiao: string | null; valor: number }>>`
+      SELECT d."regiaoBrasil" AS regiao, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."regiaoBrasil" IS NOT NULL
+      GROUP BY d."regiaoBrasil"
+      ORDER BY valor DESC
+    `,
+
+    // ── Valor pago por UF de residência (top 15) ────────────────────────────────
+    db.$queryRaw<Array<{ uf: string | null; valor: number }>>`
+      SELECT d."ufResidencia" AS uf, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."ufResidencia" IS NOT NULL
+      GROUP BY d."ufResidencia"
+      ORDER BY valor DESC
+      LIMIT 15
+    `,
+
+    // ── Valor pago por TRF Região ────────────────────────────────────────────────
+    db.$queryRaw<Array<{ trf: number | null; valor: number }>>`
+      SELECT d."trfRegiao" AS trf, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+        AND d."trfRegiao" BETWEEN 1 AND 6
+      GROUP BY d."trfRegiao"
+      ORDER BY valor DESC
+    `,
+
+    // ── Valor pago por status do processo ────────────────────────────────────────
+    db.$queryRaw<Array<{ status: string | null; valor: number }>>`
+      SELECT d.status, SUM(p."valorOB")::float8 AS valor
+      FROM "Demanda" d
+      ${SIAFI_JOIN}
+      ${whereSiafiBase}
+      GROUP BY d.status
+      ORDER BY valor DESC
     `,
   ]);
 
@@ -322,7 +495,8 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
   }
 
   const totalDemandas      = totalCount;
-  const totalValorEstimado = totalValueAgg._sum.valorEstimado?.toNumber() ?? 0;
+  const totalValorEstimado = (totalValueRows[0]?.valor as number | null | undefined) ?? 0;
+  const demandasComValor   = Number(demandasComValorRows[0]?.count ?? 0);
   const taxaResolucao      = totalDemandas > 0 ? (resolvedCount / totalDemandas) * 100 : 0;
 
   return {
@@ -332,6 +506,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     demandasCriticas:   criticasCount,
     taxaResolucao:      Math.round(taxaResolucao * 100) / 100,
     totalValorEstimado,
+    demandasComValor,
 
     // Dimensionamento
     topMedicamentosDistribution: topMedicamentosCounts.map((item) => ({
@@ -416,5 +591,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       area:  item.areaFinalisticaMs,
       count: item._count.id,
     })),
+
+    // Distribuições de valor SIAFI
+    valorPorRegiao: valorPorRegiaoRaw.map((r) => ({ regiao: r.regiao, valor: Number(r.valor) || 0 })),
+    valorPorUF:     valorPorUFRaw.map((r)     => ({ uf: r.uf,         valor: Number(r.valor) || 0 })),
+    valorPorTrf:    valorPorTrfRaw.map((r)    => ({ trf: r.trf,       valor: Number(r.valor) || 0 })),
+    valorPorStatus: valorPorStatusRaw.map((r) => ({ status: r.status, valor: Number(r.valor) || 0 })),
+
+    filtroCatmat,
   };
 }

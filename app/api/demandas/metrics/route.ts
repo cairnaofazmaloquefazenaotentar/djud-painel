@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
       prioridade:    searchParams.get("prioridade")    ?? undefined,
       principioAtivo: searchParams.get("principioAtivo") ?? undefined,
       organizacaoId: searchParams.get("organizacaoId") ?? undefined,
+      catmat:        searchParams.get("catmat")         ?? undefined,
+      eixoDataValor: (searchParams.get("eixoDataValor") as "pagamento" | "processo" | null) ?? undefined,
     });
 
     // Convert date strings to Date objects
@@ -33,6 +35,8 @@ export async function GET(request: NextRequest) {
       prioridade: filters.prioridade,
       principioAtivo: filters.principioAtivo,
       organizacaoId: filters.organizacaoId,
+      catmat: filters.catmat,
+      eixoDataValor: filters.eixoDataValor,
     };
 
     return jsonComVersao(request, ["demanda"], () => getMetricsData(metricsFilters));

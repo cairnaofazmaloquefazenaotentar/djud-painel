@@ -13,13 +13,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const perRaw = request.nextUrl.searchParams.get("period") ?? "monthly";
+    const sp = request.nextUrl.searchParams;
+    const perRaw = sp.get("period") ?? "monthly";
     const period: SismatPeriodo = (SISMAT_PERIODOS as readonly string[]).includes(perRaw)
       ? (perRaw as SismatPeriodo)
       : "monthly";
 
+    const materialNome = sp.get("materialNome") ?? undefined;
+
     return jsonComVersao(request, ["sismatEntrada", "sismatSaida"], () =>
-      getSismatEstoqueMetrics(period)
+      getSismatEstoqueMetrics(period, materialNome)
     );
   } catch (error) {
     console.error("[sismat/estoque] Erro:", error);

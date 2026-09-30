@@ -2,12 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { SismatSaidasIndicadores } from "@/lib/sismat-saidas-indicadores";
+import { apiPath } from "@/lib/url";
 
 export function useSismatSaidasIndicadores() {
   return useQuery<SismatSaidasIndicadores>({
     queryKey: ["sismat-saidas-indicadores"],
     queryFn: async () => {
-      const res = await fetch("/api/sismat/saidas/indicadores");
+      const res = await fetch(apiPath("/api/sismat/saidas/indicadores"));
       if (!res.ok) throw new Error("Erro ao carregar indicadores de saídas SISMAT");
       return res.json();
     },

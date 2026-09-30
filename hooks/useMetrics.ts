@@ -11,7 +11,26 @@ interface UseMetricsOptions {
   prioridade?: string;
   principioAtivo?: string;
   organizacaoId?: string;
+  /** CATMAT (até 6 dígitos) ou registro ANVISA (13). */
+  catmat?: string;
+  eixoDataValor?: "pagamento" | "processo";
 }
+
+/** Query string comum ao painel e às exportações — mesma leitura, mesmo recorte. */
+export function paramsDeMetrics(options: UseMetricsOptions): URLSearchParams {
+  const params = new URLSearchParams();
+  if (options.startDate) params.append("startDate", options.startDate.toISOString());
+  if (options.endDate) params.append("endDate", options.endDate.toISOString());
+  if (options.status) params.append("status", options.status);
+  if (options.prioridade) params.append("prioridade", options.prioridade);
+  if (options.principioAtivo) params.append("principioAtivo", options.principioAtivo);
+  if (options.organizacaoId) params.append("organizacaoId", options.organizacaoId);
+  if (options.catmat) params.append("catmat", options.catmat);
+  if (options.eixoDataValor) params.append("eixoDataValor", options.eixoDataValor);
+  return params;
+}
+
+export type { UseMetricsOptions };
 
 export function useMetrics(options: UseMetricsOptions = {}) {
   // Create stable cache key from normalized options
@@ -24,32 +43,15 @@ export function useMetrics(options: UseMetricsOptions = {}) {
       prioridade: options.prioridade,
       principioAtivo: options.principioAtivo,
       organizacaoId: options.organizacaoId,
+      catmat: options.catmat,
+      eixoDataValor: options.eixoDataValor,
     },
   ];
 
   const query = useQuery<MetricsData>({
     queryKey,
     queryFn: async () => {
-      const params = new URLSearchParams();
-
-      if (options.startDate) {
-        params.append("startDate", options.startDate.toISOString());
-      }
-      if (options.endDate) {
-        params.append("endDate", options.endDate.toISOString());
-      }
-      if (options.status) {
-        params.append("status", options.status);
-      }
-      if (options.prioridade) {
-        params.append("prioridade", options.prioridade);
-      }
-      if (options.principioAtivo) {
-        params.append("principioAtivo", options.principioAtivo);
-      }
-      if (options.organizacaoId) {
-        params.append("organizacaoId", options.organizacaoId);
-      }
+      const params = paramsDeMetrics(options);
 
       const response = await fetch(apiPath(`/api/demandas/metrics?${params.toString()}`));
 

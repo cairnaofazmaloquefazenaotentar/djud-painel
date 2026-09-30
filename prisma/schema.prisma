@@ -29,6 +29,7 @@ model User {
   demandasAtualizadas     Demanda[]  @relation("DemandaAtualizadoPor")
   attachments             Attachment[] @relation("UserAttachments")
   relatoriosGerados       RelatorioGerado[]
+  cestaItens              CestaItem[]
   createdAt               DateTime   @default(now())
   updatedAt               DateTime   @updatedAt
 
@@ -306,6 +307,7 @@ model SismatEntrada {
   @@index([materialNome])
   @@index([tipoMovimentacao])
   @@index([dtRecebimento])
+  @@index([material])
   @@schema("sismat")
 }
 
@@ -594,4 +596,172 @@ model RelatorioGerado {
   @@index([tipo])
   @@index([criadoEm])
   @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pesquisa de Preços — catálogo CATMAT e registros ANVISA (CMED)
+//
+// CatmatItem: catálogo de materiais das 16 classes da saúde (planilha
+// "Catmats - 16 Classes - DD.MM.AAAA.xlsx", ~133 mil itens). Alimenta os filtros
+// obrigatórios "Código do material" e "Descrição CATMAT" da pesquisa de preços.
+// O código (até 6 dígitos, sem zeros à esquerda) é a chave de cruzamento com
+// PrecoBps/PrecoSiasg ("BR0" + código) e PrecoPncp (código puro).
+//
+// CmedRegistro: registro ANVISA → CATMAT, unidade de fornecimento e quantidade
+// por embalagem (planilha "CMED - grande.padrão", ~51 mil registros). Cruza com
+// PrecoCmed pelo registro (13 dígitos): o preço da CMED é por EMBALAGEM e a
+// pesquisa o divide por qtEmbalagem para refletir a menor unidade de
+// fornecimento. Registros sem CATMAT ("Não tem"/"Fora"/vazio) ficam com
+// catmat = null e só têm preço CMED.
+//
+// Ambas são recarregadas (REPLACE) por scripts/import_catmat_classes.py e
+// scripts/import_cmed_registros.py, que também criam as tabelas se ausentes
+// (DDL idêntica à que `prisma db push` geraria a partir destes modelos).
+// ─────────────────────────────────────────────────────────────────────────────
+model CatmatItem {
+  codigoItem    String   @id            // CATMAT (código do item, até 6 dígitos)
+  descricaoItem String   @db.Text       // Descrição completa do item
+  descricaoNorm String   @db.Text       // Descrição sem acento/minúscula p/ busca (normalizarTexto)
+  codigoPdm     String                  // Padrão Descritivo de Material (ex.: "8811")
+  nomePdm       String                  // Nome do PDM (ex.: "AZITROMICINA") — exibição/agrupamento
+  codigoClasse  String                  // Classe (ex.: "6505")
+  nomeClasse    String                  // Ex.: "DROGAS E MEDICAMENTOS"
+  codigoGrupo   String                  // Grupo (ex.: "65")
+  nomeGrupo     String
+  codigoNcm     String?
+  criadoEm      DateTime @default(now())
+
+  @@index([codigoClasse])
+  @@index([nomePdm])
+  @@schema("public")
+}
+
+model CmedRegistro {
+  registro            String   @id      // Registro ANVISA (13 dígitos) — chave com PrecoCmed.registro
+  catmat              String?           // CATMAT (até 6 dígitos); null = "Não tem"/"Fora"/vazio
+  descricaoCatmat     String?  @db.Text // Descrição CATMAT conforme a planilha CMED
+  unidadeFornecimento String?           // Ex.: "COMPRIMIDO", "FRASCO 100,00 ML"
+  unidadeNorm         String?           // Unidade normalizada (normalizarUnidade) — filtro da pesquisa
+  qtEmbalagem         Int?              // Qt_Embal: unidades de fornecimento por embalagem (divisor do preço CMED)
+  generico            Boolean?          // Coluna "Gen."
+  icms                Boolean?          // Coluna "ICMS"
+  substancia          String?
+  produto             String?
+  apresentacao        String?
+  cnpj                String?
+  fabricante          String?
+  criadoEm            DateTime @default(now())
+
+  @@index([catmat])
+  @@index([unidadeNorm])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cesta de itens da Pesquisa de Preços
+//
+// Carrinho por usuário: cada linha é um item já pesquisado (código + unidade de
+// fornecimento + UF) que o usuário guardou para compor um relatório único com
+// vários itens. Fica no banco (e não em localStorage) para persistir entre
+// sessões e dispositivos — o usuário desloga, loga de novo e a cesta continua
+// lá até que ele gere o relatório e opte por esvaziá-la.
+//
+// Os campos de preço são um SNAPSHOT do momento em que o item foi adicionado,
+// usados apenas para exibir o total estimado na cesta. O relatório consolidado
+// (app/api/relatorios/cesta) refaz a pesquisa item a item na data de emissão —
+// é esse recálculo que vale para instruir o processo.
+//
+// A tabela é criada por scripts/create_cesta_table.py (mesma DDL que o
+// `prisma db push` geraria a partir deste modelo).
+// ─────────────────────────────────────────────────────────────────────────────
+model CestaItem {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codigo          String                // CATMAT (até 6 dígitos) ou registro ANVISA (13)
+  tipo            String                // CATMAT | REGISTRO
+  catmat          String?               // CATMAT resolvido (exibição)
+  descricao       String   @db.Text
+  unidade         String                // Unidade de fornecimento normalizada
+  uf              String?               // Filtro de UF da pesquisa; null = todas
+  quantidade      Int      @default(1)  // Quantidade demandada — compõe o valor total
+  observacao      String?  @db.Text
+  precoReferencia Float?                // Snapshot: mediana das medianas (BPS/SIASG/PNCP)
+  limitePmvg      Float?                // Snapshot: teto PMVG unitário (CMED ÷ Qt_Embal)
+  precoFinal      Float?                // Snapshot: preço unitário sugerido
+  // Registros desconsiderados com justificativa (ExclusaoRegistro[] de
+  // lib/pesquisa-preco-curadoria.ts). Fica no item porque a curadoria é do
+  // item: o relatório da cesta refaz a pesquisa e reaplica estas exclusões.
+  exclusoes       Json?
+  calculadoEm     DateTime @default(now())
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+  orcamentos      CestaOrcamento[]
+
+  @@index([userId])
+  @@index([userId, codigo, unidade])
+  @@schema("public")
+}
+
+// Orçamento apresentado diretamente por fornecedor (IN 65/2021, art. 5º, IV).
+// Fonte de preço adicional do item, indispensável em medicamentos importados,
+// em que nem sempre há contratação pública comparável nas bases oficiais.
+model CestaOrcamento {
+  id                  String    @id @default(cuid())
+  cestaItemId         String
+  cestaItem           CestaItem @relation(fields: [cestaItemId], references: [id], onDelete: Cascade)
+  fornecedor          String                 // Empresa que apresentou a proposta
+  cnpj                String?
+  marca               String?                // Marca do produto ofertado
+  fabricante          String?                // Fabricante do produto ofertado
+  valorUnitario       Float                  // Por unidade de fornecimento da pesquisa
+  dataOrcamento       DateTime
+  validade            DateTime?
+  documento           String?                // Nº da proposta / e-mail / SEI
+  observacao          String?   @db.Text
+  considerarNoCalculo Boolean   @default(true) // false = só registro no relatório
+  criadoEm            DateTime  @default(now())
+  atualizadoEm        DateTime  @updatedAt
+
+  @@index([cestaItemId])
+  @@schema("public")
+}
+
+// SIAFI — pagamentos realizados via Ordem Bancária (OB) para autores de ações
+// judiciais, importados do Excel de pagamentos SIAFI fornecido pelo DJUD.
+// Chave de cruzamento com Redmine: regexp_replace(d."numeroProcesso", '\D', '', 'g')
+// = p."numeroProcesso" (campo já gravado com dígitos puros).
+// Um processo pode ter MÚLTIPLOS pagamentos (várias linhas por nº judicial).
+// ─────────────────────────────────────────────────────────────────────────────
+model SiafiPagamento {
+  id               String    @id @default(cuid())
+
+  // Chave de cruzamento — dígitos puros do "Nº Processo Judicial"
+  numeroProcesso   String
+
+  // Valores financeiros
+  valorOB          Decimal             // "Valor OB" — valor pago ao autor
+  valorProcesso    Decimal?            // "Valor Processo" — valor total do processo (opcional)
+
+  // Data do pagamento
+  dtPagtoSiafi     DateTime?           // "Dt Pagto SIAFI"
+
+  // Campos contextuais
+  ano              String?             // "Ano"
+  nomeAutor        String?             // "Nome Pessoa (Autor)"
+  nrOB             String?             // "Nº OB"
+  tipoTransferencia String?            // "Tipo de Transferência"
+  assuntoGeral     String?             // "Assunto Geral"
+  uf               String?             // "UF"
+  municipio        String?             // "Município"
+  varaExecucao     String?             // "Vara Execução"
+  trf              String?             // "TRFs"
+  observacao       String?   @db.Text  // "Observação"
+
+  criadoEm         DateTime  @default(now())
+
+  @@index([numeroProcesso])
+  @@index([dtPagtoSiafi])
+  @@index([ano])
+  @@schema("sismat")
 }

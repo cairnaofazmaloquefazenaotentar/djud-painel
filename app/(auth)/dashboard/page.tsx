@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusChart } from "@/components/dashboard/charts/status-chart";
@@ -22,9 +23,13 @@ import { SismatSaidasPuraView } from "@/components/dashboard/sismat-saidas-pura-
 import { SismatEstoqueView } from "@/components/dashboard/sismat-estoque-view";
 import { SismatSaidasView } from "@/components/dashboard/sismat-saidas-view";
 import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-timeline-chart";
-import { useMetrics } from "@/hooks/useMetrics";
+import { RankingAnualChart } from "@/components/dashboard/charts/ranking-anual-chart";
+import { paramsDeMetrics, useMetrics } from "@/hooks/useMetrics";
+import { useRankingAnual } from "@/hooks/useRankingAnual";
+import type { DimensaoRanking } from "@/lib/metrics-ranking-anual";
 import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
+import { useFontes, fmtDataFonte } from "@/hooks/useFontes";
 import { Combobox } from "@/components/ui/combobox";
 import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
@@ -52,7 +57,13 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   ArrowLeftRight,
+  CalendarRange,
+  Download,
+  FileSpreadsheet,
+  Database,
+  ExternalLink,
 } from "lucide-react";
+import { apiPath } from "@/lib/url";
 
 // ─── Seção com título padronizado ────────────────────────────────────────────
 function Section({
@@ -102,8 +113,9 @@ const TENDENCIAS_TABS = [
 ] as const;
 
 const INDICADORES_TABS = [
-  { value: "principios-ativos",  label: "Princípios Ativos",     icon: <Pill className="h-3.5 w-3.5" /> },
-  { value: "indicadores-saidas", label: "Indicadores de Saídas", icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
+  { value: "principios-ativos",  label: "Princípios Ativos",       icon: <Pill className="h-3.5 w-3.5" /> },
+  { value: "ranking-anual",      label: "Ranking por Ano",         icon: <CalendarRange className="h-3.5 w-3.5" /> },
+  { value: "indicadores-saidas", label: "Indicadores de Saídas",   icon: <ArrowUpDown className="h-3.5 w-3.5" /> },
 ] as const;
 
 const INTERNOS_TABS = [
@@ -120,13 +132,95 @@ const TENDENCIAS_VALUES  = TENDENCIAS_TABS.map((t) => t.value)  as readonly stri
 const INDICADORES_VALUES = INDICADORES_TABS.map((t) => t.value) as readonly string[];
 
 // Abas que usam dados do Redmine (precisam dos filtros e métricas)
-const NEEDS_REDMINE = ["demandas", "valores", "autores", "principios-ativos", "servidores", "tramitacao"] as const;
+const NEEDS_REDMINE = [
+  "demandas", "valores", "autores", "principios-ativos", "ranking-anual", "servidores", "tramitacao",
+] as const;
 function needsRedmine(v: AnyTab): boolean { return (NEEDS_REDMINE as readonly string[]).includes(v); }
 
 function group(v: AnyTab): "tendencias" | "indicadores" | "internos" {
   if (TENDENCIAS_VALUES.includes(v))  return "tendencias";
   if (INDICADORES_VALUES.includes(v)) return "indicadores";
   return "internos";
+}
+
+// ─── Mapa de fontes por aba ────────────────────────────────────────────────────
+type FonteKey = "redmine" | "sismatEntradas" | "sismatSaidas" | "fns";
+
+const FONTES_POR_ABA: Record<AnyTab, FonteKey[]> = {
+  "demandas":          ["redmine"],
+  "valores":           ["redmine", "fns"],
+  "autores":           ["redmine"],
+  "entradas":          ["sismatEntradas"],
+  "saidas":            ["sismatSaidas"],
+  "entradas-saidas":   ["sismatEntradas", "sismatSaidas"],
+  "principios-ativos": ["redmine"],
+  "ranking-anual":     ["redmine"],
+  "indicadores-saidas":["redmine", "sismatSaidas"],
+  "servidores":        ["redmine"],
+  "tramitacao":        ["redmine"],
+};
+
+const FONTE_LABELS: Record<FonteKey, { nome: string; sistemaUrl?: string }> = {
+  redmine:        { nome: "Redmine" },
+  sismatEntradas: { nome: "SISMAT Entradas" },
+  sismatSaidas:   { nome: "SISMAT Saídas" },
+  fns:            { nome: "FNS", sistemaUrl: "https://investsuspaineis.saude.gov.br/extensions/CGIN_PGTO_JUDICIAIS/CGIN_PGTO_JUDICIAIS.html" },
+};
+
+// ─── Barra de fontes da aba ativa ─────────────────────────────────────────────
+function FontesBar({ tab }: { tab: AnyTab }) {
+  const { data: fontes, isLoading } = useFontes();
+  const chaves = FONTES_POR_ABA[tab];
+
+  return (
+    <div className="flex items-center justify-between gap-4 flex-wrap">
+      {/* Fontes à esquerda */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground flex items-center gap-1">
+          <Database className="h-3 w-3" />
+          Fonte{chaves.length > 1 ? "s" : ""}:
+        </span>
+        {chaves.map((k) => {
+          const meta = FONTE_LABELS[k];
+          const data = fmtDataFonte(fontes?.[k]);
+          return (
+            <span
+              key={k}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs"
+            >
+              {meta.sistemaUrl ? (
+                <a
+                  href={meta.sistemaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-0.5"
+                >
+                  {meta.nome}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              ) : (
+                <span className="font-medium">{meta.nome}</span>
+              )}
+              {isLoading ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
+              ) : (
+                <span className="text-muted-foreground">· {data}</span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Link para página de fontes à direita */}
+      <Link
+        href="/fontes"
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+      >
+        <Database className="h-3 w-3" />
+        Ver todas as fontes
+      </Link>
+    </div>
+  );
 }
 
 // ─── Botão de sub-aba ─────────────────────────────────────────────────────────
@@ -158,9 +252,22 @@ export default function DashboardPage() {
   const [filterPrioridade,     setFilterPrioridade]     = useState("");
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
+  const [catmatInput, setCatmatInput] = useState("");
+  const [catmat,      setCatmat]      = useState("");
+  const [eixoDataValor, setEixoDataValor] = useState<"pagamento" | "processo">("pagamento");
+  useEffect(() => {
+    const t = setTimeout(() => setCatmat(catmatInput.replace(/[^\d.\-]/g, "").trim()), 450);
+    return () => clearTimeout(t);
+  }, [catmatInput]);
+
+  const [dimensaoRanking, setDimensaoRanking] = useState<DimensaoRanking>("medicamento");
+  const [exportando, setExportando] = useState<"csv" | "html" | null>(null);
+
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
   const principioOptions = (principios ?? []).map((p) => ({ value: p.value, count: p.count }));
-  const hasActiveFilters = !!(startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo);
+  const hasActiveFilters = !!(
+    startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo || catmatInput
+  );
 
   const metricsFilters = {
     startDate:      startDate      ? new Date(startDate)  : undefined,
@@ -168,17 +275,59 @@ export default function DashboardPage() {
     status:         filterStatus      || undefined,
     prioridade:     filterPrioridade  || undefined,
     principioAtivo: filterPrincipioAtivo || undefined,
+    catmat:         catmat || undefined,
   };
 
-  const { data: metrics, isLoading, error } = useMetrics(metricsFilters);
+  const { data: metrics, isLoading, error } = useMetrics({ ...metricsFilters, eixoDataValor });
   const { data: autoresData, isLoading: autoresLoading } = useAutoresMetrics({
     startDate: metricsFilters.startDate,
     endDate:   metricsFilters.endDate,
   });
+  const { data: rankingAnual, isLoading: rankingLoading } = useRankingAnual(
+    metricsFilters,
+    activeTab === "ranking-anual"
+  );
 
   const handleReset = () => {
     setStartDate(""); setEndDate(""); setFilterStatus("");
     setFilterPrioridade(""); setFilterPrincipioAtivo("");
+    setCatmatInput(""); setCatmat("");
+  };
+
+  const exportar = async (formato: "csv" | "html") => {
+    setExportando(formato);
+    const janela = formato === "html" ? window.open("", "_blank") : null;
+    try {
+      const params = paramsDeMetrics(metricsFilters);
+      params.set("format", formato);
+      if (activeTab === "ranking-anual") params.set("rankingAnual", "1");
+      const res = await fetch(apiPath(`/api/demandas/metrics/export?${params.toString()}`));
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        janela?.close();
+        throw new Error(d.error || "Erro ao exportar o painel");
+      }
+      if (formato === "html") {
+        const html = await res.text();
+        if (janela) {
+          janela.document.open();
+          janela.document.write(html);
+          janela.document.close();
+        }
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `painel_djud_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao exportar o painel");
+    } finally {
+      setExportando(null);
+    }
   };
 
   return (
@@ -264,10 +413,13 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Barra de fontes da aba ativa ──────────────────────────────────── */}
+      <FontesBar tab={activeTab} />
+
       {/* ── Conteúdo: componentes de estoque sem filtros ────────────────── */}
-      {activeTab === "entradas"          && <SismatEntradasView />}
-      {activeTab === "saidas"            && <SismatSaidasPuraView />}
-      {activeTab === "entradas-saidas"   && <SismatEstoqueView />}
+      {activeTab === "entradas"           && <SismatEntradasView />}
+      {activeTab === "saidas"             && <SismatSaidasPuraView />}
+      {activeTab === "entradas-saidas"    && <SismatEstoqueView />}
       {activeTab === "indicadores-saidas" && <SismatSaidasView />}
 
       {/* ── Conteúdo: abas que usam dados do Redmine ─────────────────── */}
@@ -318,13 +470,87 @@ export default function DashboardPage() {
                     className="w-64"
                   />
                 </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">CATMAT / Registro ANVISA</Label>
+                  <Input
+                    inputMode="numeric"
+                    placeholder="Ex.: 267140"
+                    value={catmatInput}
+                    onChange={(e) => setCatmatInput(e.target.value)}
+                    className="w-44"
+                  />
+                </div>
                 {hasActiveFilters && (
                   <Button variant="outline" size="sm" onClick={handleReset} className="self-end">
                     <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
                     Limpar
                   </Button>
                 )}
+                {/* Exportação do que está na tela, com os mesmos filtros. */}
+                <div className="ml-auto flex items-end gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportando !== null}
+                    onClick={() => exportar("csv")}
+                  >
+                    {exportando === "csv" ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <FileSpreadsheet className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Planilha (CSV)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportando !== null}
+                    onClick={() => exportar("html")}
+                  >
+                    {exportando === "html" ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <Download className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Relatório (PDF)
+                  </Button>
+                </div>
               </div>
+
+              {/* Tradução do código CATMAT */}
+              {catmat && metrics?.filtroCatmat && (
+                <div
+                  className={`rounded-lg border p-3 text-xs ${
+                    metrics.filtroCatmat.encontrado
+                      ? "bg-muted/40"
+                      : "border-amber-500/50 bg-amber-500/10"
+                  }`}
+                >
+                  {metrics.filtroCatmat.encontrado ? (
+                    <>
+                      <span className="font-medium">
+                        {metrics.filtroCatmat.tipo === "REGISTRO"
+                          ? `Registro ANVISA ${metrics.filtroCatmat.registro}`
+                          : `CATMAT ${metrics.filtroCatmat.catmat}`}
+                      </span>
+                      {metrics.filtroCatmat.descricao && (
+                        <span className="text-muted-foreground"> — {metrics.filtroCatmat.descricao}</span>
+                      )}
+                      <p className="mt-1 text-muted-foreground">
+                        A demanda não guarda o código: o painel está filtrando pelas substâncias{" "}
+                        <strong>
+                          {metrics.filtroCatmat.grupos.map((g) => g.rotulo).join(" · ")}
+                        </strong>{" "}
+                        no princípio ativo, no título e na descrição.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-amber-700 dark:text-amber-400">
+                      {metrics.filtroCatmat.motivo}
+                    </p>
+                  )}
+                </div>
+              )}
 
               {/* Erro */}
               {error && (
@@ -352,12 +578,37 @@ export default function DashboardPage() {
               {/* Conteúdo */}
               {!isLoading && metrics && (
                 <div className="space-y-6">
-                  {/* Indicadores */}
+                  {/* Indicadores — KPIs variam conforme a aba ativa */}
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <MetricCard label="Total de Processos" value={metrics.totalDemandas.toLocaleString("pt-BR")} icon={<FileText className="h-5 w-5" />} />
-                    <MetricCard label="Passivo Ativo" value={metrics.demandasAtivas.toLocaleString("pt-BR")} icon={<Activity className="h-5 w-5" />} description="Processos não concluídos" />
-                    <MetricCard label="Demandas Críticas" value={metrics.demandasCriticas.toLocaleString("pt-BR")} icon={<AlertTriangle className="h-5 w-5" />} description="Prioridade Alta ou Crítica" />
-                    <MetricCard label="Taxa de Resolução" value={`${metrics.taxaResolucao.toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} description="Processos finalizados" />
+                    {activeTab === "valores" ? (
+                      <>
+                        <MetricCard
+                          label="Valor Total (SIAFI)"
+                          value={fmtBRLCompacto(metrics.totalValorEstimado)}
+                          icon={<Coins className="h-5 w-5" />}
+                          description="Soma dos pagamentos registrados no SIAFI"
+                        />
+                        <MetricCard
+                          label="Processos com Valor"
+                          value={metrics.demandasComValor.toLocaleString("pt-BR")}
+                          icon={<Hash className="h-5 w-5" />}
+                          description="Processos com pagamento SIAFI identificado"
+                        />
+                        <MetricCard
+                          label="Cobertura SIAFI"
+                          value={`${metrics.totalDemandas > 0 ? ((metrics.demandasComValor / metrics.totalDemandas) * 100).toFixed(1) : "0.0"}%`}
+                          icon={<TrendingUp className="h-5 w-5" />}
+                          description="Fração de processos com valor no SIAFI"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <MetricCard label="Passivo Ativo" value={metrics.demandasAtivas.toLocaleString("pt-BR")} icon={<Activity className="h-5 w-5" />} description="Processos não concluídos" />
+                        <MetricCard label="Demandas Críticas" value={metrics.demandasCriticas.toLocaleString("pt-BR")} icon={<AlertTriangle className="h-5 w-5" />} description="Prioridade Alta ou Crítica" />
+                        <MetricCard label="Taxa de Resolução" value={`${metrics.taxaResolucao.toFixed(1)}%`} icon={<TrendingUp className="h-5 w-5" />} description="Processos finalizados" />
+                      </>
+                    )}
                   </div>
 
                   {/* A.1) Contagem */}
@@ -390,6 +641,34 @@ export default function DashboardPage() {
                   {/* A.2) Valores */}
                   {activeTab === "valores" && (
                     <div className="space-y-6">
+                      {/* Toggle eixo de data */}
+                      <div className="flex items-center gap-3 px-1">
+                        <span className="text-xs text-muted-foreground font-medium">Eixo de data:</span>
+                        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-0.5">
+                          <button
+                            onClick={() => setEixoDataValor("pagamento")}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              eixoDataValor === "pagamento"
+                                ? "bg-background text-foreground shadow-sm border border-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            <Coins className="h-3 w-3" />
+                            Data do pagamento (SIAFI)
+                          </button>
+                          <button
+                            onClick={() => setEixoDataValor("processo")}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                              eixoDataValor === "processo"
+                                ? "bg-background text-foreground shadow-sm border border-border"
+                                : "text-muted-foreground hover:text-foreground"
+                            }`}
+                          >
+                            <FileText className="h-3 w-3" />
+                            Data do processo (Redmine)
+                          </button>
+                        </div>
+                      </div>
                       <Section icon={<Coins className="h-4 w-4" />} title="Série Histórica de Valores" subtitle="Evolução mensal do valor total dos processos (R$)" full>
                         <ValorTimelineChart data={metrics.valorTimeline} />
                       </Section>
@@ -436,6 +715,50 @@ export default function DashboardPage() {
                         </Section>
                       </div>
                     </div>
+                  )}
+
+                  {/* A.3.1) Rankings comparados entre exercícios */}
+                  {activeTab === "ranking-anual" && (
+                    <Section
+                      icon={<CalendarRange className="h-4 w-4" />}
+                      title="Ranking por Ano — Comparação entre Exercícios"
+                      subtitle="Os principais rankings do painel abertos ano a ano, para identificar tendências que o acumulado do período esconde"
+                      full
+                    >
+                      {rankingLoading ? (
+                        <div className="flex justify-center py-12">
+                          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : !rankingAnual || rankingAnual.rankings.length === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                          Sem dados para os rankings no recorte selecionado.
+                        </p>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            {rankingAnual.rankings.map((r) => (
+                              <button
+                                key={r.dimensao}
+                                onClick={() => setDimensaoRanking(r.dimensao)}
+                                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                                  dimensaoRanking === r.dimensao
+                                    ? "bg-primary text-primary-foreground"
+                                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                                }`}
+                              >
+                                {r.rotulo}
+                              </button>
+                            ))}
+                          </div>
+                          {(() => {
+                            const atual =
+                              rankingAnual.rankings.find((r) => r.dimensao === dimensaoRanking) ??
+                              rankingAnual.rankings[0];
+                            return <RankingAnualChart ranking={atual} anos={rankingAnual.anos} />;
+                          })()}
+                        </div>
+                      )}
+                    </Section>
                   )}
 
                   {/* A.4) Riscos */}
