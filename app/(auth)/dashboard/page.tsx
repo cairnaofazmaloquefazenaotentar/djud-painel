@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { StatusChart } from "@/components/dashboard/charts/status-chart";
@@ -25,12 +26,10 @@ import { AutoresTimelineChart } from "@/components/dashboard/charts/autores-time
 import { RankingAnualChart } from "@/components/dashboard/charts/ranking-anual-chart";
 import { paramsDeMetrics, useMetrics } from "@/hooks/useMetrics";
 import { useRankingAnual } from "@/hooks/useRankingAnual";
-// Só o tipo: lib/metrics-ranking-anual.ts importa o Prisma, e um import de
-// valor arrastaria o client do banco para o bundle do navegador. Os rótulos
-// das dimensões vêm prontos na resposta da API (`rotulo`).
 import type { DimensaoRanking } from "@/lib/metrics-ranking-anual";
 import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
+import { useFontes, fmtDataFonte } from "@/hooks/useFontes";
 import { Combobox } from "@/components/ui/combobox";
 import { FilterSelect } from "@/components/backoffice";
 import { Button } from "@/components/ui/button";
@@ -61,6 +60,8 @@ import {
   CalendarRange,
   Download,
   FileSpreadsheet,
+  Database,
+  ExternalLink,
 } from "lucide-react";
 import { apiPath } from "@/lib/url";
 
@@ -142,6 +143,86 @@ function group(v: AnyTab): "tendencias" | "indicadores" | "internos" {
   return "internos";
 }
 
+// ─── Mapa de fontes por aba ────────────────────────────────────────────────────
+type FonteKey = "redmine" | "sismatEntradas" | "sismatSaidas" | "fns";
+
+const FONTES_POR_ABA: Record<AnyTab, FonteKey[]> = {
+  "demandas":          ["redmine"],
+  "valores":           ["redmine", "fns"],
+  "autores":           ["redmine"],
+  "entradas":          ["sismatEntradas"],
+  "saidas":            ["sismatSaidas"],
+  "entradas-saidas":   ["sismatEntradas", "sismatSaidas"],
+  "principios-ativos": ["redmine"],
+  "ranking-anual":     ["redmine"],
+  "indicadores-saidas":["redmine", "sismatSaidas"],
+  "servidores":        ["redmine"],
+  "tramitacao":        ["redmine"],
+};
+
+const FONTE_LABELS: Record<FonteKey, { nome: string; sistemaUrl?: string }> = {
+  redmine:        { nome: "Redmine" },
+  sismatEntradas: { nome: "SISMAT Entradas" },
+  sismatSaidas:   { nome: "SISMAT Saídas" },
+  fns:            { nome: "FNS", sistemaUrl: "https://investsuspaineis.saude.gov.br/extensions/CGIN_PGTO_JUDICIAIS/CGIN_PGTO_JUDICIAIS.html" },
+};
+
+// ─── Barra de fontes da aba ativa ─────────────────────────────────────────────
+function FontesBar({ tab }: { tab: AnyTab }) {
+  const { data: fontes, isLoading } = useFontes();
+  const chaves = FONTES_POR_ABA[tab];
+
+  return (
+    <div className="flex items-center justify-between gap-4 flex-wrap">
+      {/* Fontes à esquerda */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground flex items-center gap-1">
+          <Database className="h-3 w-3" />
+          Fonte{chaves.length > 1 ? "s" : ""}:
+        </span>
+        {chaves.map((k) => {
+          const meta = FONTE_LABELS[k];
+          const data = fmtDataFonte(fontes?.[k]);
+          return (
+            <span
+              key={k}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs"
+            >
+              {meta.sistemaUrl ? (
+                <a
+                  href={meta.sistemaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline inline-flex items-center gap-0.5"
+                >
+                  {meta.nome}
+                  <ExternalLink className="h-2.5 w-2.5" />
+                </a>
+              ) : (
+                <span className="font-medium">{meta.nome}</span>
+              )}
+              {isLoading ? (
+                <Loader2 className="h-2.5 w-2.5 animate-spin text-muted-foreground" />
+              ) : (
+                <span className="text-muted-foreground">· {data}</span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Link para página de fontes à direita */}
+      <Link
+        href="/fontes"
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap"
+      >
+        <Database className="h-3 w-3" />
+        Ver todas as fontes
+      </Link>
+    </div>
+  );
+}
+
 // ─── Botão de sub-aba ─────────────────────────────────────────────────────────
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
@@ -171,9 +252,6 @@ export default function DashboardPage() {
   const [filterPrioridade,     setFilterPrioridade]     = useState("");
   const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
 
-  // CATMAT / registro ANVISA — mesmo filtro da lista de demandas. O valor
-  // aplicado só acompanha o digitado depois de uma pausa: um código tem de 4 a
-  // 13 dígitos e cada tecla dispararia a resolução de um código parcial.
   const [catmatInput, setCatmatInput] = useState("");
   const [catmat,      setCatmat]      = useState("");
   const [eixoDataValor, setEixoDataValor] = useState<"pagamento" | "processo">("pagamento");
@@ -182,7 +260,6 @@ export default function DashboardPage() {
     return () => clearTimeout(t);
   }, [catmatInput]);
 
-  // Ranking por ano: sete agregações a mais, só buscadas na aba que as usa.
   const [dimensaoRanking, setDimensaoRanking] = useState<DimensaoRanking>("medicamento");
   const [exportando, setExportando] = useState<"csv" | "html" | null>(null);
 
@@ -217,11 +294,8 @@ export default function DashboardPage() {
     setCatmatInput(""); setCatmat("");
   };
 
-  // A exportação refaz a apuração no servidor com os mesmos filtros: a planilha
-  // sai com a série mensal inteira, não só com os pontos que couberam no gráfico.
   const exportar = async (formato: "csv" | "html") => {
     setExportando(formato);
-    // A janela é aberta antes do await para o bloqueador de pop-up não barrar.
     const janela = formato === "html" ? window.open("", "_blank") : null;
     try {
       const params = paramsDeMetrics(metricsFilters);
@@ -339,6 +413,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* ── Barra de fontes da aba ativa ──────────────────────────────────── */}
+      <FontesBar tab={activeTab} />
+
       {/* ── Conteúdo: componentes de estoque sem filtros ────────────────── */}
       {activeTab === "entradas"           && <SismatEntradasView />}
       {activeTab === "saidas"             && <SismatSaidasPuraView />}
@@ -440,8 +517,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {/* Tradução do código: a Demanda não tem coluna CATMAT — o filtro
-                  é por substância (ver lib/demandas-catmat.ts). */}
+              {/* Tradução do código CATMAT */}
               {catmat && metrics?.filtroCatmat && (
                 <div
                   className={`rounded-lg border p-3 text-xs ${
@@ -659,8 +735,6 @@ export default function DashboardPage() {
                         </p>
                       ) : (
                         <div className="space-y-4">
-                          {/* Uma dimensão por vez: sete tabelas com N colunas de
-                              ano na mesma tela seriam ilegíveis. */}
                           <div className="flex flex-wrap gap-1.5">
                             {rankingAnual.rankings.map((r) => (
                               <button
