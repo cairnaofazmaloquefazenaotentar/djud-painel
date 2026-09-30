@@ -2,12 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { FontesData } from "@/app/api/fontes/route";
+import { apiPath } from "@/lib/url";
 
 export function useFontes() {
   return useQuery<FontesData>({
     queryKey: ["fontes"],
     queryFn: async () => {
-      const res = await fetch("/api/fontes");
+      const res = await fetch(apiPath("/api/fontes"));
       if (!res.ok) throw new Error("Erro ao carregar fontes");
       return res.json();
     },
