@@ -69,7 +69,7 @@ COLUMNS = [
     "status", "prioridade", "pontoControle", "trfRegiao", "ufResidencia",
     "ufOcorrencia", "municipio", "tipoRepresentacaoJudicial",
     "areaTematicaConsultor", "areaFinalisticaMs", "numeroExterno",
-    "areaTematica", "regiaoBrasil", "objetoAcao", "principioAtivo",
+    "areaTematica", "regiaoBrasil", "objetoAcao", "principioAtivo", "autor",
     "numeroProcesso", "dataEntradaDJUD", "formaCumprimento", "valorEstimado",
     "dataInicio", "criadoPorId", "tags", "criadoEm", "atualizadoEm",
 ]
@@ -183,6 +183,17 @@ def normalizar_lista(v) -> str | None:
             vistos.setdefault(item, None)
 
     return " | ".join(vistos) or None
+
+
+def to_autor(v) -> str | None:
+    """Autor(a) da acao; placeholder ("N/A") vira NULL.
+
+    Alimenta a serie de autores do dashboard (/api/demandas/autores/metrics),
+    que conta autores distintos: um placeholder gravado como nome viraria um
+    "autor" presente em todos os meses e inflaria os reincidentes.
+    """
+    s = txt(v)
+    return None if s is None or _lixo(s) else s
 
 
 def to_int(v, lo: int | None = None, hi: int | None = None) -> int | None:
@@ -441,6 +452,7 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "regiaoBrasil": regiao,
             "objetoAcao": normalizar_lista(g(row, "Objeto da Ação")),
             "principioAtivo": normalizar_lista(g(row, "Princípio_Ativo")),
+            "autor": to_autor(g(row, "Autor(a)")),
             "numeroProcesso": numero_processo,
             "dataEntradaDJUD": to_date(g(row, "Data de Entrada_DJUD")),
             "formaCumprimento": to_forma(g(row, "Forma de Cumprimento")),

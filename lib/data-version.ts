@@ -12,11 +12,16 @@ import { NextResponse } from "next/server";
 // depois de cada import — e `public` ainda autoriza cache compartilhado a
 // guardar resposta de rota autenticada.
 //
-// Aqui a validade da resposta é amarrada ao dado: cada tabela carrega
-// `criadoEm @default(now())`, então todo import move o carimbo. A versão é o
-// md5 de (nome, contagem, maior carimbo) de cada fonte que a rota consome.
+// Aqui a validade da resposta é amarrada ao dado. A versão é o md5 de (nome,
+// contagem, maior carimbo, maior xmin) de cada fonte que a rota consome.
 //
-// O ganho vem da ORDEM: a consulta de versão é um count + max por tabela e
+// O carimbo sozinho não basta: o importador do Redmine grava em "Demanda" o
+// created_on/updated_on do próprio Redmine, não now(), então recarregar a
+// mesma base — ou um UPDATE que não mexe nas datas — deixava a versão igual,
+// e o cliente seguia recebendo 304 com o corpo antigo. `xmin` é a transação
+// que gravou a versão viva da linha: toda recarga ou UPDATE move o máximo.
+//
+// O ganho vem da ORDEM: a consulta de versão é um count + maxes por tabela e
 // roda ANTES da agregação pesada. Se o ETag do cliente bate, a rota devolve
 // 304 sem corpo e sem nunca tocar nas dezenas de milhares de linhas.
 //
@@ -90,9 +95,11 @@ export async function getDataVersion(fontes: readonly FonteDados[]): Promise<str
     const maxes = colunas.map((c) => `max(${colunaSegura(c)})`).join(", ");
     // GREATEST ignora NULLs; só devolve NULL se todos forem NULL (tabela vazia).
     const carimbo = Prisma.raw(`COALESCE(GREATEST(${maxes})::text, '-')`);
+    // xid não tem max(); passa por text para comparar como número.
+    const escrita = Prisma.raw(`COALESCE(max(xmin::text::bigint)::text, '-')`);
     // ::text explícito — sem ele o Postgres não consegue inferir o tipo do
     // parâmetro ao lado de um literal desconhecido e devolve 42P18.
-    return Prisma.sql`SELECT ${nome}::text || ':' || count(*)::text || ':' || ${carimbo} AS v FROM ${tabela}`;
+    return Prisma.sql`SELECT ${nome}::text || ':' || count(*)::text || ':' || ${carimbo} || ':' || ${escrita} AS v FROM ${tabela}`;
   });
 
   const [row] = await db.$queryRaw<{ versao: string | null }[]>(
