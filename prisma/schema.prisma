@@ -658,6 +658,88 @@ model CmedRegistro {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Listas mensais da CMED — todas as competências e todas as alíquotas de ICMS
+//
+// Carregadas por scripts/import_cmed_mensal.py (planilhas "NNN.mmm.aa.xlsx",
+// 001 = jan/2017), que também cria as tabelas com a MESMA DDL que o
+// `prisma db push` geraria a partir destes modelos.
+//
+// São ~26 mil apresentações por mês, mas o preço de cada uma muda pouco (reajuste
+// anual, CAP, colunas de alíquota novas). Por isso o preço fica em versões
+// deduplicadas por hash do conteúdo, e a vigência é uma matriz enxuta
+// (competência × versão): meses com os mesmos valores apontam para a mesma versão.
+// Na prática a deduplicação fica em ~2,7× (jan/2020–ago/2026): textos como a TARJA
+// mudam de formato quase todo mês, e qualquer campo diferente gera versão nova.
+//
+// `pf`/`pmvg` são arrays JSON alinhados a ALIQUOTAS_ICMS (lib/cmed-aliquotas.ts);
+// null = alíquota sem preço publicado. Json, e não Float[], porque o Prisma não
+// aceita NULL dentro de listas escalares (mesmo padrão de SismatPmvg.pmvgPrecos).
+// Valores sempre como publicados — nunca derivados por fórmula.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Uma lista mensal CMED carregada (uma linha por competência).
+model CmedCompetencia {
+  competencia      DateTime  @id @db.Date    // 1º dia do mês
+  sequencia        Int       @unique         // NNN do arquivo (001 = jan/2017)
+  dataPublicacao   DateTime? @db.Date
+  arquivo          String
+  sha256           String
+  linhas           Int                       // linhas de dados lidas
+  registros        Int                       // registros distintos vigentes
+  aliquotas        String[]                  // códigos de ALIQUOTAS_ICMS com preço publicado na lista
+  capPercentual    Float?                    // mediana de (1 − PMVG 0% / PF 0%) × 100
+  colunasOriginais Json                      // aba, linha do cabeçalho e cabeçalho bruto → campo (auditoria de layout)
+  importadoEm      DateTime  @default(now())
+
+  @@schema("public")
+}
+
+/// Versão de preço de uma apresentação. Deduplicada por hash do conteúdo:
+/// todos os meses com os mesmos valores apontam para a mesma versão.
+model CmedPrecoVersao {
+  id                  Int      @id @default(autoincrement())
+  hash                String   @unique // sha1 do conteúdo canônico (tudo menos a competência)
+  registro            String           // só dígitos; normalmente 13
+  codigoGgrem         String?
+  ean                 String[]         // EAN 1, 2 e 3 preenchidos, na ordem da lista
+  substancia          String?          // "PRINCÍPIO ATIVO" até set/2023, "SUBSTÂNCIA" depois
+  cnpj                String?
+  laboratorio         String?
+  produto             String?
+  apresentacao        String?  @db.Text
+  classeTerapeutica   String?
+  tipoProduto         String?
+  regimePreco         String?          // "Regulado" | "Liberado" | "Monitorado"
+  tarja               String?
+  comercializacao     String?          // coluna "COMERCIALIZAÇÃO <ano>" (o ano fica em colunasOriginais)
+  restricaoHospitalar Boolean?
+  cap                 Boolean?
+  confaz87            Boolean?
+  icms0               Boolean?
+  analiseRecursal     Boolean?         // "Sim"/"(AR)" = true; nota de rodapé "(n)" = null, com a marca em extras.analiseRecursal
+  precoLiberado       Boolean  @default(false) // célula de preço com o texto "Liberado" (Res. CMED nº 5/2003)
+  pf                  Json             // (number|null)[] alinhado a ALIQUOTAS_ICMS
+  pmvg                Json             // idem
+  extras              Json?            // colunas não mapeadas e notas de rodapé dos preços (notaPf/notaPmvg = "*")
+  criadoEm            DateTime @default(now())
+  vigencias           CmedVigencia[]
+
+  @@index([registro])
+  @@schema("public")
+}
+
+/// Matriz de vigência: versão de preço em vigor em cada competência.
+model CmedVigencia {
+  competencia DateTime        @db.Date
+  versaoId    Int
+  versao      CmedPrecoVersao @relation(fields: [versaoId], references: [id], onDelete: Cascade)
+
+  @@id([competencia, versaoId])
+  @@index([versaoId])
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cesta de itens da Pesquisa de Preços
 //
 // Carrinho por usuário: cada linha é um item já pesquisado (código + unidade de

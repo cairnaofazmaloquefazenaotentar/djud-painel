@@ -23,6 +23,7 @@
 # misc
 .DS_Store
 *.pem
+/cmed_originais_arr
 
 # debug
 npm-debug.log*

@@ -93,6 +93,12 @@ python scripts/create_cesta_table.py --dry-run|--confirm
 
 # Curadoria da Pesquisa de Preços — cria CestaOrcamento e CestaItem.exclusoes
 python scripts/create_orcamento_table.py --dry-run|--confirm
+
+# Listas mensais CMED (todas as competências e alíquotas) — REPLACE por competência; pula o que já
+# está gravado com o mesmo sha256 (--recarregar força). Opções: --somente 037-048, --vigencia, --textos,
+# --limpar-orfas, --saida relatorio.csv
+python scripts/import_cmed_mensal.py --dir cmed_originais_arr --dry-run|--confirm
+python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Python, cabeçalhos e valores
 ```
 
 ## Pesquisa de Preços (aba /pesquisa-preco)
@@ -181,6 +187,32 @@ python scripts/create_orcamento_table.py --dry-run|--confirm
 - Gerar o relatório esvazia a cesta por padrão (checkbox na modal permite manter).
 - HTML dos relatórios: blocos compartilhados em `lib/relatorio-pesquisa-preco.ts`, usados tanto pelo
   relatório de um item quanto pelo da cesta.
+
+### Listas mensais da CMED (todas as competências)
+
+- Tabelas `CmedCompetencia` (uma linha por lista), `CmedPrecoVersao` (versões de preço deduplicadas
+  por sha1 do conteúdo) e `CmedVigencia` (competência × versão), carregadas por
+  `scripts/import_cmed_mensal.py` das planilhas `NNN.mmm.aa.xlsx` (001 = jan/2017; a pasta
+  `cmed_originais_arr/` fica fora do git). **Carregado: jan/2020 → ago/2026 (037–116).**
+- **A tela ainda lê `PrecoCmed`.** Os filtros Mês de Competência / Alíquota ICMS e o uso destas tabelas
+  no teto são o passo seguinte de `PROMPT_CMED_mensal_pesquisa_precos.md` (seção 7).
+- `pf`/`pmvg` = arrays JSON alinhados a `ALIQUOTAS_ICMS` (`lib/cmed-aliquotas.ts`, espelho
+  `scripts/cmed_layout.py`). **Append-only**: nunca reordenar; alíquota nova entra no fim dos dois
+  arquivos (o hash usa código → valor, então acrescentar não muda versões gravadas; arrays antigos
+  ficam mais curtos, posição ausente = null). Valor sempre o publicado, nunca derivado por fórmula.
+- Leitura **dirigida pelo cabeçalho**: cabeçalho na linha 4 ou 5, "PRINCÍPIO ATIVO" → "SUBSTÂNCIA"
+  (out/2023), "PMVG Sem Imposto(s)", "PF 12 %  ALC", "PF 20,5%2" (nota no cabeçalho); preço como
+  número, "1383,38" ou "2504.84". Coluna desconhecida vai para `extras` e sai no relatório; alíquota
+  fora da lista **aborta** o arquivo.
+- Notas da CMED: preço com asterisco ("3079.55*", produtos CONFAZ 87/ICMS 0% desde dez/2023) grava o
+  número e `extras.notaPf`/`notaPmvg = "*"`. ANÁLISE RECURSAL: "(AR)"/Sim = `true`; nota "(n)" fica
+  em `extras.analiseRecursal` com o booleano `null` (em fev/2024 quase todas as linhas trazem "(3)").
+- Nas listas 2020+ "Liberado" só aparece em REGIME DE PREÇO, com preço publicado; `precoLiberado`
+  (texto "Liberado" na célula de preço, padrão de 2017) fica `false`.
+- Duplicata no mesmo mês (registro + GGREM): idêntica → descarta; só texto/booleano diferente →
+  mescla; preço diferente → **conflito**, as duas versões ficam vigentes (jan/2020: 33, da CIMED).
+- Deduplicação real ~2,7× (779.595 versões para 2.127.976 pares): a TARJA muda de formato quase todo
+  mês ("Tarja Vermelha(*)" / "- (*)" / "Tarja -(*)") e qualquer campo diferente gera versão nova.
 
 ## Demandas — filtro por CATMAT / Registro ANVISA
 
