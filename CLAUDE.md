@@ -99,6 +99,13 @@ python scripts/create_orcamento_table.py --dry-run|--confirm
 # --limpar-orfas, --saida relatorio.csv
 python scripts/import_cmed_mensal.py --dir cmed_originais_arr --dry-run|--confirm
 python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Python, cabeçalhos e valores
+
+# Associação Registro ANVISA × CATMAT na Grande Padrão (só openpyxl; não toca banco). Saídas em
+# saida_catmat/ (fora do git). --backtest = 6.1; --backtest-cego = 6.2 (~10 min); --revisar-nao-tem = P3
+python scripts/associar_catmat.py --gp "01. CMED - grande.padrão - ....xlsx" --catalogo "Catmats 11-07.CSV" \
+  --unidades "Extração Unidades de Fornecimento 29-09.csv" --lista 08.26.xlsx --dry-run|--confirm \
+  [--backtest] [--backtest-cego] [--revisar-nao-tem] [--somente-vigentes]
+python -m pytest scripts/catmat_assoc/testes -q   # parser da apresentação/catálogo e guardas
 ```
 
 ## Pesquisa de Preços (aba /pesquisa-preco)
@@ -213,6 +220,49 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   mescla; preço diferente → **conflito**, as duas versões ficam vigentes (jan/2020: 33, da CIMED).
 - Deduplicação real ~2,7× (779.595 versões para 2.127.976 pares): a TARJA muda de formato quase todo
   mês ("Tarja Vermelha(*)" / "- (*)" / "Tarja -(*)") e qualquer campo diferente gera versão nova.
+
+### Associação Registro × CATMAT (Grande Padrão)
+
+- `scripts/associar_catmat.py` + pacote `scripts/catmat_assoc/` propõem, para cada registro da GP sem
+  CATMAT (e para cada registro novo da lista mensal), **CATMAT + Descrição + Unidade de fornecimento +
+  Qt_Embal**, com nível, aderência (R14) e evidência. Nunca sobrescreve a GP: grava uma **cópia**
+  (`saida_catmat/grande.padrao.AAAA-MM.proposta.xlsx`, fórmulas das linhas 1–3 intactas, colunas novas
+  a partir de R) e a planilha `revisao_catmat_AAAA-MM.xlsx` (Resumo, Nível A–D, Fora, "Não tem →
+  possível CATMAT", Conflitos, Suspeitas na GP, Pontes aprendidas, Backtest).
+- Entradas lidas **pelo cabeçalho**: GP (linha com Registro/CATMAT/Qt_Embal), lista mensal (REGISTRO +
+  PF/PMVG, linha 4/5/54…), catálogo e extração de unidades (CSV `@`, cp1252). O catálogo de 11/07 é a
+  única fonte de código; item só da extração (criado depois) aparece como opção, nunca como proposta.
+- **Níveis**: **A** = precedente da GP unânime (irmão = mesma raiz + assinatura + acessórios, ou gêmeos
+  de ≥ 2 raízes), CATMAT Ativo, guardas G1–G7 ok → única coisa gravada em H–K, e só onde H estava
+  vazio. **B** = precedente fraco/divergente, CATMAT inativo, guarda reprovada ou escolha não
+  inequívoca (com opções). **C** = sem precedente, candidato do catálogo **adjudicado pelo agente**
+  (exato/equivalente/aproximado). **D** = "Não tem" no fim da escada R14, com a busca feita, os itens
+  ativos mais próximos e o rascunho do pedido de CATMAT (`xxx = planilhar`). **Fora** = teste ANVISA.
+- Assinatura (gêmeos) = ingredientes ordenados + apresentação até o 1º marcador de embalagem; acessórios
+  (DIL, SIST FECH, SER, CAN, INAL, APLIC, EQP…) entram na chave — meropenem com bolsa (288298) ≠ sem
+  bolsa (268488). Líquidos/injetáveis têm chave com volume (adalimumabe 0,4 mL × 0,8 mL).
+- **Guardas** (`guardas.py`): G1 catálogo/Ativo/sem flag de insumo-veterinário-manipulado; G2
+  ingredientes (associação × monodroga, sal/éster diferente, componente de vacina a mais); G3 dose nas
+  leituras por unidade, por mL e total por recipiente (R3), kit só com CATMAT de kit (R6), sal × base
+  só com razão aprendida da GP (senão "conferir massa molar"); G4 via, comprimido × cápsula (forma dos
+  itens antigos vem da unidade oficial), liberação/orodispersível… só diferencia quando há item
+  próprio (R4); G5 acessório; G6 classe terapêutica (só impede o A); G7 unidade oficial compatível.
+  As guardas também correm sobre os vínculos existentes → aba "Suspeitas na GP" (só lista).
+- **Pontes aprendidas da GP** (`pontes.py`): ingrediente → PDM (com filtro de ruído: um vínculo errado
+  não vira sinônimo), conjunto → CATMAT, CATMAT → unidade, PDM → classe; mais sinônimos DCB/INN fixos
+  e a regra "-ATO de sódio ↔ ÁCIDO -ICO".
+- **Fluxo mensal**: rodar com a lista nova → nível A entra sozinho; os pacotes `saida_catmat/pacotes/
+  <registro>.json` (C/D) são adjudicados **um a um** e gravados em `saida_catmat/decisoes_catmat.csv`
+  (`registro;decisao;catmat;justificativa;regras;autor;data`, decisao = CATMAT | NAO_TEM | B). A rodada
+  seguinte relê as decisões; decisão com autor diferente de "agente" (confirmada) e a GP já corrigida
+  viram precedente.
+- Medido em 01/10/2026 (GP jan/17–ago/26): backtest por raiz → nível A cobre 65% dos vínculos com
+  99,7% de acerto (irmãos, deixa-um-de-fora: 66% / 99,7%); Qt_Embal reproduz 97,5% da GP e a unidade
+  96,9%. Backlog de 715: A 454 · B 125 · C 87 · D 49. Teste às cegas (6.2, 200 substâncias, pontes
+  reaprendidas sem a substância): certo em 1º 85%, entre os 3 primeiros 92,5%, entre os candidatos
+  95,5% — **abaixo** da meta de 90%/98%, por isso o ranqueador só sugere (nível C/D, nunca A).
+  Revisão dos "Não tem": 364 de 1.461 têm candidato ativo aprovado nas guardas (aba própria, nunca
+  aplicado); 2.871 vínculos existentes reprovam nas guardas (aba `Suspeitas na GP`, não corrigidos).
 
 ## Demandas — filtro por CATMAT / Registro ANVISA
 
