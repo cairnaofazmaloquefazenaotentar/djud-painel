@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
-import { apiPath } from "@/lib/url";
+import { apiPath, appPath } from "@/lib/url";
 import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
   FileText,
   Info,
   Loader2,
@@ -1055,6 +1057,58 @@ export default function PesquisaPrecoPage() {
           loading={loading}
           comFiltros={filtrosAplicados.length > 0}
         />
+      </div>
+
+      {/* Banco de Preços em Saúde — divulgação da base e canal de dúvidas */}
+      <div className="rounded-lg border bg-card p-4 flex flex-col sm:flex-row sm:items-center gap-4">
+        {/* Fundo branco fixo: o "B" da marca é branco e sumiria no tema escuro. */}
+        <div className="shrink-0 self-center rounded-md bg-white p-2 ring-1 ring-border">
+          {/* src com appPath: em string o next/image não prefixa o basePath do deploy interno
+              (o import estático do PNG faria isso, mas quebra o `tsc` do CI sem next-env.d.ts). */}
+          <Image
+            src={appPath("/marcas/bps.png")}
+            alt="BPS — Banco de Preços em Saúde"
+            width={480}
+            height={369}
+            className="h-20 w-auto"
+            unoptimized
+          />
+        </div>
+        <div className="text-sm text-muted-foreground space-y-2">
+          <p>
+            Consulte, em um único ambiente, dados de preços registrados no Banco de Preços em Saúde
+            (BPS) em todo o Brasil.
+          </p>
+          <p>
+            O{" "}
+            <a
+              href="https://infoms.saude.gov.br/extensions/SEIDIGI_DEMAS_BPS/SEIDIGI_DEMAS_BPS.html"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-0.5 font-medium text-primary underline underline-offset-2 hover:text-foreground"
+            >
+              Painel de Preços da Saúde
+              <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            </a>{" "}
+            reúne informações sobre aquisições de medicamentos e
+            dispositivos médicos e disponibiliza diferentes filtros para apoiar consultas,
+            comparações e análises de preços, ampliando as informações disponíveis para a pesquisa
+            de preços.
+          </p>
+          <div className="text-xs">
+            <p className="font-medium text-foreground">Dúvidas e informações sobre o BPS:</p>
+            <p>
+              E-mail:{" "}
+              <a
+                href="mailto:bps@saude.gov.br"
+                className="text-primary underline underline-offset-2 hover:text-foreground"
+              >
+                bps@saude.gov.br
+              </a>
+            </p>
+            <p>Telefones: (61) 3315-3990 | 3315-3991 | 3315-3798</p>
+          </div>
+        </div>
       </div>
 
       {/* Metodologia */}
