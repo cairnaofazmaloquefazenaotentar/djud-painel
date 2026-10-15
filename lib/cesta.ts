@@ -61,6 +61,11 @@ interface LinhaOrcamento {
   documento: string | null;
   observacao: string | null;
   considerarNoCalculo: boolean;
+  tipo: string;
+  url: string | null;
+  acessadoEm: Date | null;
+  chaveNfe: string | null;
+  justificativaForaPeriodo: string | null;
 }
 
 interface LinhaCesta {
@@ -95,6 +100,11 @@ export function orcamentoParaDTO(o: LinhaOrcamento): OrcamentoFornecedor {
     documento: o.documento,
     observacao: o.observacao,
     considerarNoCalculo: o.considerarNoCalculo,
+    tipo: (["IV", "III", "V", "II"] as const).find((t) => t === o.tipo) ?? "IV",
+    url: o.url,
+    acessadoEm: o.acessadoEm ? o.acessadoEm.toISOString() : null,
+    chaveNfe: o.chaveNfe,
+    justificativaForaPeriodo: o.justificativaForaPeriodo,
   };
 }
 

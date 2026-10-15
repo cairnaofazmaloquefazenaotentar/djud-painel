@@ -775,6 +775,16 @@ model CestaItem {
   // lib/pesquisa-preco-curadoria.ts). Fica no item porque a curadoria é do
   // item: o relatório da cesta refaz a pesquisa e reaplica estas exclusões.
   exclusoes       Json?
+  // Escolhas do responsável para o item (avaliação da DLOG). Ficam no item,
+  // como a curadoria: o relatório refaz a pesquisa e reaplica todas.
+  metodoPreco          String?          // P11 — null = padrão (mediana das medianas)
+  regraTeto            String?          // P12 — null = padrão da emissão
+  aliquotaTeto         String?          // P12 — alíquota do PMVG da regra do medicamento de referência
+  justificativa        String?  @db.Text // justificativa do preço editada pelo responsável
+  periodoMeses         Int?             // D1 — null = 12 meses; 0 = todo o período
+  justificativaPeriodo String?  @db.Text // D1 — obrigatória quando o período é ampliado
+  corrigirIpca         Boolean  @default(true) // D2 — atualização monetária pelo IPCA
+  duplicidadesRevertidas Json?          // P18 — ids de prováveis duplicatas mantidas pelo responsável
   calculadoEm     DateTime @default(now())
   criadoEm        DateTime @default(now())
   atualizadoEm    DateTime @updatedAt
@@ -802,6 +812,13 @@ model CestaOrcamento {
   documento           String?                // Nº da proposta / e-mail / SEI
   observacao          String?   @db.Text
   considerarNoCalculo Boolean   @default(true) // false = só registro no relatório
+  // P13 — tipo do preço informado: IV cotação, III mídia/sítio, V nota fiscal,
+  // II contratação similar. Cada tipo é uma fonte própria no consolidado.
+  tipo                String    @default("IV")
+  url                 String?                // III — página consultada
+  acessadoEm          DateTime?              // III — data e hora do acesso
+  chaveNfe            String?                // V — chave de acesso da NF-e
+  justificativaForaPeriodo String? @db.Text  // mantém no cálculo fora da janela do inciso
   criadoEm            DateTime  @default(now())
   atualizadoEm        DateTime  @updatedAt
 
@@ -962,6 +979,23 @@ model PncpVinculo {
   itens              Json?
   bruto              Json?
   consultadoEm       DateTime @default(now())
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPCA — número-índice mensal (IBGE/SIDRA, tabela 1737; dez/1993 = 100), para a
+// atualização monetária da Pesquisa de Preços (D2 da avaliação da DLOG).
+// Carregado por scripts/import_ipca.py, que também cria a tabela com a mesma
+// DDL que o `prisma db push` geraria. Fator = índice do mês-base ÷ índice do
+// mês do preço — nunca a soma das variações.
+// ─────────────────────────────────────────────────────────────────────────────
+model IndiceIpca {
+  competencia    DateTime @id @db.Date // 1º dia do mês
+  numeroIndice   Float
+  variacaoMensal Float? // % no mês
+  fonte          String // "IBGE/SIDRA 1737" ou o arquivo informado
+  importadoEm    DateTime @default(now())
 
   @@schema("public")
 }

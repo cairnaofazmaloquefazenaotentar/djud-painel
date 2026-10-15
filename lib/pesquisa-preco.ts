@@ -14,6 +14,8 @@ import {
 import {
   ESTATISTICAS_VAZIAS,
   NOME_FONTE_CURADA,
+  ORDEM_TIPOS_INFORMADOS,
+  TIPOS_PRECO_INFORMADO,
   calcularEstatisticas,
   limitesIqr,
   mapaExclusoes,
@@ -26,7 +28,24 @@ import {
   type RegistroDescartado,
 } from "@/lib/pesquisa-preco-curadoria";
 
-import type { ContratacaoRef, DuplicidadeRef } from "@/lib/pesquisa-preco-fontes";
+import {
+  INFO_FONTE,
+  type ContratacaoRef,
+  type DuplicidadeRef,
+  type FonteMercadoChave,
+  type Inciso,
+} from "@/lib/pesquisa-preco-fontes";
+import {
+  descricaoPeriodo,
+  janelaDaFonte,
+  normalizarPeriodo,
+  validarPeriodo,
+  type JanelaFonte,
+  type PeriodoPesquisa,
+} from "@/lib/pesquisa-preco-periodo";
+import { CONVENCAO_IPCA, fatorIpca, mesBaseIpca } from "@/lib/ipca";
+import { carregarIpca } from "@/lib/ipca-indices";
+import { marcarDuplicidades } from "@/lib/pesquisa-preco-duplicidade";
 import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
 import { situacaoColetas, type OrigemColeta, type SituacaoColeta } from "@/lib/dados-abertos/situacao";
 import { urlPncp } from "@/lib/pncp";
@@ -46,6 +65,7 @@ export * from "@/lib/pesquisa-preco-filtros";
 export * from "@/lib/pesquisa-preco-curadoria";
 export * from "@/lib/pesquisa-preco-metodo";
 export * from "@/lib/pesquisa-preco-fontes";
+export * from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preços — lógica compartilhada pela rota de busca
@@ -277,6 +297,8 @@ export interface RegistroMercado {
   registroAnvisa?: string | null;
   /** Cópia do mesmo registro numa fonte que prevalece (P18). */
   duplicadoDe?: DuplicidadeRef | null;
+  /** idCompra (17) + nº do item (5): identifica a mesma compra em bases diferentes. */
+  chaveItemCompra22?: string | null;
 }
 
 export interface FonteMercadoResultado {
@@ -286,6 +308,18 @@ export interface FonteMercadoResultado {
   origemDados?: "BASE_PAINEL" | "API" | "INFORMADO";
   /** Situação da coleta (fontes de dados abertos): quando e se ainda vale (P19). */
   coleta?: { coletadoEm: string | null; valida: boolean; origemCarga: string | null } | null;
+  /**
+   * Janela do art. 5º aplicada à fonte (D1) e o que ficou de fora — para o
+   * aviso "fora do período: m (mais recente em …)".
+   */
+  periodo?: {
+    inicio: string | null;
+    fim: string;
+    meses: number | null;
+    inciso: Inciso;
+    foraDoPeriodo: number;
+    maisRecenteFora: string | null;
+  } | null;
   total: number;
   amostra: number;
   /** Média, mediana e menor valor (art. 6º) sobre a amostra já depurada. */
@@ -411,6 +445,21 @@ export interface ResultadoPesquisa {
   /** Registros desconsiderados e o motivo — rastreabilidade do descarte. */
   descartes: RegistroDescartado[];
   recomendacao: Recomendacao;
+  /** Data de referência e período aplicados (D1). */
+  periodo: PeriodoPesquisa;
+  /** Atualização monetária (D2): ligada, disponível, mês-base e convenção. */
+  ipca: {
+    ligado: boolean;
+    /** A tabela IndiceIpca existe e tem índices. */
+    disponivel: boolean;
+    /** "AAAA-MM"; null quando a correção não foi aplicada. */
+    mesBase: string | null;
+    convencao: string;
+    /** Registros sem número-índice para o mês do preço (fator 1). */
+    semIndice: number;
+  };
+  /** Registros que saíram do conjunto único por serem a mesma compra de outra base (P18). */
+  duplicidades: number;
 }
 
 export interface ParametrosPesquisa {
@@ -424,6 +473,12 @@ export interface ParametrosPesquisa {
   orcamentos?: OrcamentoFornecedor[] | unknown;
   /** Método do preço e regra do teto (P11/P12); o que faltar segue ESCOLHA_PADRAO. */
   escolha?: Partial<EscolhaPreco> | null;
+  /** Data de referência e período do art. 5º (D1); ausente = hoje, 12 meses. */
+  periodo?: Partial<PeriodoPesquisa> | null;
+  /** Atualização pelo IPCA dos incisos I e II (D2); ausente = ligada (P10). */
+  corrigirIpca?: boolean;
+  /** ids de prováveis duplicatas que o responsável manteve no conjunto único (P18). */
+  duplicidadesRevertidas?: string[] | unknown;
   /**
    * Devolve TODOS os registros da amostra de cada fonte, e não só os
    * REGISTROS_ANALISE mais recentes, além do EAN da CMED. É o modo do mapa
@@ -447,6 +502,7 @@ interface OpcoesConsolidacao {
   fonte: FonteCurada;
   origemDados?: FonteMercadoResultado["origemDados"];
   coleta?: FonteMercadoResultado["coleta"];
+  periodo?: FonteMercadoResultado["periodo"];
   /** Lista a amostra inteira (mapa XLSX), sem o recorte de REGISTROS_ANALISE. */
   completos?: boolean;
   filtrosNaoSuportados?: CampoFiltro[];
@@ -461,8 +517,13 @@ interface OpcoesConsolidacao {
 
 interface AnaliseFonte {
   resultado: FonteMercadoResultado;
-  /** Preços que compõem a estatística — alimentam o consolidado por registro. */
+  /** Preços que compõem a estatística da fonte. */
   precos: number[];
+  /**
+   * Os mesmos, menos as cópias de compras de outra base (P18): alimentam o
+   * consolidado por registro, em que cada compra conta uma vez.
+   */
+  precosConjunto: number[];
   descartes: RegistroDescartado[];
 }
 
@@ -512,6 +573,10 @@ function consolidar(
       (r.preco < limites.lo || r.preco > limites.hi),
   }));
 
+  const precosConjunto = comOutlier
+    .filter((r) => r.excluidoPor === null && r.preco > 0 && !r.outlierIqr && !r.duplicadoDe)
+    .map((r) => r.preco);
+
   // A curadoria precisa ver todos os destoantes, mesmo os que caíram fora dos
   // REGISTROS_ANALISE mais recentes — são exatamente os candidatos a exclusão.
   const recentes = opcoes.completos ? comOutlier : comOutlier.slice(0, REGISTROS_ANALISE);
@@ -523,6 +588,7 @@ function consolidar(
       filtrosNaoSuportados: opcoes.filtrosNaoSuportados ?? [],
       ...(opcoes.origemDados ? { origemDados: opcoes.origemDados } : {}),
       ...(opcoes.coleta !== undefined ? { coleta: opcoes.coleta } : {}),
+      ...(opcoes.periodo !== undefined ? { periodo: opcoes.periodo } : {}),
       total,
       amostra,
       estatisticas: calcularEstatisticas(dentro),
@@ -531,6 +597,7 @@ function consolidar(
       registros: [...recentes, ...destoantes],
     },
     precos: dentro,
+    precosConjunto,
     descartes,
   };
 }
@@ -919,6 +986,13 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const uf = p.uf ? p.uf.toUpperCase() : null;
   const escolha = normalizarEscolha(p.escolha, ESCOLHA_PADRAO);
   const completos = p.registrosCompletos === true;
+  // Período do art. 5º (D1). As rotas recusam ampliação sem justificativa; se
+  // ainda assim chegar aqui, vale o padrão de 12 meses — nunca ampliar calado.
+  let periodo = normalizarPeriodo(p.periodo);
+  const periodoInvalido = validarPeriodo(periodo);
+  if (periodoInvalido) periodo = { ...periodo, mesesMercado: 12, justificativaAmpliacao: null };
+  const janela = (fonte: FonteMercadoChave): JanelaFonte => janelaDaFonte(fonte, periodo);
+  const corrigirIpca = p.corrigirIpca !== false;
   const [{ brutas, bpsDaApi }, coletas] = await Promise.all([
     mapearUnidades(item),
     item.catmat ? situacaoColetas(item.catmat) : Promise.resolve(null),
@@ -992,10 +1066,20 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     .filter((r) => r.unidadeNorm === unidade)
     .map((r) => r.registro);
 
+  // Janela do art. 5º sobre a data de cada base (D1): o que fica de fora é
+  // contado, para o aviso "fora do período: m (mais recente em …)".
+  const dataInicio = (j: JanelaFonte) => (j.inicio ? new Date(`${j.inicio}T00:00:00Z`) : null);
+  const dataFim = (j: JanelaFonte) => new Date(`${j.fim}T23:59:59.999Z`);
+  const naJanela = (j: JanelaFonte) => ({ ...(dataInicio(j) ? { gte: dataInicio(j) as Date } : {}), lte: dataFim(j) });
+  const foraJanela = (j: JanelaFonte) => (dataInicio(j) ? { lt: dataInicio(j) as Date } : null);
+  const jBps = janela("bps");
+  const jSiasg = janela("siasg");
+  const jPncp = janela("pncp");
+
   const buscarBps = async (): Promise<LinhaBps[]> => {
     if (!whereBps) return [];
     const rows = await db.precoBps.findMany({
-      where: whereBps,
+      where: { AND: [whereBps, { data: naJanela(jBps) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -1018,7 +1102,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const buscarSiasg = async (): Promise<LinhaSiasg[]> => {
     if (!whereSiasg) return [];
     const rows = await db.precoSiasg.findMany({
-      where: whereSiasg,
+      where: { AND: [whereSiasg, { data: naJanela(jSiasg) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -1043,7 +1127,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const buscarPncp = async (): Promise<LinhaPncp[]> => {
     if (!wherePncp) return [];
     const rows = await db.precoPncp.findMany({
-      where: wherePncp,
+      where: { AND: [wherePncp, { data: naJanela(jPncp) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -1071,29 +1155,56 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     });
     return rows;
   };
-  const contarBps = async (): Promise<number> => {
-    if (!whereBps) return 0;
-    const n = await db.precoBps.count({ where: whereBps });
-    return n;
+  type Contagem = { total: number; fora: number; maisRecenteFora: string | null };
+  const SEM_CONTAGEM: Contagem = { total: 0, fora: 0, maisRecenteFora: null };
+  const contarBps = async (): Promise<Contagem> => {
+    if (!whereBps) return SEM_CONTAGEM;
+    const fora = foraJanela(jBps);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoBps.count({ where: { AND: [whereBps, { data: naJanela(jBps) }] } }),
+      fora ? db.precoBps.count({ where: { AND: [whereBps, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoBps.findFirst({ where: { AND: [whereBps, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
-  const contarSiasg = async (): Promise<number> => {
-    if (!whereSiasg) return 0;
-    const n = await db.precoSiasg.count({ where: whereSiasg });
-    return n;
+  const contarSiasg = async (): Promise<Contagem> => {
+    if (!whereSiasg) return SEM_CONTAGEM;
+    const fora = foraJanela(jSiasg);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoSiasg.count({ where: { AND: [whereSiasg, { data: naJanela(jSiasg) }] } }),
+      fora ? db.precoSiasg.count({ where: { AND: [whereSiasg, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoSiasg.findFirst({ where: { AND: [whereSiasg, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
-  const contarPncp = async (): Promise<number> => {
-    if (!wherePncp) return 0;
-    const n = await db.precoPncp.count({ where: wherePncp });
-    return n;
+  const contarPncp = async (): Promise<Contagem> => {
+    if (!wherePncp) return SEM_CONTAGEM;
+    const fora = foraJanela(jPncp);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoPncp.count({ where: { AND: [wherePncp, { data: naJanela(jPncp) }] } }),
+      fora ? db.precoPncp.count({ where: { AND: [wherePncp, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoPncp.findFirst({ where: { AND: [wherePncp, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
 
-  // Fontes de dados abertos (Compras.gov.br, BPS pela API, atas).
-  const consultaDA = (origem: OrigemColeta, fonte: FonteMercado): Promise<ResultadoDadosAbertos | null> =>
-    item.catmat && !semCampo(fonte).length
-      ? consultarDadosAbertos({ origem, catmat: item.catmat, unidade, uf, filtros, amostra: AMOSTRA })
-      : Promise.resolve(null);
+  // Fontes de dados abertos (Compras.gov.br, BPS pela API, atas), na janela da fonte.
+  const consultaDA = (origem: OrigemColeta, fonte: FonteMercadoChave & FonteMercado): Promise<ResultadoDadosAbertos | null> => {
+    if (!item.catmat || semCampo(fonte).length) return Promise.resolve(null);
+    const j = janela(fonte);
+    return consultarDadosAbertos({
+      origem,
+      catmat: item.catmat,
+      unidade,
+      uf,
+      filtros,
+      amostra: AMOSTRA,
+      inicio: dataInicio(j),
+      fim: dataFim(j),
+    });
+  };
 
-  const [bpsRows, siasgRows, pncpRows, cmedRows, totalBps, totalSiasg, totalPncp, daComprasGov, daBps, daArp] =
+  const [bpsRows, siasgRows, pncpRows, cmedRows, contBps, contSiasg, contPncp, daComprasGov, daBps, daArp, tabelaIpca] =
     await Promise.all([
       buscarBps(),
       buscarSiasg(),
@@ -1105,173 +1216,267 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       consultaDA("COMPRASGOV", "comprasgov"),
       bpsDaApi ? consultaDA("BPS", "bps") : Promise.resolve(null),
       consultaDA("ARP_ITEM", "arp"),
+      corrigirIpca ? carregarIpca() : Promise.resolve(null),
     ]);
   const coletaDe = (origem: OrigemColeta): FonteMercadoResultado["coleta"] => {
     const s: SituacaoColeta | undefined = coletas?.porOrigem[origem];
     return s ? { coletadoEm: s.coletadoEm, valida: s.valida, origemCarga: s.origemCarga } : null;
   };
 
-  const analiseComprasGov = consolidar(daComprasGov?.total ?? 0, daComprasGov?.registros ?? [], daComprasGov?.registros.length ?? 0, {
-    fonte: "comprasgov",
-    completos,
-    origemDados: "API",
-    coleta: coletaDe("COMPRASGOV"),
-    filtrosNaoSuportados: semCampo("comprasgov"),
-    excluidos: excluidosPorFonte.get("comprasgov"),
+  // ── 1. Registros de cada fonte, já na janela do art. 5º ──
+  interface FonteBruta {
+    fonte: FonteMercadoChave;
+    total: number;
+    registros: RegistroBruto[];
+    opcoes: OpcoesConsolidacao;
+  }
+  const periodoDe = (fonte: FonteMercadoChave, fora: number, maisRecenteFora: string | null): FonteMercadoResultado["periodo"] => {
+    const j = janela(fonte);
+    return { inicio: j.inicio, fim: j.fim, meses: j.meses, inciso: j.inciso, foraDoPeriodo: fora, maisRecenteFora };
+  };
+  const daFonte = (
+    fonte: FonteMercadoChave & FonteMercado,
+    origem: OrigemColeta,
+    r: ResultadoDadosAbertos | null
+  ): FonteBruta => ({
+    fonte,
+    total: r?.total ?? 0,
+    registros: r?.registros ?? [],
+    opcoes: {
+      fonte,
+      completos,
+      origemDados: "API",
+      coleta: coletaDe(origem),
+      periodo: periodoDe(fonte, r?.foraDoPeriodo ?? 0, r?.maisRecenteFora ?? null),
+      filtrosNaoSuportados: semCampo(fonte),
+      excluidos: excluidosPorFonte.get(fonte),
+    },
   });
-  const analiseArp = consolidar(daArp?.total ?? 0, daArp?.registros ?? [], daArp?.registros.length ?? 0, {
-    fonte: "arp",
-    completos,
-    origemDados: "API",
-    coleta: coletaDe("ARP_ITEM"),
-    filtrosNaoSuportados: semCampo("arp"),
-    excluidos: excluidosPorFonte.get("arp"),
+  const local = (fonte: "bps" | "siasg" | "pncp", c: Contagem, registros: RegistroBruto[]): FonteBruta => ({
+    fonte,
+    total: c.total,
+    registros,
+    opcoes: {
+      fonte,
+      completos,
+      origemDados: "BASE_PAINEL",
+      periodo: periodoDe(fonte, c.fora, c.maisRecenteFora),
+      filtrosNaoSuportados: semCampo(fonte),
+      excluidos: excluidosPorFonte.get(fonte),
+    },
   });
-  const analiseBps = bpsDaApi
-    ? consolidar(daBps?.total ?? 0, daBps?.registros ?? [], daBps?.registros.length ?? 0, {
-        fonte: "bps",
-        completos,
-        origemDados: "API",
-        coleta: coletaDe("BPS"),
-        filtrosNaoSuportados: semCampo("bps"),
-        excluidos: excluidosPorFonte.get("bps"),
-      })
-    : consolidar(
-    totalBps,
-    bpsRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricao,
-      unidade: r.unidade,
-      preco: r.preco,
-      qtd: r.qtd,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.instituicao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: null,
-      fabricante: r.fabricante,
-    })),
-    bpsRows.length,
-    {
-      fonte: "bps",
-      completos,
-      origemDados: "BASE_PAINEL",
-      filtrosNaoSuportados: semCampo("bps"),
-      excluidos: excluidosPorFonte.get("bps"),
-    }
-  );
-  const analiseSiasg = consolidar(
-    totalSiasg,
-    siasgRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricao,
-      unidade: r.unidade,
-      preco: r.preco,
-      qtd: r.qtd,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.orgao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: r.marca,
-      fabricante: r.fabricante,
-      esfera: r.esfera,
-    })),
-    siasgRows.length,
-    {
-      fonte: "siasg",
-      completos,
-      origemDados: "BASE_PAINEL",
-      filtrosNaoSuportados: semCampo("siasg"),
-      excluidos: excluidosPorFonte.get("siasg"),
-    }
-  );
-  const analisePncp = consolidar(
-    totalPncp,
-    pncpRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricaoResumida,
-      unidade: r.unidade,
-      preco: r.valorUnitResultado,
-      qtd: r.quantidade,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.orgao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: null,
-      fabricante: null,
-      // A base carregada tem a coluna, mas hoje vazia (diagnóstico de out/2026).
-      contratacao: r.numeroControlePncp
-        ? {
-            tipo: r.modalidade,
-            numero: null,
-            uasg: null,
-            nomeUasg: null,
-            numeroItem: null,
-            processo: null,
-            criterioJulgamento: null,
-            situacao: null,
-            numeroControlePncp: r.numeroControlePncp,
-            numeroControlePncpAta: null,
-            url: urlPncp(r.numeroControlePncp),
-            referencia: null,
-            indisponivel: "não disponível na base PNCP do painel",
-          }
-        : null,
-    })),
-    pncpRows.length,
-    {
-      fonte: "pncp",
-      completos,
-      origemDados: "BASE_PAINEL",
-      filtrosNaoSuportados: semCampo("pncp"),
-      excluidos: excluidosPorFonte.get("pncp"),
-    }
-  );
 
-  // Orçamentos diretos de fornecedor (art. 5º, IV) — informados pelo usuário,
-  // não consultados em base. Entram como uma fonte a mais, sem IQR.
-  // "Somente registro" é tratado como exclusão com motivo declarado: o
-  // orçamento aparece no relatório, fora do cálculo, como o usuário pediu.
-  const foraDoCalculo = new Map<string, string>(excluidosPorFonte.get("orcamentos"));
-  for (const o of orcamentos) {
-    if (!o.considerarNoCalculo && !foraDoCalculo.has(o.id)) {
-      foraDoCalculo.set(o.id, "Marcado como somente registro pelo responsável pela pesquisa");
+  const fontesBrutas: FonteBruta[] = [
+    daFonte("comprasgov", "COMPRASGOV", daComprasGov),
+    bpsDaApi
+      ? daFonte("bps", "BPS", daBps)
+      : local(
+          "bps",
+          contBps,
+          bpsRows.map((r) => ({
+            id: r.id,
+            descricao: r.descricao,
+            unidade: r.unidade,
+            preco: r.preco,
+            qtd: r.qtd,
+            data: toISO(r.data),
+            uf: r.uf,
+            modalidade: r.modalidade,
+            orgao: r.instituicao,
+            fornecedor: r.fornecedor,
+            cnpjFornecedor: r.cnpjFornecedor,
+            marca: null,
+            fabricante: r.fabricante,
+          }))
+        ),
+    local(
+      "siasg",
+      contSiasg,
+      siasgRows.map((r) => ({
+        id: r.id,
+        descricao: r.descricao,
+        unidade: r.unidade,
+        preco: r.preco,
+        qtd: r.qtd,
+        data: toISO(r.data),
+        uf: r.uf,
+        modalidade: r.modalidade,
+        orgao: r.orgao,
+        fornecedor: r.fornecedor,
+        cnpjFornecedor: r.cnpjFornecedor,
+        marca: r.marca,
+        fabricante: r.fabricante,
+        esfera: r.esfera,
+      }))
+    ),
+    local(
+      "pncp",
+      contPncp,
+      pncpRows.map((r) => ({
+        id: r.id,
+        descricao: r.descricaoResumida,
+        unidade: r.unidade,
+        preco: r.valorUnitResultado,
+        qtd: r.quantidade,
+        data: toISO(r.data),
+        uf: r.uf,
+        modalidade: r.modalidade,
+        orgao: r.orgao,
+        fornecedor: r.fornecedor,
+        cnpjFornecedor: r.cnpjFornecedor,
+        marca: null,
+        fabricante: null,
+        // A base carregada tem a coluna, mas hoje vazia (diagnóstico de out/2026).
+        contratacao: r.numeroControlePncp
+          ? {
+              tipo: r.modalidade,
+              numero: null,
+              uasg: null,
+              nomeUasg: null,
+              numeroItem: null,
+              processo: null,
+              criterioJulgamento: null,
+              situacao: null,
+              numeroControlePncp: r.numeroControlePncp,
+              numeroControlePncpAta: null,
+              url: urlPncp(r.numeroControlePncp),
+              referencia: null,
+              indisponivel: "não disponível na base PNCP do painel",
+            }
+          : null,
+      }))
+    ),
+    daFonte("arp", "ARP_ITEM", daArp),
+  ];
+
+  // Preços informados pelo responsável (P13): um tipo por fonte, com a janela
+  // do seu inciso. "Somente registro" e fora do período viram exclusão com
+  // motivo declarado: o preço continua no relatório, fora do cálculo.
+  for (const tipo of ORDEM_TIPOS_INFORMADOS) {
+    const doTipo = orcamentos.filter((o) => (o.tipo ?? "IV") === tipo);
+    if (!doTipo.length) continue;
+    const { fonte, rotulo } = TIPOS_PRECO_INFORMADO[tipo];
+    const fonteM = fonte as FonteMercadoChave;
+    const j = janela(fonteM);
+    const motivos = new Map<string, string>(excluidosPorFonte.get(fonte));
+    let fora = 0;
+    let maisRecenteFora: string | null = null;
+    for (const o of doTipo) {
+      const dia = o.dataOrcamento.slice(0, 10);
+      const foraDaJanela = (j.inicio !== null && dia < j.inicio) || dia > j.fim;
+      if (foraDaJanela) {
+        fora += 1;
+        if (!maisRecenteFora || o.dataOrcamento > maisRecenteFora) maisRecenteFora = o.dataOrcamento;
+      }
+      if (motivos.has(o.id)) continue;
+      if (!o.considerarNoCalculo) {
+        motivos.set(o.id, "Marcado como somente registro pelo responsável pela pesquisa");
+      } else if (foraDaJanela && !o.justificativaForaPeriodo) {
+        motivos.set(o.id, `Fora do período do inciso ${j.inciso} do art. 5º (${j.meses} meses antes da data de referência)`);
+      }
+    }
+    fontesBrutas.push({
+      fonte: fonteM,
+      total: doTipo.length,
+      registros: doTipo.map((o) => ({
+        id: o.id,
+        descricao: [o.marca, o.fabricante].filter(Boolean).join(" — ") || o.fornecedor,
+        unidade,
+        preco: o.valorUnitario,
+        qtd: null,
+        data: o.dataOrcamento,
+        uf: null,
+        modalidade: rotulo,
+        orgao: null,
+        fornecedor: o.fornecedor,
+        cnpjFornecedor: o.cnpj,
+        marca: o.marca,
+        fabricante: o.fabricante,
+        coletadoEm: o.acessadoEm ?? o.dataOrcamento,
+        contratacao: {
+          tipo: rotulo,
+          numero: o.documento,
+          uasg: null,
+          nomeUasg: null,
+          numeroItem: null,
+          processo: null,
+          criterioJulgamento: null,
+          situacao: null,
+          numeroControlePncp: null,
+          numeroControlePncpAta: null,
+          url: o.url,
+          referencia:
+            [o.documento, o.chaveNfe ? `chave NF-e ${o.chaveNfe}` : null, o.observacao].filter(Boolean).join(" — ") ||
+            "preço informado pelo responsável",
+          indisponivel: null,
+        },
+      })),
+      opcoes: {
+        fonte,
+        completos,
+        origemDados: "INFORMADO",
+        periodo: { inicio: j.inicio, fim: j.fim, meses: j.meses, inciso: j.inciso, foraDoPeriodo: fora, maisRecenteFora },
+        semIqr: true,
+        excluidos: motivos,
+      },
+    });
+  }
+
+  // ── 2. IPCA (D2): só os incisos I e II; o nominal fica guardado ao lado ──
+  const indicesIpca = tabelaIpca?.disponivel ? tabelaIpca.indices : null;
+  const mesBase = indicesIpca ? mesBaseIpca(periodo.dataReferencia, indicesIpca) : null;
+  let semIndice = 0;
+  for (const f of fontesBrutas) {
+    const corrige = mesBase !== null && indicesIpca !== null && !INFO_FONTE[f.fonte].informado;
+    for (const r of f.registros) {
+      r.precoNominal = r.preco;
+      r.mesIndice = r.data.slice(0, 7);
+      if (!corrige) {
+        r.fatorIpca = null;
+        continue;
+      }
+      const fator = fatorIpca(r.mesIndice, mesBase as string, indicesIpca as Map<string, number>);
+      if (fator.semIndice) semIndice += 1;
+      r.fatorIpca = fator.fator;
+      r.preco = r.preco * fator.fator;
     }
   }
-  const analiseOrcamentos = orcamentos.length
-    ? consolidar(
-        orcamentos.length,
-        orcamentos.map((o) => ({
-          id: o.id,
-          descricao: [o.marca, o.fabricante].filter(Boolean).join(" — ") || o.fornecedor,
-          unidade,
-          preco: o.valorUnitario,
-          qtd: null,
-          data: o.dataOrcamento,
-          uf: null,
-          modalidade: "Orçamento direto",
-          orgao: null,
-          fornecedor: o.fornecedor,
-          cnpjFornecedor: o.cnpj,
-          marca: o.marca,
-          fabricante: o.fabricante,
-        })),
-        orcamentos.length,
-        { fonte: "orcamentos", completos, origemDados: "INFORMADO", semIqr: true, excluidos: foraDoCalculo }
-      )
-    : null;
 
-  const bps = analiseBps.resultado;
-  const siasg = analiseSiasg.resultado;
-  const pncp = analisePncp.resultado;
-  const comprasgov = analiseComprasGov.resultado;
-  const arp = analiseArp.resultado;
+  // ── 3. A mesma compra em mais de uma base (P18) ──
+  const revertidas = new Set(
+    Array.isArray(p.duplicidadesRevertidas) ? p.duplicidadesRevertidas.map((x) => String(x)) : []
+  );
+  const marcasDuplicidade = marcarDuplicidades(
+    fontesBrutas
+      .filter((f) => !INFO_FONTE[f.fonte].informado)
+      .flatMap((f) =>
+        f.registros.map((r) => ({
+          id: r.id,
+          fonte: f.fonte,
+          chaveItemCompra22: r.chaveItemCompra22 ?? null,
+          cnpjFornecedor: r.cnpjFornecedor,
+          preco: r.precoNominal ?? r.preco,
+          uf: r.uf,
+          data: r.data,
+          qtd: r.qtd,
+        }))
+      ),
+    revertidas
+  );
+  for (const f of fontesBrutas) {
+    for (const r of f.registros) r.duplicadoDe = marcasDuplicidade.get(r.id) ?? null;
+  }
+
+  // ── 4. Estatística por fonte ──
+  const analisePorFonte = new Map<FonteMercadoChave, AnaliseFonte>(
+    fontesBrutas.map((f) => [f.fonte, consolidar(f.total, f.registros, f.registros.length, f.opcoes)])
+  );
+  const resultadoDe = (fonte: FonteMercadoChave) => analisePorFonte.get(fonte)?.resultado ?? null;
+  const bps = resultadoDe("bps") as FonteMercadoResultado;
+  const siasg = resultadoDe("siasg") as FonteMercadoResultado;
+  const pncp = resultadoDe("pncp") as FonteMercadoResultado;
+  const comprasgov = resultadoDe("comprasgov") as FonteMercadoResultado;
+  const arp = resultadoDe("arp") as FonteMercadoResultado;
 
   // EAN só no modo do mapa: vem da lista mensal (CmedPrecoVersao), uma consulta
   // a mais que a tela não precisa.
@@ -1345,14 +1550,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // Duas leituras, ambas no relatório (ver o cabeçalho do arquivo):
   //   porFonte    — cada base pesa igual; é dela que sai o preço adotado.
   //   porRegistro — cada compra pesa igual; contraprova da anterior.
-  const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = [
-    { fonte: "comprasgov", analise: analiseComprasGov },
-    { fonte: "bps", analise: analiseBps },
-    { fonte: "siasg", analise: analiseSiasg },
-    { fonte: "pncp", analise: analisePncp },
-    { fonte: "arp", analise: analiseArp },
-  ];
-  if (analiseOrcamentos) analises.push({ fonte: "orcamentos", analise: analiseOrcamentos });
+  const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = fontesBrutas.map((f) => ({
+    fonte: f.fonte,
+    analise: analisePorFonte.get(f.fonte) as AnaliseFonte,
+  }));
 
   const comMediana = analises.filter((a) => a.analise.resultado.estatisticas.mediana !== null);
   const fontes = comMediana.map((a) => NOME_FONTE_CURADA[a.fonte]);
@@ -1366,7 +1567,8 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     })),
     medianasPorFonte: medianas,
     porFonte: medianas.length ? calcularEstatisticas(medianas) : { ...ESTATISTICAS_VAZIAS },
-    porRegistro: calcularEstatisticas(analises.flatMap((a) => a.analise.precos)),
+    // Cada compra uma vez: as cópias entre bases (P18) ficam fora.
+    porRegistro: calcularEstatisticas(analises.flatMap((a) => a.analise.precosConjunto)),
   };
   const descartes = analises.flatMap((a) => a.analise.descartes);
   for (const r of cmedRegistros) {
@@ -1392,6 +1594,40 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const capAplica = cmedRegistros.some((r) => r.cap);
 
   const observacoes: string[] = [];
+  // Período do art. 5º (D1) e o que cada fonte deixou de fora.
+  observacoes.push(`Período da pesquisa: ${descricaoPeriodo(periodo)}`);
+  if (periodoInvalido) {
+    observacoes.push(`Período ampliado sem justificativa suficiente: aplicado o padrão de 12 meses. ${periodoInvalido}`);
+  }
+  for (const f of fontesBrutas) {
+    const per = analisePorFonte.get(f.fonte)?.resultado.periodo;
+    if (!per || !per.foraDoPeriodo) continue;
+    const vazia = f.total === 0;
+    observacoes.push(
+      `${NOME_FONTE_CURADA[f.fonte]}: ${per.foraDoPeriodo} registro(s) fora do período${
+        per.maisRecenteFora ? ` (o mais recente em ${new Date(per.maisRecenteFora).toLocaleDateString("pt-BR", { timeZone: "UTC" })})` : ""
+      }${vazia ? " — a fonte ficou sem preço no período (art. 5º, §1º: priorizar os incisos I e II e justificar)" : ""}.`
+    );
+  }
+  // IPCA (D2).
+  if (corrigirIpca && mesBase) {
+    observacoes.push(
+      `Preços dos incisos I e II atualizados pelo IPCA até ${mesBase.slice(5, 7)}/${mesBase.slice(0, 4)}. ${CONVENCAO_IPCA}${
+        semIndice ? ` ${semIndice} registro(s) sem índice para o mês do preço ficaram sem correção.` : ""
+      } O teto CMED não é corrigido.`
+    );
+  } else if (corrigirIpca) {
+    observacoes.push("Atualização pelo IPCA pedida, mas a tabela de índices não está carregada (scripts/import_ipca.py): preços em valores nominais.");
+  }
+  // Duplicidade entre bases (P18).
+  if (marcasDuplicidade.size) {
+    const provaveis = Array.from(marcasDuplicidade.values()).filter((m) => m.provavel).length;
+    observacoes.push(
+      `${marcasDuplicidade.size} registro(s) são a mesma compra de outra base e ficaram fora do conjunto único${
+        provaveis ? ` (${provaveis} por regra — prováveis duplicatas do BPS, reversíveis na curadoria)` : ""
+      }; cada base continua com a sua estatística no consolidado por fonte.`
+    );
+  }
   if (ativos.length) {
     observacoes.push(
       `Filtros adicionais aplicados: ${ativos
@@ -1466,10 +1702,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
   }
-  if (analiseOrcamentos) {
-    const noCalculo = analiseOrcamentos.resultado.estatisticas.n;
+  for (const tipo of ORDEM_TIPOS_INFORMADOS) {
+    const r = resultadoDe(TIPOS_PRECO_INFORMADO[tipo].fonte as FonteMercadoChave);
+    if (!r) continue;
     observacoes.push(
-      `${orcamentos.length} orçamento(s) direto(s) de fornecedor juntado(s) ao processo (art. 5º, IV da IN 65/2021); ${noCalculo} considerado(s) no cálculo do preço de referência.`
+      `${r.total} preço(s) informado(s) — ${TIPOS_PRECO_INFORMADO[tipo].rotulo}; ${r.estatisticas.n} considerado(s) no cálculo.`
     );
   }
   if (descartes.length) {
@@ -1490,7 +1727,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       siasg,
       pncp,
       arp,
-      orcamentos: analiseOrcamentos?.resultado ?? null,
+      similar: resultadoDe("similar"),
+      midia: resultadoDe("midia"),
+      orcamentos: resultadoDe("orcamentos"),
+      notaFiscal: resultadoDe("notaFiscal"),
     },
     consolidado,
     orcamentos,
@@ -1503,5 +1743,14 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       fontes,
       observacoes,
     },
+    periodo,
+    ipca: {
+      ligado: corrigirIpca && mesBase !== null,
+      disponivel: !!tabelaIpca?.disponivel,
+      mesBase: corrigirIpca ? mesBase : null,
+      convencao: CONVENCAO_IPCA,
+      semIndice,
+    },
+    duplicidades: marcasDuplicidade.size,
   };
 }

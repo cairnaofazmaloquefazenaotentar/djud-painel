@@ -23,10 +23,13 @@ import {
   MAX_ORCAMENTOS,
   MOTIVO_MIN,
   NOME_FONTE_CURADA,
+  ORDEM_TIPOS_INFORMADOS,
+  TIPOS_PRECO_INFORMADO,
   motivoValido,
   type ExclusaoRegistro,
   type FonteCurada,
   type OrcamentoFornecedor,
+  type TipoPrecoInformado,
 } from "@/lib/pesquisa-preco-curadoria";
 import { formatarCnpj } from "@/lib/pesquisa-preco-filtros";
 import { fontesDoResultado, type FonteMercadoChave } from "@/lib/pesquisa-preco-fontes";
@@ -90,6 +93,8 @@ interface LinhaCuradoria {
   outlierIqr: boolean;
   /** Distância relativa da mediana da fonte, em % — ordena a lista. */
   desvio: number | null;
+  /** Cópia de uma compra de outra base (P18): "duplicado de Compras.gov.br". */
+  duplicata: { texto: string; provavel: boolean } | null;
 }
 
 function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCuradoria[] {
@@ -112,6 +117,7 @@ function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCur
       uf: null,
       outlierIqr: false,
       desvio: relativo(r.pmvgUnitario ?? r.pmvgEmbalagem, ref),
+      duplicata: null,
     }));
   }
 
@@ -142,6 +148,12 @@ function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCur
     uf: r.uf,
     outlierIqr: r.outlierIqr,
     desvio: relativo(r.preco, mediana),
+    duplicata: r.duplicadoDe
+      ? {
+          texto: `${r.duplicadoDe.provavel ? "provável duplicata de" : "duplicado de"} ${NOME_FONTE_CURADA[r.duplicadoDe.fonte]}`,
+          provavel: r.duplicadoDe.provavel,
+        }
+      : null,
   }));
 }
 
@@ -152,12 +164,17 @@ function LinhaRegistro({
   motivo,
   onAlternar,
   onMotivo,
+  revertida,
+  onReverter,
 }: {
   linha: LinhaCuradoria;
   /** null = considerado; string = desconsiderado com esta justificativa. */
   motivo: string | null;
   onAlternar: () => void;
   onMotivo: (v: string) => void;
+  /** A provável duplicata foi mantida no conjunto único pelo responsável. */
+  revertida: boolean;
+  onReverter: () => void;
 }) {
   const excluido = motivo !== null;
   const motivoCurto = excluido && !motivoValido(motivo);
@@ -192,6 +209,22 @@ function LinhaRegistro({
               <Badge variant="secondary" className="h-4 text-[10px]">
                 fora do IQR
               </Badge>
+            )}
+            {(linha.duplicata || revertida) && (
+              <span className="inline-flex items-center gap-1">
+                <Badge variant="outline" className="h-4 text-[10px]">
+                  {revertida ? "mantida no conjunto único" : linha.duplicata?.texto}
+                </Badge>
+                {(revertida || linha.duplicata?.provavel) && (
+                  <button
+                    type="button"
+                    className="text-[10px] underline underline-offset-2 hover:text-foreground"
+                    onClick={onReverter}
+                  >
+                    {revertida ? "tratar como duplicata" : "não é a mesma compra"}
+                  </button>
+                )}
+              </span>
             )}
           </div>
         </div>
@@ -243,10 +276,14 @@ function AbaRegistros({
   base,
   exclusoes,
   setExclusoes,
+  revertidas,
+  setRevertidas,
 }: {
   base: ResultadoPesquisa;
   exclusoes: Map<string, string>;
   setExclusoes: (fn: (m: Map<string, string>) => Map<string, string>) => void;
+  revertidas: Set<string>;
+  setRevertidas: (fn: (s: Set<string>) => Set<string>) => void;
 }) {
   const [soDestoantes, setSoDestoantes] = useState(false);
 
@@ -338,6 +375,15 @@ function AbaRegistros({
                       motivo={exclusoes.get(chave) ?? null}
                       onAlternar={() => alternar(chave)}
                       onMotivo={(v) => definirMotivo(chave, v)}
+                      revertida={revertidas.has(l.id)}
+                      onReverter={() =>
+                        setRevertidas((atual) => {
+                          const novo = new Set(atual);
+                          if (novo.has(l.id)) novo.delete(l.id);
+                          else novo.add(l.id);
+                          return novo;
+                        })
+                      }
                     />
                   );
                 })}
@@ -350,10 +396,11 @@ function AbaRegistros({
   );
 }
 
-// ── Aba: orçamentos ──────────────────────────────────────────────────────────
+// ── Aba: preços informados (art. 5º, II a V) ─────────────────────────────────
 
-/** Campos do formulário de orçamento — todos texto até a validação. */
+/** Campos do formulário — todos texto até a validação. */
 type FormOrcamento = {
+  tipo: TipoPrecoInformado;
   fornecedor: string;
   cnpj: string;
   marca: string;
@@ -363,9 +410,13 @@ type FormOrcamento = {
   validade: string;
   documento: string;
   observacao: string;
+  url: string;
+  acessadoEm: string;
+  chaveNfe: string;
 };
 
 const ORCAMENTO_VAZIO: FormOrcamento = {
+  tipo: "IV",
   fornecedor: "",
   cnpj: "",
   marca: "",
@@ -375,6 +426,33 @@ const ORCAMENTO_VAZIO: FormOrcamento = {
   validade: "",
   documento: "",
   observacao: "",
+  url: "",
+  acessadoEm: "",
+  chaveNfe: "",
+};
+
+/** Rótulos que mudam com o tipo do preço informado. */
+const CAMPOS_TIPO: Record<TipoPrecoInformado, { quem: string; data: string; ajuda: string }> = {
+  IV: {
+    quem: "Empresa / fornecedor",
+    data: "Data da proposta",
+    ajuda: "Proposta apresentada diretamente por fornecedor (mínimo de 3, art. 5º, IV) — vale por 6 meses.",
+  },
+  III: {
+    quem: "Publicação / sítio eletrônico",
+    data: "Data do preço publicado",
+    ajuda: "Mídia especializada, tabela de referência ou sítio eletrônico (art. 5º, III): informe o endereço e a data e hora do acesso — vale por 6 meses.",
+  },
+  V: {
+    quem: "Emitente da nota fiscal",
+    data: "Data de emissão",
+    ajuda: "Nota fiscal eletrônica (art. 5º, V): informe o número e a chave de acesso — vale por 1 ano.",
+  },
+  II: {
+    quem: "Órgão contratante / fornecedor",
+    data: "Data da contratação",
+    ajuda: "Contratação similar fora das bases consultadas (art. 5º, II): informe o contrato, a ata ou o processo — vale por 1 ano.",
+  },
 };
 
 function AbaOrcamentos({
@@ -391,23 +469,28 @@ function AbaOrcamentos({
 
   const campo = (k: keyof FormOrcamento) => (v: string) =>
     setForm((f) => ({ ...f, [k]: v }));
+  const rotulos = CAMPOS_TIPO[form.tipo];
 
   const adicionar = () => {
     const valor = Number(form.valorUnitario.replace(/\./g, "").replace(",", "."));
     if (form.fornecedor.trim().length < 2) {
-      setErro("Informe a empresa que apresentou a proposta.");
+      setErro(`Informe: ${rotulos.quem.toLowerCase()}.`);
       return;
     }
     if (!Number.isFinite(valor) || valor <= 0) {
-      setErro(`Informe o valor da proposta por ${unidade}.`);
+      setErro(`Informe o valor por ${unidade}.`);
       return;
     }
     if (!form.dataOrcamento) {
-      setErro("Informe a data da proposta.");
+      setErro(`Informe: ${rotulos.data.toLowerCase()}.`);
+      return;
+    }
+    if (form.tipo === "III" && (!/^https?:\/\//i.test(form.url.trim()) || !form.acessadoEm)) {
+      setErro("Mídia ou sítio eletrônico: informe o endereço (http…) e a data e hora do acesso.");
       return;
     }
     if (orcamentos.length >= MAX_ORCAMENTOS) {
-      setErro(`Máximo de ${MAX_ORCAMENTOS} orçamentos por item.`);
+      setErro(`Máximo de ${MAX_ORCAMENTOS} preços informados por item.`);
       return;
     }
     setErro(null);
@@ -417,6 +500,7 @@ function AbaOrcamentos({
         // id local: o banco gera o definitivo ao gravar; aqui ele só precisa
         // ser estável dentro da sessão para casar exclusões e remoções.
         id: `novo-${Date.now()}-${lista.length}`,
+        tipo: form.tipo,
         fornecedor: form.fornecedor.trim(),
         cnpj: form.cnpj.trim() || null,
         marca: form.marca.trim() || null,
@@ -427,18 +511,22 @@ function AbaOrcamentos({
         documento: form.documento.trim() || null,
         observacao: form.observacao.trim() || null,
         considerarNoCalculo: true,
+        url: form.url.trim() || null,
+        acessadoEm: form.acessadoEm ? new Date(form.acessadoEm).toISOString() : null,
+        chaveNfe: form.chaveNfe.replace(/\D/g, "") || null,
+        justificativaForaPeriodo: null,
       },
     ]);
-    setForm({ ...ORCAMENTO_VAZIO, dataOrcamento: form.dataOrcamento });
+    setForm({ ...ORCAMENTO_VAZIO, tipo: form.tipo, dataOrcamento: form.dataOrcamento });
   };
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Proposta apresentada diretamente por fornecedor — fonte admitida pelo art. 5º, IV da IN
-        65/2021 e frequentemente a única disponível em medicamentos importados. O valor deve ser
-        por <strong>{unidade}</strong>, a mesma unidade de fornecimento da pesquisa. Cada orçamento
-        entra na apuração como uma fonte a mais, sem passar pela remoção automática de outliers.
+        Preços que o responsável junta ao processo, fora das bases consultadas. Cada tipo é uma fonte
+        própria no consolidado, sem a remoção automática de outliers, e só entra no cálculo dentro da
+        janela do seu inciso — fora dela, exige justificativa. O valor deve ser por{" "}
+        <strong>{unidade}</strong>, a unidade de fornecimento da pesquisa.
       </p>
 
       {orcamentos.length > 0 && (
@@ -447,16 +535,27 @@ function AbaOrcamentos({
             <div key={o.id} className="rounded-md border bg-card p-2.5 text-xs space-y-1">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-medium">{o.fornecedor}</p>
+                  <p className="font-medium">
+                    <Badge variant="outline" className="mr-1.5 h-4 text-[10px]">
+                      {o.tipo}
+                    </Badge>
+                    {o.fornecedor}
+                  </p>
                   <p className="text-muted-foreground">
-                    {[o.cnpj, o.marca, o.fabricante].filter(Boolean).join(" · ") || "—"}
+                    {[o.cnpj, o.marca, o.fabricante, o.chaveNfe ? `NF-e ${o.chaveNfe}` : null].filter(Boolean).join(" · ") || "—"}
                   </p>
                   <div className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
                     <span className="font-semibold text-foreground">{fmt(o.valorUnitario)}</span>
                     <span>por {unidade}</span>
-                    <span>proposta {fmtData(o.dataOrcamento)}</span>
+                    <span>{fmtData(o.dataOrcamento)}</span>
                     {o.validade && <span>validade {fmtData(o.validade)}</span>}
                     {o.documento && <span>{o.documento}</span>}
+                    {o.url && (
+                      <a href={o.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">
+                        link
+                      </a>
+                    )}
+                    {o.acessadoEm && <span>acesso {new Date(o.acessadoEm).toLocaleString("pt-BR")}</span>}
                   </div>
                 </div>
                 <Button
@@ -464,7 +563,7 @@ function AbaOrcamentos({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label="Remover orçamento"
+                  aria-label="Remover preço informado"
                   onClick={() => setOrcamentos((l) => l.filter((x) => x.id !== o.id))}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -493,22 +592,42 @@ function AbaOrcamentos({
                   )}
                 </span>
               </label>
+              <Input
+                className="h-7 text-[11px]"
+                placeholder="Justificativa para manter no cálculo se estiver fora do período do inciso (opcional)"
+                value={o.justificativaForaPeriodo ?? ""}
+                onChange={(e) =>
+                  setOrcamentos((l) =>
+                    l.map((x) => (x.id === o.id ? { ...x, justificativaForaPeriodo: e.target.value || null } : x))
+                  )
+                }
+              />
             </div>
           ))}
         </div>
       )}
 
       <div className="rounded-md border bg-muted/30 p-3 space-y-3">
-        <p className="text-xs font-medium">Juntar orçamento</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs font-medium">Juntar preço informado</p>
+          <select
+            aria-label="Tipo do preço informado"
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+            value={form.tipo}
+            onChange={(e) => setForm((f) => ({ ...f, tipo: e.target.value as TipoPrecoInformado }))}
+          >
+            {ORDEM_TIPOS_INFORMADOS.map((t) => (
+              <option key={t} value={t}>
+                {TIPOS_PRECO_INFORMADO[t].rotulo}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="text-[11px] text-muted-foreground">{rotulos.ajuda}</p>
         <div className="grid gap-2.5 sm:grid-cols-2">
           <div className="space-y-1">
-            <Label className="text-[11px]">Empresa / fornecedor *</Label>
-            <Input
-              className="h-8 text-xs"
-              placeholder="Razão social de quem apresentou a proposta"
-              value={form.fornecedor}
-              onChange={(e) => campo("fornecedor")(e.target.value)}
-            />
+            <Label className="text-[11px]">{rotulos.quem} *</Label>
+            <Input className="h-8 text-xs" value={form.fornecedor} onChange={(e) => campo("fornecedor")(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px]">CNPJ</Label>
@@ -521,20 +640,12 @@ function AbaOrcamentos({
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px]">Marca ofertada</Label>
-            <Input
-              className="h-8 text-xs"
-              value={form.marca}
-              onChange={(e) => campo("marca")(e.target.value)}
-            />
+            <Label className="text-[11px]">Marca</Label>
+            <Input className="h-8 text-xs" value={form.marca} onChange={(e) => campo("marca")(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px]">Fabricante</Label>
-            <Input
-              className="h-8 text-xs"
-              value={form.fabricante}
-              onChange={(e) => campo("fabricante")(e.target.value)}
-            />
+            <Input className="h-8 text-xs" value={form.fabricante} onChange={(e) => campo("fabricante")(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label className="text-[11px]">Valor por {unidade} (R$) *</Label>
@@ -547,32 +658,43 @@ function AbaOrcamentos({
             />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px]">Documento / nº da proposta</Label>
-            <Input
-              className="h-8 text-xs"
-              placeholder="Ex.: Proposta 123/2026 — SEI 25000.000000/2026-00"
-              value={form.documento}
-              onChange={(e) => campo("documento")(e.target.value)}
-            />
+            <Label className="text-[11px]">{TIPOS_PRECO_INFORMADO[form.tipo].documento}</Label>
+            <Input className="h-8 text-xs" value={form.documento} onChange={(e) => campo("documento")(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label className="text-[11px]">Data da proposta *</Label>
-            <Input
-              type="date"
-              className="h-8 text-xs"
-              value={form.dataOrcamento}
-              onChange={(e) => campo("dataOrcamento")(e.target.value)}
-            />
+            <Label className="text-[11px]">{rotulos.data} *</Label>
+            <Input type="date" className="h-8 text-xs" value={form.dataOrcamento} onChange={(e) => campo("dataOrcamento")(e.target.value)} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Validade da proposta</Label>
-            <Input
-              type="date"
-              className="h-8 text-xs"
-              value={form.validade}
-              onChange={(e) => campo("validade")(e.target.value)}
-            />
-          </div>
+          {form.tipo === "IV" && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">Validade da proposta</Label>
+              <Input type="date" className="h-8 text-xs" value={form.validade} onChange={(e) => campo("validade")(e.target.value)} />
+            </div>
+          )}
+          {(form.tipo === "III" || form.tipo === "II") && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">Endereço (URL){form.tipo === "III" ? " *" : ""}</Label>
+              <Input className="h-8 text-xs" placeholder="https://…" value={form.url} onChange={(e) => campo("url")(e.target.value)} />
+            </div>
+          )}
+          {form.tipo === "III" && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">Data e hora do acesso *</Label>
+              <Input type="datetime-local" className="h-8 text-xs" value={form.acessadoEm} onChange={(e) => campo("acessadoEm")(e.target.value)} />
+            </div>
+          )}
+          {form.tipo === "V" && (
+            <div className="space-y-1">
+              <Label className="text-[11px]">Chave de acesso da NF-e</Label>
+              <Input
+                className="h-8 text-xs"
+                inputMode="numeric"
+                placeholder="44 dígitos"
+                value={form.chaveNfe}
+                onChange={(e) => campo("chaveNfe")(e.target.value.replace(/\D/g, "").slice(0, 44))}
+              />
+            </div>
+          )}
         </div>
         <div className="space-y-1">
           <Label className="text-[11px]">Observação</Label>
@@ -606,7 +728,7 @@ export interface CuradoriaDialogProps {
   titulo: string;
   /** Resultado da pesquisa deste item — de onde saem os registros a conferir. */
   base: ResultadoPesquisa | null;
-  /** Parâmetros para o recálculo no servidor. */
+  /** Parâmetros para o recálculo no servidor (os mesmos da pesquisa: período e IPCA inclusive). */
   parametros: {
     codigo: string;
     unidade: string;
@@ -614,14 +736,19 @@ export interface CuradoriaDialogProps {
     fornecedor?: string | null;
     fabricante?: string | null;
     cnpjComprador?: string | null;
+    periodo?: { dataReferencia: string; mesesMercado: 12 | 24 | 36 | null; justificativaAmpliacao: string | null } | null;
+    corrigirIpca?: boolean;
   } | null;
   exclusoesIniciais: ExclusaoRegistro[];
   orcamentosIniciais: OrcamentoFornecedor[];
+  /** Prováveis duplicatas mantidas no conjunto único (P18). */
+  duplicidadesIniciais?: string[];
   /** Rótulo do botão de confirmação (varia entre pesquisa e cesta). */
   rotuloConfirmar: string;
   onConfirmar: (dados: {
     exclusoes: ExclusaoRegistro[];
     orcamentos: OrcamentoFornecedor[];
+    duplicidadesRevertidas: string[];
   }) => Promise<void> | void;
 }
 
