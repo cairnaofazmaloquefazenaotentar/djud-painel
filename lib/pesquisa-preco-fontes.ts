@@ -10,8 +10,14 @@ import type { FonteMercadoResultado, ResultadoPesquisa } from "@/lib/pesquisa-pr
 // rótulos e da mesma ordem, e a tela é Client Component.
 //
 // A ordem é a do art. 5º (o §1º manda priorizar os incisos I e II) e, dentro
-// do inciso, a de prevalência na deduplicação entre bases (P18): a mesma
-// compra no Compras.gov.br, no SIASG e no PNCP fica com a primeira.
+// do inciso, a de prevalência na deduplicação entre bases (P18).
+//
+// Compras.gov.br é UMA fonte com três bases (pedido da DLOG): a API de dados
+// abertos, o SIASG judicial e a base PNCP carregados no painel. "siasg" e
+// "pncp" continuam como chaves internas (consulta, janela, unidades), mas os
+// registros entram na fonte "comprasgov" — ver BASES_COMPRASGOV. O PNCP não é
+// fonte de preço à parte: é o portal onde a contratação de cada compra é
+// publicada, e o link aparece em cada registro (D4).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Fontes de mercado: tudo o que forma preço, exceto a CMED (teto). */
@@ -37,21 +43,28 @@ export interface InfoFonte {
 
 export const INFO_FONTE: Record<FonteMercadoChave, InfoFonte> = {
   comprasgov: {
-    nome: "Compras.gov.br — Painel de Preços",
+    nome: "Compras.gov.br",
     rotulo: "I - Compras.gov.br",
     inciso: "I",
     janelaMeses: 12,
     informado: false,
   },
   bps: { nome: "BPS", rotulo: "I - BPS", inciso: "I", janelaMeses: 12, informado: false },
+  // Bases da fonte Compras.gov.br (não aparecem como fonte própria).
   siasg: {
-    nome: "SIASG (judicial)",
-    rotulo: "I - SIASG (judicial)",
+    nome: "Compras.gov.br — SIASG judicial",
+    rotulo: "I - Compras.gov.br",
     inciso: "I",
     janelaMeses: 12,
     informado: false,
   },
-  pncp: { nome: "PNCP", rotulo: "II - PNCP", inciso: "II", janelaMeses: 12, informado: false },
+  pncp: {
+    nome: "Compras.gov.br — base PNCP do painel",
+    rotulo: "I - Compras.gov.br",
+    inciso: "I",
+    janelaMeses: 12,
+    informado: false,
+  },
   arp: {
     nome: "Ata de registro de preços",
     rotulo: "II - Ata de Registro de Preços",
@@ -136,12 +149,24 @@ export function corrigidoPeloIpca(fonte: FonteMercadoChave): boolean {
   return inciso === "I" || inciso === "II";
 }
 
+/** Bases que formam a fonte Compras.gov.br (a chave interna de cada uma). */
+export const BASES_COMPRASGOV = ["comprasgov", "siasg", "pncp"] as const;
+export type BaseCompras = "API" | "SIASG" | "PNCP";
+export const BASE_DA_CHAVE: Record<(typeof BASES_COMPRASGOV)[number], BaseCompras> = {
+  comprasgov: "API",
+  siasg: "SIASG",
+  pncp: "PNCP",
+};
+export const ROTULO_BASE: Record<BaseCompras, string> = {
+  API: "API de dados abertos",
+  SIASG: "SIASG judicial (base do painel)",
+  PNCP: "base PNCP do painel",
+};
+
 /** Ordem de apresentação e de prevalência na deduplicação. */
 export const ORDEM_FONTES: FonteMercadoChave[] = [
   "comprasgov",
   "bps",
-  "siasg",
-  "pncp",
   "arp",
   "similar",
   "midia",
@@ -161,8 +186,9 @@ export interface FonteDoResultado {
  */
 export function fontesDoResultado(r: ResultadoPesquisa): FonteDoResultado[] {
   const saida: FonteDoResultado[] = [];
+  const resultados = r.resultados as Partial<Record<FonteMercadoChave, FonteMercadoResultado | null>>;
   for (const fonte of ORDEM_FONTES) {
-    const dados = r.resultados[fonte];
+    const dados = resultados[fonte];
     if (dados) saida.push({ fonte, info: INFO_FONTE[fonte], dados });
   }
   return saida;

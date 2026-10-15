@@ -29,8 +29,11 @@ import {
 } from "@/lib/pesquisa-preco-curadoria";
 
 import {
+  BASE_DA_CHAVE,
   INFO_FONTE,
+  ROTULO_BASE,
   corrigidoPeloIpca,
+  type BaseCompras,
   type ContratacaoRef,
   type DuplicidadeRef,
   type FonteMercadoChave,
@@ -292,6 +295,8 @@ export interface RegistroMercado {
   registroAnvisa?: string | null;
   /** Cópia do mesmo registro numa fonte que prevalece (P18). */
   duplicadoDe?: DuplicidadeRef | null;
+  /** Fonte Compras.gov.br: de qual base veio o registro (API, SIASG judicial ou base PNCP). */
+  base?: BaseCompras | null;
   /** idCompra (17) + nº do item (5): identifica a mesma compra em bases diferentes. */
   chaveItemCompra22?: string | null;
 }
@@ -314,7 +319,18 @@ export interface FonteMercadoResultado {
     inciso: Inciso;
     foraDoPeriodo: number;
     maisRecenteFora: string | null;
+    /** Intervalo de datas escolhido pelo responsável (em vez de N meses). */
+    personalizado?: boolean;
   } | null;
+  /** Fonte Compras.gov.br: quanto veio de cada base (API, SIASG judicial, base PNCP). */
+  composicao?: Array<{
+    base: BaseCompras;
+    total: number;
+    foraDoPeriodo: number;
+    maisRecenteFora: string | null;
+    /** Filtro opcional que a base não tem: ela ficou de fora enquanto ele está ativo. */
+    semCampo: CampoFiltro[];
+  }> | null;
   total: number;
   amostra: number;
   /** Média, mediana e menor valor (art. 6º) sobre a amostra já depurada. */
@@ -420,11 +436,13 @@ export interface ResultadoPesquisa {
   filtros: FiltrosOpcionais;
   resultados: {
     cmed: CmedResultado;
-    /** Compras.gov.br (Painel de Preços) — preenchida quando há coleta da API. */
+    /**
+     * Compras.gov.br: a API de dados abertos, o SIASG judicial e a base PNCP
+     * do painel, numa fonte só (pedido da DLOG; `composicao` diz quanto veio
+     * de cada base). O PNCP é o link da contratação em cada registro.
+     */
     comprasgov?: FonteMercadoResultado | null;
     bps: FonteMercadoResultado;
-    siasg: FonteMercadoResultado;
-    pncp: FonteMercadoResultado;
     /** Itens de atas de registro de preços — preenchida quando há coleta da API. */
     arp?: FonteMercadoResultado | null;
     /** Preços informados pelo responsável (P13), um tipo por fonte; null quando não há. */
@@ -501,6 +519,7 @@ interface OpcoesConsolidacao {
   origemDados?: FonteMercadoResultado["origemDados"];
   coleta?: FonteMercadoResultado["coleta"];
   periodo?: FonteMercadoResultado["periodo"];
+  composicao?: FonteMercadoResultado["composicao"];
   /** Lista a amostra inteira (mapa XLSX), sem o recorte de REGISTROS_ANALISE. */
   completos?: boolean;
   filtrosNaoSuportados?: CampoFiltro[];
@@ -543,7 +562,10 @@ function consolidar(
   const excluidos = opcoes.excluidos ?? new Map<string, string>();
 
   const marcados = registros.map((r) => ({ ...r, excluidoPor: excluidos.get(r.id) ?? null }));
-  const considerados = marcados.filter((r) => r.excluidoPor === null && r.preco > 0);
+  // A cópia de uma compra da MESMA fonte (base PNCP do painel × API, ambas
+  // Compras.gov.br) não conta duas vezes nem na estatística da própria fonte.
+  const copiaNaFonte = (r: { duplicadoDe?: DuplicidadeRef | null }) => r.duplicadoDe?.fonte === opcoes.fonte;
+  const considerados = marcados.filter((r) => r.excluidoPor === null && r.preco > 0 && !copiaNaFonte(r));
 
   const descartes: RegistroDescartado[] = marcados
     .filter((r) => r.excluidoPor !== null)
@@ -567,6 +589,7 @@ function consolidar(
     outlierIqr:
       r.excluidoPor === null &&
       r.preco > 0 &&
+      !copiaNaFonte(r) &&
       limites !== null &&
       (r.preco < limites.lo || r.preco > limites.hi),
   }));
@@ -587,6 +610,7 @@ function consolidar(
       ...(opcoes.origemDados ? { origemDados: opcoes.origemDados } : {}),
       ...(opcoes.coleta !== undefined ? { coleta: opcoes.coleta } : {}),
       ...(opcoes.periodo !== undefined ? { periodo: opcoes.periodo } : {}),
+      ...(opcoes.composicao ? { composicao: opcoes.composicao } : {}),
       total,
       amostra,
       estatisticas: calcularEstatisticas(dentro),
@@ -1001,7 +1025,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // ainda assim chegar aqui, vale o padrão de 12 meses — nunca ampliar calado.
   let periodo = normalizarPeriodo(p.periodo);
   const periodoInvalido = validarPeriodo(periodo);
-  if (periodoInvalido) periodo = { ...periodo, mesesMercado: 12, justificativaAmpliacao: null };
+  if (periodoInvalido) periodo = { ...periodo, mesesMercado: 12, inicio: null, justificativaAmpliacao: null };
   const janela = (fonte: FonteMercadoChave): JanelaFonte => janelaDaFonte(fonte, periodo);
   const corrigirIpca = p.corrigirIpca !== false;
   const [{ brutas, bpsDaApi }, coletas] = await Promise.all([
@@ -1243,7 +1267,15 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   const periodoDe = (fonte: FonteMercadoChave, fora: number, maisRecenteFora: string | null): FonteMercadoResultado["periodo"] => {
     const j = janela(fonte);
-    return { inicio: j.inicio, fim: j.fim, meses: j.meses, inciso: j.inciso, foraDoPeriodo: fora, maisRecenteFora };
+    return {
+      inicio: j.inicio,
+      fim: j.fim,
+      meses: j.meses,
+      inciso: j.inciso,
+      foraDoPeriodo: fora,
+      maisRecenteFora,
+      ...(j.personalizado ? { personalizado: true } : {}),
+    };
   };
   const daFonte = (
     fonte: FonteMercadoChave & FonteMercado,
@@ -1478,14 +1510,60 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     for (const r of f.registros) r.duplicadoDe = marcasDuplicidade.get(r.id) ?? null;
   }
 
+  // ── 3b. SIASG judicial e a base PNCP do painel entram na fonte Compras.gov.br ──
+  // Uma fonte, três bases (pedido da DLOG). A deduplicação acima já rodou com
+  // as bases separadas (a regra da base PNCP × API precisa disso). Cada
+  // registro guarda a sua base; a fonte guarda a composição.
+  {
+    const partes = fontesBrutas.filter((f) => f.fonte === "comprasgov" || f.fonte === "siasg" || f.fonte === "pncp");
+    const destino = partes.find((f) => f.fonte === "comprasgov");
+    if (destino) {
+      const composicao = partes.map((f) => ({
+        base: BASE_DA_CHAVE[f.fonte as "comprasgov" | "siasg" | "pncp"],
+        total: f.total,
+        foraDoPeriodo: f.opcoes.periodo?.foraDoPeriodo ?? 0,
+        maisRecenteFora: f.opcoes.periodo?.maisRecenteFora ?? null,
+        semCampo: semCampo(f.fonte as FonteMercado),
+      }));
+      const registros = partes.flatMap((f) =>
+        f.registros.map((r) => ({ ...r, base: BASE_DA_CHAVE[f.fonte as "comprasgov" | "siasg" | "pncp"] }))
+      );
+      // Mais recentes primeiro, como cada base já vinha (a amostra exibida corta pelos mais recentes).
+      registros.sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+      const excluidos = new Map<string, string>();
+      for (const f of partes) for (const [id, motivo] of f.opcoes.excluidos ?? []) excluidos.set(id, motivo);
+      const maisRecente = composicao.map((c) => c.maisRecenteFora).filter((d): d is string => !!d).sort().at(-1) ?? null;
+      destino.registros = registros;
+      destino.total = composicao.reduce((soma, c) => soma + c.total, 0);
+      destino.opcoes = {
+        ...destino.opcoes,
+        excluidos,
+        // A fonte só fica de fora de um filtro quando NENHUMA das bases o tem.
+        filtrosNaoSuportados: composicao.reduce<CampoFiltro[]>(
+          (comum, c, i) => (i === 0 ? c.semCampo : comum.filter((x) => c.semCampo.includes(x))),
+          []
+        ),
+        periodo: destino.opcoes.periodo
+          ? {
+              ...destino.opcoes.periodo,
+              foraDoPeriodo: composicao.reduce((soma, c) => soma + c.foraDoPeriodo, 0),
+              maisRecenteFora: maisRecente,
+            }
+          : destino.opcoes.periodo,
+        composicao,
+      };
+      for (let i = fontesBrutas.length - 1; i >= 0; i--) {
+        if (fontesBrutas[i].fonte === "siasg" || fontesBrutas[i].fonte === "pncp") fontesBrutas.splice(i, 1);
+      }
+    }
+  }
+
   // ── 4. Estatística por fonte ──
   const analisePorFonte = new Map<FonteMercadoChave, AnaliseFonte>(
     fontesBrutas.map((f) => [f.fonte, consolidar(f.total, f.registros, f.registros.length, f.opcoes)])
   );
   const resultadoDe = (fonte: FonteMercadoChave) => analisePorFonte.get(fonte)?.resultado ?? null;
   const bps = resultadoDe("bps") as FonteMercadoResultado;
-  const siasg = resultadoDe("siasg") as FonteMercadoResultado;
-  const pncp = resultadoDe("pncp") as FonteMercadoResultado;
   const comprasgov = resultadoDe("comprasgov") as FonteMercadoResultado;
   const arp = resultadoDe("arp") as FonteMercadoResultado;
 
@@ -1648,10 +1726,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     for (const fonte of ["comprasgov", "bps", "siasg", "pncp", "arp"] as FonteMercado[]) {
       const faltando = semCampo(fonte);
       if (!faltando.length) continue;
+      const base = fonte === "siasg" || fonte === "pncp" || fonte === "comprasgov";
       observacoes.push(
-        `${NOME_FONTE[fonte]} não registra ${faltando
+        `${base ? `Compras.gov.br (${ROTULO_BASE[BASE_DA_CHAVE[fonte]]})` : NOME_FONTE[fonte]} não registra ${faltando
           .map((c) => ROTULO_FILTRO[c].toLowerCase())
-          .join(" nem ")}; a fonte foi excluída da apuração enquanto esse filtro estiver ativo.`
+          .join(" nem ")}; ${base ? "essa base ficou" : "a fonte foi"} fora da apuração enquanto esse filtro estiver ativo.`
       );
     }
     if (filtros.fabricante && cmedTodos.length > cmedRegistros.length) {
@@ -1662,7 +1741,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   if (item.tipo === "REGISTRO" && !item.catmat) {
     observacoes.push(
-      "Registro ANVISA sem CATMAT associado: as bases de mercado (BPS, SIASG, PNCP) não podem ser consultadas por código. Resultado limitado ao preço CMED."
+      "Registro ANVISA sem CATMAT associado: as bases de mercado (Compras.gov.br, BPS, atas) não podem ser consultadas por código. Resultado limitado ao preço CMED."
     );
   }
   if (pmvgAplicado && precoReferencia !== null && limitePmvg !== null) {
@@ -1708,7 +1787,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       "Compras.gov.br (Painel de Preços) ainda não coletado para este CATMAT: use \"Coletar dados abertos\" para incluir as compras públicas dos últimos meses."
     );
   }
-  if (bps.total === 0 && siasg.total === 0 && pncp.total === 0 && comprasgov.total === 0 && arp.total === 0) {
+  if (bps.total === 0 && comprasgov.total === 0 && arp.total === 0) {
     observacoes.push(
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
@@ -1735,8 +1814,6 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       cmed,
       comprasgov,
       bps,
-      siasg,
-      pncp,
       arp,
       similar: resultadoDe("similar"),
       midia: resultadoDe("midia"),

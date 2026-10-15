@@ -9,8 +9,11 @@
  * Sai com código 1 se algum caso falhar. Não toca no banco.
  */
 import {
+  descricaoPeriodo,
+  inicioDasBases,
   janelaDaFonte,
   normalizarPeriodo,
+  periodoAmpliado,
   subtrairMeses,
   validarPeriodo,
 } from "../lib/pesquisa-preco-periodo";
@@ -75,6 +78,24 @@ confere("todo o período: sem início", janelaDaFonte("bps", pTodo).inicio, null
 confere("mídia (III): 6 meses", janelaDaFonte("midia", p36), { inicio: "2026-04-15", fim: hoje, meses: 6, inciso: "III" });
 confere("cotação (IV): 6 meses", janelaDaFonte("orcamentos", pTodo).meses, 6);
 confere("nota fiscal (V): 12 meses", janelaDaFonte("notaFiscal", p36).meses, 12);
+
+// Intervalo de datas (pedido da DLOG): de "inicio" até a data de referência.
+const curto = normalizarPeriodo({ dataReferencia: hoje, inicio: "2026-03-01" }, hoje);
+const longo = normalizarPeriodo({ dataReferencia: hoje, inicio: "2024-01-01" }, hoje);
+confere("intervalo: início guardado", [curto.inicio, inicioDasBases(curto)], ["2026-03-01", "2026-03-01"]);
+confere("intervalo depois da referência é ignorado", normalizarPeriodo({ dataReferencia: "2026-01-01", inicio: "2026-05-01" }, hoje).inicio, null);
+confere("intervalo de 7 meses não é ampliação", periodoAmpliado(curto), false);
+confere("intervalo de quase 3 anos é ampliação", periodoAmpliado(longo), true);
+confere("intervalo longo sem justificativa é recusado", validarPeriodo(longo) !== null, true);
+confere("janela das bases no intervalo", janelaDaFonte("comprasgov", curto), {
+  inicio: "2026-03-01",
+  fim: hoje,
+  meses: null,
+  inciso: "I",
+  personalizado: true,
+});
+confere("preço informado segue o inciso mesmo com intervalo", janelaDaFonte("orcamentos", longo).meses, 6);
+confere("descrição do intervalo", descricaoPeriodo(curto).includes("intervalo de 01/03/2026 a 15/10/2026"), true);
 confere("contratação similar (II): 12 meses", janelaDaFonte("similar", p36).meses, 12);
 
 // ── IPCA (D2) ────────────────────────────────────────────────────────────────
@@ -133,8 +154,10 @@ confere("mês sem índice: fator 1, sinalizado", fatorIpca("2024-05", "2026-09",
 confere(
   "IPCA só nos incisos I e II",
   ORDEM_FONTES.filter(corrigidoPeloIpca),
-  ["comprasgov", "bps", "siasg", "pncp", "arp", "similar"]
+  ["comprasgov", "bps", "arp", "similar"]
 );
+confere("bases do Compras.gov.br também são corrigidas", [corrigidoPeloIpca("siasg"), corrigidoPeloIpca("pncp")], [true, true]);
+confere("SIASG e PNCP não são fonte própria", ORDEM_FONTES.includes("siasg") || ORDEM_FONTES.includes("pncp"), false);
 
 // ── Duplicidade entre bases (P18) ────────────────────────────────────────────
 
@@ -200,6 +223,30 @@ confere(
 );
 const dois = marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps" }), reg({ id: "BPS:b", fonte: "bps" })]);
 confere("cada compra casa com um registro do BPS só", Array.from(dois.keys()), ["BPS:a"]);
+
+// Base PNCP do painel × API (sem fornecedor na base): UF, preço, quantidade e até 3 dias.
+const semCnpj = (r: Partial<RegistroParaDuplicidade> & Pick<RegistroParaDuplicidade, "id" | "fonte">) =>
+  reg({ cnpjFornecedor: null, ...r });
+confere(
+  "base PNCP: mesma UF, preço e qtd, 2 dias → provável",
+  marcarDuplicidades([compras, semCnpj({ id: "P:1", fonte: "pncp", data: "2026-05-12T00:00:00.000Z" })]).get("P:1"),
+  { fonte: "comprasgov", id: "COMPRASGOV:9", provavel: true }
+);
+confere(
+  "base PNCP: 5 dias → não",
+  marcarDuplicidades([compras, semCnpj({ id: "P:1", fonte: "pncp", data: "2026-05-15T00:00:00.000Z" })]).has("P:1"),
+  false
+);
+confere(
+  "base PNCP: quantidade diferente → não",
+  marcarDuplicidades([compras, semCnpj({ id: "P:1", fonte: "pncp", qtd: 51 })]).has("P:1"),
+  false
+);
+confere(
+  "a mesma compra na base PNCP e no BPS: as duas cópias são marcadas",
+  Array.from(marcarDuplicidades([compras, semCnpj({ id: "P:1", fonte: "pncp" }), reg({ id: "BPS:a", fonte: "bps" })]).keys()).sort(),
+  ["BPS:a", "P:1"]
+);
 
 // ── Escolha gravada na cesta (P11/P12) ───────────────────────────────────────
 

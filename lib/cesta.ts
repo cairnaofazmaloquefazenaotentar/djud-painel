@@ -44,6 +44,8 @@ export interface CestaItemDTO {
   justificativa: string | null;
   /** 12, 24 ou 36; 0 = todo o período; null = padrão (12). */
   periodoMeses: number | null;
+  /** Intervalo de datas: início das bases ("AAAA-MM-DD"); prevalece sobre periodoMeses. */
+  periodoInicio: string | null;
   justificativaPeriodo: string | null;
   corrigirIpca: boolean;
   duplicidadesRevertidas: string[];
@@ -100,6 +102,7 @@ interface LinhaCesta {
   aliquotaTeto: string | null;
   justificativa: string | null;
   periodoMeses: number | null;
+  periodoInicio: string | null;
   justificativaPeriodo: string | null;
   corrigirIpca: boolean;
   duplicidadesRevertidas: unknown;
@@ -153,6 +156,7 @@ export function paraDTO(r: LinhaCesta): CestaItemDTO {
     aliquotaTeto: r.aliquotaTeto,
     justificativa: r.justificativa,
     periodoMeses: r.periodoMeses,
+    periodoInicio: r.periodoInicio,
     justificativaPeriodo: r.justificativaPeriodo,
     corrigirIpca: r.corrigirIpca,
     duplicidadesRevertidas: Array.isArray(r.duplicidadesRevertidas)
@@ -196,6 +200,7 @@ export function parametrosDoItem(
       dataReferencia,
       mesesMercado: c.periodoMeses === 0 ? null : c.periodoMeses === 24 || c.periodoMeses === 36 ? c.periodoMeses : 12,
       justificativaAmpliacao: c.justificativaPeriodo,
+      inicio: c.periodoInicio,
     },
     corrigirIpca: c.corrigirIpca,
     duplicidadesRevertidas: c.duplicidadesRevertidas,

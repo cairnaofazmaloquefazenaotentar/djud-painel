@@ -794,6 +794,7 @@ model CestaItem {
   aliquotaTeto         String?          // P12 — alíquota do PMVG da regra do medicamento de referência
   justificativa        String?  @db.Text // justificativa do preço editada pelo responsável
   periodoMeses         Int?             // D1 — null = 12 meses; 0 = todo o período
+  periodoInicio          String?  // Intervalo de datas: início das bases ("AAAA-MM-DD"); prevalece sobre periodoMeses
   justificativaPeriodo String?  @db.Text // D1 — obrigatória quando o período é ampliado
   corrigirIpca         Boolean  @default(true) // D2 — atualização monetária pelo IPCA
   duplicidadesRevertidas Json?          // P18 — ids de prováveis duplicatas mantidas pelo responsável

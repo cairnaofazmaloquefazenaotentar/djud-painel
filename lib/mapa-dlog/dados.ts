@@ -1,6 +1,7 @@
 import {
   INFO_FONTE,
   ORDEM_FONTES,
+  ROTULO_BASE,
   fontesDoResultado,
   type FonteMercadoChave,
   type Inciso,
@@ -249,14 +250,22 @@ function linhaDaBase(
   const info = INFO_FONTE[fonte];
   const c = r.contratacao ?? null;
   const motivo = motivoNaoCompoe(r, fonte, ctx.somenteRegistro);
-  const compoeFonte = !r.excluidoPor && !r.outlierIqr && r.preco > 0;
+  // A cópia de uma compra da MESMA fonte (base PNCP × API do Compras.gov.br)
+  // não compõe nem a estatística da própria fonte.
+  const compoeFonte = !r.excluidoPor && !r.outlierIqr && r.preco > 0 && r.duplicadoDe?.fonte !== fonte;
   const orcamento = fonte === "orcamentos" ? ctx.resultado.orcamentos.find((o) => o.id === r.id) : undefined;
 
   // Identificação da contratação: o que a origem tiver; senão, o motivo.
-  const semDado = c?.indisponivel ? c.indisponivel : NAO_DISPONIVEL;
+  // Base do painel (SIASG judicial, base PNCP) sem a identificação: diz de qual base veio.
+  const semDado = c?.indisponivel
+    ? c.indisponivel
+    : r.base && r.base !== "API"
+      ? `${ROTULO_BASE[r.base]}: ${NAO_DISPONIVEL}`
+      : NAO_DISPONIVEL;
   let numeroCompra = c?.numero ?? (c?.processo ? `Processo ${c.processo}` : semDado);
+  // O link é a página da CONTRATAÇÃO no PNCP (não uma fonte de preço à parte).
   let referencia: LinhaBase["referencia"] = c?.url
-    ? { texto: c.numeroControlePncpAta ?? c.numeroControlePncp ?? "PNCP", url: c.url }
+    ? { texto: `Contratação no PNCP ${c.numeroControlePncpAta ?? c.numeroControlePncp ?? ""}`.trim(), url: c.url }
     : { texto: c?.referencia ?? c?.numeroControlePncp ?? semDado, url: null };
   if (orcamento) {
     numeroCompra = texto(orcamento.documento, "proposta juntada ao processo");

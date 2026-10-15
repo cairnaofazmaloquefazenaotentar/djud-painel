@@ -114,11 +114,13 @@ export type FonteCurada =
   | "notaFiscal"
   | "cmed";
 
+// "siasg" e "pncp" são bases da fonte Compras.gov.br; os nomes ficam para
+// ler exclusões gravadas antes da junção (normalizarExclusoes as converte).
 export const NOME_FONTE_CURADA: Record<FonteCurada, string> = {
-  comprasgov: "Compras.gov.br (Painel de Preços)",
+  comprasgov: "Compras.gov.br",
   bps: "BPS",
-  siasg: "SIASG (judicial)",
-  pncp: "PNCP",
+  siasg: "Compras.gov.br — SIASG judicial",
+  pncp: "Compras.gov.br — base PNCP do painel",
   arp: "Ata de registro de preços",
   similar: "Contratação similar informada",
   midia: "Mídia especializada / sítio eletrônico",
@@ -161,10 +163,13 @@ export function normalizarExclusoes(
     const id = String((e as ExclusaoRegistro).id ?? "").trim();
     const motivo = String((e as ExclusaoRegistro).motivo ?? "").trim().slice(0, MOTIVO_MAX);
     if (!FONTES_CURADAS.includes(fonte) || !id || !motivoValido(motivo)) continue;
-    const chave = `${fonte}:${id}`;
+    // SIASG judicial e a base PNCP entraram na fonte Compras.gov.br: a
+    // exclusão gravada antes da junção continua valendo (o id é o mesmo).
+    const fonteAtual: FonteCurada = fonte === "siasg" || fonte === "pncp" ? "comprasgov" : fonte;
+    const chave = `${fonteAtual}:${id}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
-    saida.push({ fonte, id, motivo });
+    saida.push({ fonte: fonteAtual, id, motivo });
     if (saida.length >= MAX_EXCLUSOES) break;
   }
   return saida;

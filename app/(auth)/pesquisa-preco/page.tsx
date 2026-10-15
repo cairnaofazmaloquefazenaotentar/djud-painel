@@ -38,6 +38,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-preco/material-search";
 import { CestaSheet } from "@/components/pesquisa-preco/cesta-sheet";
+import { IncluirPrecoInformado } from "@/components/pesquisa-preco/incluir-preco-informado";
+import { CampoFiltroSugestoes } from "@/components/pesquisa-preco/campo-filtro-sugestoes";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { CamposEscolhaPreco, PreviaPrecoAdotado } from "@/components/pesquisa-preco/escolha-preco";
 import { DadosAbertosPanel } from "@/components/pesquisa-preco/dados-abertos-panel";
@@ -47,7 +49,6 @@ import { useAdicionarItemCesta } from "@/hooks/useCesta";
 // arrastaria o Prisma para o bundle do navegador (ver o cabeçalho de lá).
 import {
   ROTULO_FILTRO,
-  formatarCnpj,
   type CampoFiltro,
   type FiltrosOpcionais,
 } from "@/lib/pesquisa-preco-filtros";
@@ -61,11 +62,13 @@ import {
   type EscolhaPreco,
 } from "@/lib/pesquisa-preco-metodo";
 import { gerarJustificativa } from "@/lib/mapa-dlog/justificativa";
+import { ROTULO_BASE } from "@/lib/pesquisa-preco-fontes";
 import { mesAnterior } from "@/lib/ipca";
 import {
   JUSTIFICATIVA_PERIODO_MIN,
   OPCOES_MESES,
   hojeBrasilia,
+  periodoAmpliado as ehAmpliado,
   type MesesMercado,
 } from "@/lib/pesquisa-preco-periodo";
 import { useQuery } from "@tanstack/react-query";
@@ -83,8 +86,9 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preço — três filtros obrigatórios (código do material, descrição
 // CATMAT e unidade de fornecimento) dirigem a consulta consolidada em CMED,
-// BPS, SIASG e PNCP (lib/pesquisa-preco.ts). O preço CMED é exibido por
-// unidade de fornecimento (PMVG ÷ Qt_Embal).
+// Compras.gov.br (API, SIASG judicial e base PNCP), BPS e atas
+// (lib/pesquisa-preco.ts). O PNCP é o link da contratação de cada compra. O
+// preço CMED é exibido por unidade de fornecimento (PMVG ÷ Qt_Embal).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -135,8 +139,9 @@ function ContratacaoLinha({ r }: { r: RegistroMercado }) {
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-0.5 text-primary underline underline-offset-2 hover:text-foreground"
+            title="Página da contratação desta compra no Portal Nacional de Contratações Públicas"
           >
-            PNCP
+            contratação no PNCP
             <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         </>
@@ -192,6 +197,14 @@ function SourcePanel({
               {stats.periodo.maisRecenteFora ? ` (mais recente em ${fmtDate(stats.periodo.maisRecenteFora)})` : ""}
             </span>
           )}
+        </p>
+      )}
+      {stats?.composicao && stats.composicao.length > 1 && (
+        // Compras.gov.br reúne três bases: quanto veio de cada uma.
+        <p className="text-[11px] text-muted-foreground">
+          {stats.composicao
+            .map((c) => `${ROTULO_BASE[c.base]}: ${fmtInt(c.total)}${c.semCampo.length ? " (fora do filtro)" : ""}`)
+            .join(" · ")}
         </p>
       )}
       {stats?.origemDados === "API" && stats.coleta?.coletadoEm && (
@@ -641,6 +654,9 @@ export default function PesquisaPrecoPage() {
   // Parâmetros da apuração (D1/D2): data de referência, período do art. 5º e IPCA.
   const [dataReferencia, setDataReferencia] = useState(() => hojeBrasilia());
   const [mesesMercado, setMesesMercado] = useState<MesesMercado>(12);
+  // Intervalo de datas (pedido da DLOG): as bases de `inicioPeriodo` até a data de referência.
+  const [modoIntervalo, setModoIntervalo] = useState(false);
+  const [inicioPeriodo, setInicioPeriodo] = useState("");
   const [justificativaPeriodo, setJustificativaPeriodo] = useState("");
   const [corrigirIpca, setCorrigirIpca] = useState(true);
 
@@ -763,11 +779,15 @@ export default function PesquisaPrecoPage() {
   const qtdFiltros = [fornecedor.trim(), fabricante.trim(), digitosCnpj].filter(Boolean).length;
 
   // Ampliar o período exige justificativa (D1): o Buscar fica bloqueado com o motivo à vista.
-  const periodoAmpliado = mesesMercado !== 12;
+  // Intervalo de datas mais longo que 12 meses também é ampliação; mais curto, não.
+  const inicioEscolhido = modoIntervalo && inicioPeriodo ? inicioPeriodo : null;
+  const periodoAmpliado = ehAmpliado({ dataReferencia, mesesMercado, justificativaAmpliacao: null, inicio: inicioEscolhido });
   const periodoSemJustificativa =
     periodoAmpliado && justificativaPeriodo.trim().length < JUSTIFICATIVA_PERIODO_MIN;
+  const intervaloIncompleto = modoIntervalo && (!inicioPeriodo || inicioPeriodo > dataReferencia);
 
-  const canSubmit = !!material && !!unidade && !carregandoItem && !filtrosInvalidos && !periodoSemJustificativa;
+  const canSubmit =
+    !!material && !!unidade && !carregandoItem && !filtrosInvalidos && !periodoSemJustificativa && !intervaloIncompleto;
 
   const limparFiltros = useCallback(() => {
     setFornecedor("");
@@ -788,10 +808,11 @@ export default function PesquisaPrecoPage() {
         dataReferencia,
         mesesMercado,
         justificativaAmpliacao: periodoAmpliado ? justificativaPeriodo.trim() : null,
+        inicio: inicioEscolhido,
       },
       corrigirIpca,
     });
-  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca]);
+  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca, inicioEscolhido]);
 
   const handleAdicionarCesta = useCallback(() => {
     if (!params) return;
@@ -807,6 +828,7 @@ export default function PesquisaPrecoPage() {
         // O período e o IPCA da pesquisa viajam com o item; a data de referência
         // na cesta é sempre a da emissão.
         periodoMeses: params.periodo.mesesMercado === null ? 0 : params.periodo.mesesMercado,
+        periodoInicio: params.periodo.inicio ?? null,
         justificativaPeriodo: params.periodo.justificativaAmpliacao,
         corrigirIpca: params.corrigirIpca,
         duplicidadesRevertidas,
@@ -922,11 +944,16 @@ export default function PesquisaPrecoPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Consulta consolidada por código CATMAT na CMED, no Compras.gov.br (Painel de Preços), no BPS,
-            no SIASG judicial, no PNCP e nas atas de registro de preços · Metodologia IN 65/2021
+            Consulta consolidada por código CATMAT na CMED, no Compras.gov.br (API de dados abertos, SIASG
+            judicial e base PNCP), no BPS e nas atas de registro de preços — o PNCP é o link da contratação
+            de cada compra · Metodologia IN 65/2021
           </p>
         </div>
-        <CestaSheet podeGerarRelatorio={canReport} />
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Preço informado direto na cesta, sem pesquisar antes (pedido da DLOG). */}
+          {canSearch && <IncluirPrecoInformado />}
+          <CestaSheet podeGerarRelatorio={canReport} />
+        </div>
       </div>
 
       {/* Filtros obrigatórios */}
@@ -981,9 +1008,9 @@ export default function PesquisaPrecoPage() {
             </Select>
             {unidadeSelecionada && (
               <p className="text-[11px] text-muted-foreground">
-                CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · Compras.gov.br {fmtInt(unidadeSelecionada.fontes.comprasgov)} · BPS{" "}
-                {fmtInt(unidadeSelecionada.fontes.bps)} · SIASG {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP{" "}
-                {fmtInt(unidadeSelecionada.fontes.pncp)} · Atas {fmtInt(unidadeSelecionada.fontes.arp)}
+                CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · Compras.gov.br{" "}
+                {fmtInt(unidadeSelecionada.fontes.comprasgov + unidadeSelecionada.fontes.siasg + unidadeSelecionada.fontes.pncp)} · BPS{" "}
+                {fmtInt(unidadeSelecionada.fontes.bps)} · Atas {fmtInt(unidadeSelecionada.fontes.arp)}
               </p>
             )}
           </div>
@@ -1020,8 +1047,11 @@ export default function PesquisaPrecoPage() {
             <div className="space-y-1.5">
               <Label className="text-xs" htmlFor="periodo-meses">Período das bases (incisos I e II)</Label>
               <Select
-                value={mesesMercado === null ? "todos" : String(mesesMercado)}
-                onValueChange={(v) => setMesesMercado(v === "todos" ? null : (Number(v) as 12 | 24 | 36))}
+                value={modoIntervalo ? "intervalo" : mesesMercado === null ? "todos" : String(mesesMercado)}
+                onValueChange={(v) => {
+                  setModoIntervalo(v === "intervalo");
+                  if (v !== "intervalo") setMesesMercado(v === "todos" ? null : (Number(v) as 12 | 24 | 36));
+                }}
               >
                 <SelectTrigger id="periodo-meses" className="w-full">
                   <SelectValue />
@@ -1032,8 +1062,25 @@ export default function PesquisaPrecoPage() {
                       {o.rotulo}
                     </SelectItem>
                   ))}
+                  <SelectItem value="intervalo">Intervalo de datas…</SelectItem>
                 </SelectContent>
               </Select>
+              {modoIntervalo && (
+                <div className="flex items-center gap-1.5 pt-1">
+                  <Input
+                    type="date"
+                    aria-label="Início do intervalo das bases"
+                    max={dataReferencia}
+                    value={inicioPeriodo}
+                    onChange={(e) => setInicioPeriodo(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                  <span className="shrink-0 text-xs text-muted-foreground">até a data de referência</span>
+                </div>
+              )}
+              {intervaloIncompleto && (
+                <p className="text-[11px] text-destructive">Informe a data inicial (até a data de referência).</p>
+              )}
             </div>
             <label className="flex items-center gap-2 text-xs cursor-pointer md:pb-2">
               <input
@@ -1110,45 +1157,59 @@ export default function PesquisaPrecoPage() {
             <div id="mais-filtros" className="grid gap-3 md:grid-cols-3">
               <div className="space-y-1.5">
                 <Label className="text-xs" htmlFor="filtro-fornecedor">Fornecedor</Label>
-                <Input
+                <CampoFiltroSugestoes
                   id="filtro-fornecedor"
+                  campo="fornecedor"
                   placeholder="Ex.: ALTERMED"
                   value={fornecedor}
-                  onChange={(e) => setFornecedor(e.target.value)}
+                  onChange={setFornecedor}
+                  codigo={material?.codigo ?? null}
+                  unidade={unidade || null}
+                  uf={uf === "todos" ? null : uf}
+                  invalido={fornecedorCurto}
                 />
                 <p className={`text-[11px] ${fornecedorCurto ? "text-destructive" : "text-muted-foreground"}`}>
                   {fornecedorCurto
                     ? "Informe ao menos 2 caracteres."
-                    : "Trecho do nome de quem vendeu — BPS, SIASG e PNCP."}
+                    : "Trecho do nome de quem vendeu — Compras.gov.br e BPS (a base PNCP do painel vem sem o fornecedor)."}
                 </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs" htmlFor="filtro-fabricante">Fabricante</Label>
-                <Input
+                <CampoFiltroSugestoes
                   id="filtro-fabricante"
+                  campo="fabricante"
                   placeholder="Ex.: EMS"
                   value={fabricante}
-                  onChange={(e) => setFabricante(e.target.value)}
+                  onChange={setFabricante}
+                  codigo={material?.codigo ?? null}
+                  unidade={unidade || null}
+                  uf={uf === "todos" ? null : uf}
+                  invalido={fabricanteCurto}
                 />
                 <p className={`text-[11px] ${fabricanteCurto ? "text-destructive" : "text-muted-foreground"}`}>
                   {fabricanteCurto
                     ? "Informe ao menos 2 caracteres."
-                    : "Trecho do laboratório — BPS, SIASG e CMED (recorta o teto PMVG). O PNCP não registra fabricante."}
+                    : "Trecho do laboratório — Compras.gov.br (marca), BPS e CMED (recorta o teto PMVG)."}
                 </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs" htmlFor="filtro-cnpj">CNPJ Comprador</Label>
-                <Input
+                <CampoFiltroSugestoes
                   id="filtro-cnpj"
-                  inputMode="numeric"
-                  placeholder="00.000.000/0000-00"
+                  campo="cnpjComprador"
+                  placeholder="CNPJ ou nome do comprador"
                   value={cnpjComprador}
-                  onChange={(e) => setCnpjComprador(formatarCnpj(e.target.value))}
+                  onChange={setCnpjComprador}
+                  codigo={material?.codigo ?? null}
+                  unidade={unidade || null}
+                  uf={uf === "todos" ? null : uf}
+                  invalido={cnpjCurto}
                 />
                 <p className={`text-[11px] ${cnpjCurto ? "text-destructive" : "text-muted-foreground"}`}>
                   {cnpjCurto
                     ? "Informe ao menos a raiz do CNPJ (8 dígitos)."
-                    : "Órgão que comprou — completo ou só a raiz (BPS e PNCP). O SIASG não registra."}
+                    : "Órgão que comprou — completo ou só a raiz; digite o nome para procurar o CNPJ (BPS). O Compras.gov.br identifica o comprador pela UASG."}
                 </p>
               </div>
             </div>
@@ -1323,7 +1384,7 @@ export default function PesquisaPrecoPage() {
           fabricante={result?.filtros.fabricante ?? null}
         />
         <SourcePanel
-          label="Compras.gov.br — Painel de Preços (inciso I)"
+          label="Compras.gov.br — API, SIASG judicial e base PNCP (inciso I)"
           color="bg-indigo-500"
           stats={result?.resultados.comprasgov ?? null}
           loading={loading}
@@ -1337,20 +1398,6 @@ export default function PesquisaPrecoPage() {
           }
           color="bg-blue-500"
           stats={result?.resultados.bps ?? null}
-          loading={loading}
-          comFiltros={filtrosAplicados.length > 0}
-        />
-        <SourcePanel
-          label="SIASG — Compras Judiciais"
-          color="bg-amber-500"
-          stats={result?.resultados.siasg ?? null}
-          loading={loading}
-          comFiltros={filtrosAplicados.length > 0}
-        />
-        <SourcePanel
-          label="PNCP — base do painel, 2024–2025 (inciso II)"
-          color="bg-emerald-500"
-          stats={result?.resultados.pncp ?? null}
           loading={loading}
           comFiltros={filtrosAplicados.length > 0}
         />
@@ -1420,8 +1467,8 @@ export default function PesquisaPrecoPage() {
         <p className="font-medium text-foreground">Metodologia</p>
         <p>
           Conforme IN SEGES/ME nº 65/2021: os preços são coletados por código CATMAT no Compras.gov.br
-          (Painel de Preços), no BPS, no SIASG (compras judiciais), no PNCP e nas atas de registro de
-          preços, na unidade de fornecimento selecionada, aplicando-se o critério de remoção de outliers
+          (API de dados abertos, SIASG judicial e base PNCP do painel, numa fonte só), no BPS e nas atas de
+          registro de preços, na unidade de fornecimento selecionada, aplicando-se o critério de remoção de outliers
           (método IQR). No padrão do painel, o preço de referência é a mediana das medianas por fonte, e o
           PMVG vigente (CMED), convertido para a unidade de fornecimento pela quantidade por embalagem, é
           aplicado como teto obrigatório; o método e a regra do teto podem ser escolhidos na emissão.

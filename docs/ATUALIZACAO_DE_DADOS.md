@@ -65,7 +65,7 @@ Tabelas e colunas novas (uma vez por ambiente, **antes** de publicar a versao qu
 python scripts/create_dadosabertos_tables.py --dry-run
 python scripts/create_dadosabertos_tables.py --confirm   # DadosAbertosPreco, DadosAbertosColeta, PncpVinculo
 python scripts/alter_cesta_dlog.py --dry-run
-python scripts/alter_cesta_dlog.py --confirm             # colunas da cesta: periodo, IPCA, metodo/teto, justificativa, duplicatas, tipo do preco informado
+python scripts/alter_cesta_dlog.py --confirm             # colunas da cesta: periodo (meses ou intervalo), IPCA, metodo/teto, justificativa, duplicatas, tipo do preco informado
 python scripts/import_ipca.py --dry-run
 python scripts/import_ipca.py --confirm                  # cria IndiceIpca e carrega a serie do IBGE
 ```

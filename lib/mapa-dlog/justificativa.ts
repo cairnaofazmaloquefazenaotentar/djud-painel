@@ -4,7 +4,7 @@ import {
   rotuloRegraTetoCurto,
 } from "@/lib/pesquisa-preco-metodo";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
-import { subtrairMeses } from "@/lib/pesquisa-preco-periodo";
+import { inicioDasBases } from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Justificativa do preço adotado, no padrão da DLOG (seção 8.4 da avaliação).
@@ -67,8 +67,8 @@ export function gerarJustificativa(r: ResultadoPesquisa, contexto: ContextoJusti
   // no HTML e no mapa, seja quem for o chamador.
   const ctx: ContextoJustificativa = {
     periodo:
-      r.periodo && r.periodo.mesesMercado !== null
-        ? { inicio: subtrairMeses(r.periodo.dataReferencia, r.periodo.mesesMercado), fim: r.periodo.dataReferencia }
+      r.periodo && inicioDasBases(r.periodo)
+        ? { inicio: inicioDasBases(r.periodo) as string, fim: r.periodo.dataReferencia }
         : null,
     ipcaMesBase: r.ipca?.ligado ? r.ipca.mesBase : null,
     duplicados: r.duplicidades ?? 0,

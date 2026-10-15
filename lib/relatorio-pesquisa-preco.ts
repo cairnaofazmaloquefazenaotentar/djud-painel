@@ -5,7 +5,7 @@ import {
   TIPOS_PRECO_INFORMADO,
   type OrcamentoFornecedor,
 } from "@/lib/pesquisa-preco-curadoria";
-import { INFO_FONTE, ORDEM_FONTES, corrigidoPeloIpca } from "@/lib/pesquisa-preco-fontes";
+import { INFO_FONTE, ORDEM_FONTES, ROTULO_BASE, corrigidoPeloIpca } from "@/lib/pesquisa-preco-fontes";
 import { descricaoPeriodo } from "@/lib/pesquisa-preco-periodo";
 import {
   ROTULO_METODO,
@@ -219,10 +219,8 @@ export function conteudoMetodo(
   return `<p style="font-size:11px;margin-bottom:6px;">A pesquisa foi realizada em conformidade com o art. 5º da IN SEGES/ME nº 65/2021, a partir do código CATMAT e da unidade de fornecimento do item, consultando as seguintes bases de dados oficiais:</p>
       <ul style="padding-left:18px;font-size:11px;line-height:1.8;">
         <li><strong>CMED/ANVISA</strong> — Câmara de Regulação do Mercado de Medicamentos: preço máximo de venda ao governo (PMVG) como teto regulatório obrigatório, convertido da embalagem para a unidade de fornecimento pela quantidade por embalagem (Qt_Embal) do registro ANVISA.</li>
-        <li><strong>Compras.gov.br — Painel de Preços</strong> (inciso I): preços praticados em todas as compras públicas registradas no Compras.gov.br, por código CATMAT, coletados da API de dados abertos (compras dos últimos 36 meses), com o número da compra, a UASG, o item e, quando publicada, a contratação no PNCP.</li>
+        <li><strong>Compras.gov.br</strong> (inciso I): preços praticados nas compras públicas por código CATMAT, reunindo três bases — a API de dados abertos do Painel de Preços (compras dos últimos 36 meses, com o número da compra, a UASG e o item), o SIASG/Comprasnet judicial (2002–2021) e a base de contratos do PNCP carregada no painel (2024–2025). O PNCP é também o portal da contratação de cada compra: o link vai em cada registro.</li>
         <li><strong>BPS</strong> — Banco de Preços em Saúde (Ministério da Saúde): compras hospitalares públicas por código CATMAT, coletadas da API de dados abertos (com nº do processo, da ata e registro ANVISA) ou, sem coleta, da base histórica carregada no painel (2020–2025).</li>
-        <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
-        <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT), na base carregada no painel.</li>
         <li><strong>Atas de registro de preços</strong> (inciso II): itens de atas com vigência iniciada nos últimos 12 meses, por código CATMAT, coletados da API de dados abertos, com o link da ata no PNCP.</li>
         <li><strong>Preços informados pelo responsável</strong> (art. 5º, II a V) — contratação similar fora das bases, mídia especializada ou sítio eletrônico, cotação com fornecedor e nota fiscal eletrônica, quando juntados ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
@@ -323,9 +321,11 @@ function boxesEstatisticas(e: Estatisticas): string {
 export function textoPeriodoFonte(f: FonteMercadoResultado): string {
   const p = f.periodo;
   if (!p) return "";
-  const janela = p.inicio
-    ? `${p.meses} meses (de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)})`
-    : `todo o período disponível até ${fmtDate(p.fim)}`;
+  const janela = p.personalizado && p.inicio
+    ? `intervalo de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)}`
+    : p.inicio
+      ? `${p.meses} meses (de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)})`
+      : `todo o período disponível até ${fmtDate(p.fim)}`;
   // Base: o que está fora da janela nem é lido. Preço informado: fica listado e
   // sai do cálculo, salvo justificativa do responsável (coluna "No cálculo").
   const fora = p.foraDoPeriodo
@@ -439,17 +439,34 @@ function textoColeta(f: FonteMercadoResultado): string {
   return ` Dados coletados em ${fmtDate(f.coleta.coletadoEm)}${f.coleta.valida ? "" : " (há mais de 7 dias)"}.`;
 }
 
+/** Quanto veio de cada base da fonte Compras.gov.br (API, SIASG judicial, base PNCP). */
+function textoComposicao(f: FonteMercadoResultado): string {
+  if (!f.composicao?.length) return "";
+  const partes = f.composicao.map(
+    (c) =>
+      `${ROTULO_BASE[c.base]}: ${fmtInt(c.total)}${c.semCampo.length ? " (fora do filtro adicional)" : ""}`
+  );
+  return ` Composição: ${partes.join("; ")}.`;
+}
+
+/**
+ * Compras.gov.br: uma fonte, três bases (pedido da DLOG) — a API de dados
+ * abertos (Painel de Preços), o SIASG judicial e a base PNCP carregados no
+ * painel. O PNCP não é fonte de preço à parte: é onde a contratação de cada
+ * compra é publicada, e o link vai em cada registro.
+ */
 export function conteudoComprasGov(resultado: ResultadoPesquisa): string {
   const { item, unidade, uf, resultados } = resultado;
   const fonte = resultados.comprasgov;
   if (!fonte) return `<p style="color:#666;font-style:italic;font-size:11px;">Fonte não consultada nesta pesquisa.</p>`;
-  return conteudoMercado(
+  const pncp = `<p style="font-size:10px;color:#444;margin-top:4px;"><strong>PNCP:</strong> o Portal Nacional de Contratações Públicas não entra como fonte de preço separada — é onde a contratação de cada compra do Compras.gov.br é publicada. A coluna "Contratação de referência" traz o nº da compra, a UASG, o item e o link da contratação no PNCP (quando publicada).</p>`;
+  return `${conteudoMercado(
     fonte,
-    `Nenhuma compra no Compras.gov.br para este código e unidade de fornecimento${fonte.coleta?.coletadoEm ? "" : " — o CATMAT ainda não foi coletado da API de dados abertos"}.`,
+    `Nenhuma compra no Compras.gov.br para este código e unidade de fornecimento${fonte.coleta?.coletadoEm ? "" : " — o CATMAT ainda não foi coletado da API de dados abertos"}.${textoComposicao(fonte)}`,
     (f) =>
-      `Foram identificadas <strong>${fmtInt(f.total)}</strong> compras no Compras.gov.br (Painel de Preços, API de dados abertos) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.${textoColeta(f)}`,
+      `Foram identificadas <strong>${fmtInt(f.total)}</strong> compras no Compras.gov.br para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.${textoComposicao(f)}${textoColeta(f)}`,
     { label: "UASG / Órgão", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
-  );
+  )}${pncp}`;
 }
 
 export function conteudoArp(resultado: ResultadoPesquisa): string {
@@ -462,28 +479,6 @@ export function conteudoArp(resultado: ResultadoPesquisa): string {
     (f) =>
       `Foram identificados <strong>${fmtInt(f.total)}</strong> itens de atas de registro de preços (vigência iniciada nos últimos 12 meses) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>.${textoColeta(f)}`,
     { label: "Gerenciadora", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
-  );
-}
-
-export function conteudoSiasg(resultado: ResultadoPesquisa): string {
-  const { item, unidade, uf, resultados } = resultado;
-  return conteudoMercado(
-    resultados.siasg,
-    "Nenhum registro encontrado no SIASG para compras judiciais deste código e unidade de fornecimento.",
-    (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros de compras com ação judicial no SIASG (2002–2021) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
-    { label: "Órgão", fn: (r) => esc((r.orgao || "—").substring(0, 40)) }
-  );
-}
-
-export function conteudoPncp(resultado: ResultadoPesquisa): string {
-  const { item, unidade, uf, resultados } = resultado;
-  return conteudoMercado(
-    resultados.pncp,
-    "Nenhum registro encontrado no PNCP para este código e unidade de fornecimento.",
-    (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no PNCP (materiais, 2024–2025) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
-    { label: "Fornecedor", fn: (r) => esc((r.fornecedor || "—").substring(0, 40)) }
   );
 }
 

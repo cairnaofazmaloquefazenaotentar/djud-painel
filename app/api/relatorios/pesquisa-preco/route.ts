@@ -32,9 +32,7 @@ import {
   conteudoAtualizacaoMonetaria,
   conteudoPeriodo,
   conteudoPrecosInformados,
-  conteudoPncp,
   conteudoReferencias,
-  conteudoSiasg,
   esc,
   especificacaoDoItem,
   fmtBRL,
@@ -82,7 +80,7 @@ function gerarHTML(resultado: ResultadoPesquisa, emissao: Emissao, meta: MetaRel
     <p style="font-size:11px;margin-bottom:10px;"><strong>Justificativa do preço adotado:</strong> ${esc(emissao.justificativa)}</p>
     ${conteudoObservacoes(resultado)}
     <p style="font-size:11px;margin-bottom:6px;"><strong>Validade desta pesquisa:</strong> 90 (noventa) dias, conforme art. 5º, §4º da IN SEGES/ME nº 65/2021 — até <strong>${fmtDateLong(validade)}</strong>.</p>
-    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), Compras.gov.br (Painel de Preços, API de dados abertos), BPS (${resultado.resultados.bps.origemDados === "API" ? "API de dados abertos do Ministério da Saúde" : "base histórica 2020–2025"}), SIASG/Comprasnet (compras judiciais 2002–2021), PNCP (materiais 2024–2025) e atas de registro de preços (API de dados abertos).</p>
+    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), Compras.gov.br (API de dados abertos do Painel de Preços, SIASG/Comprasnet judicial 2002–2021 e base PNCP de contratos 2024–2025, com o link da contratação no PNCP), BPS (${resultado.resultados.bps.origemDados === "API" ? "API de dados abertos do Ministério da Saúde" : "base histórica 2020–2025"}) e atas de registro de preços (API de dados abertos).</p>
     ${blocoAssinaturas(meta)}`;
 
   // A seção de orçamentos só existe quando há proposta juntada, então a
@@ -107,10 +105,8 @@ function gerarHTML(resultado: ResultadoPesquisa, emissao: Emissao, meta: MetaRel
       `${conteudoPeriodo(resultado)}<div style="margin-top:8px;"><strong style="font-size:11px;">Atualização monetária</strong></div>${conteudoAtualizacaoMonetaria(resultado)}`
     ),
     secao(++n, "Resultado por Fonte — CMED/ANVISA (Preço-Teto Regulatório por Unidade)", conteudoCmed(resultado)),
-    secao(++n, "Resultado por Fonte — Compras.gov.br (Painel de Preços)", conteudoComprasGov(resultado)),
+    secao(++n, "Resultado por Fonte — Compras.gov.br (API, SIASG judicial e base PNCP)", conteudoComprasGov(resultado)),
     secao(++n, "Resultado por Fonte — BPS (Banco de Preços em Saúde)", conteudoBps(resultado)),
-    secao(++n, "Resultado por Fonte — SIASG/Comprasnet (Compras com Ação Judicial)", conteudoSiasg(resultado)),
-    secao(++n, "Resultado por Fonte — PNCP (Portal Nacional de Contratações Públicas)", conteudoPncp(resultado)),
     secao(++n, "Resultado por Fonte — Atas de Registro de Preços", conteudoArp(resultado)),
   ];
   if (resultado.orcamentos.length > 0) {

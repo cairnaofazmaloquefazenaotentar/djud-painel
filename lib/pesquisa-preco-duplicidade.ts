@@ -10,6 +10,10 @@ import { ORDEM_FONTES, type DuplicidadeRef, type FonteMercadoChave } from "@/lib
 //   • Chave de 22 dígitos do item da compra (idCompra + nº do item): mesma
 //     chave = mesma compra. Prevalece a primeira fonte na ordem de
 //     ORDEM_FONTES (Compras.gov.br antes do SIASG, do PNCP e das atas).
+//   • Base PNCP do painel × API do Compras.gov.br (a base não traz a chave nem
+//     o fornecedor): duplicata PROVÁVEL com a mesma UF, o mesmo preço (2
+//     casas), a mesma quantidade e até 3 dias de diferença. As duas são a
+//     mesma fonte (Compras.gov.br): a cópia sai também da estatística da fonte.
 //   • BPS, que não tem a chave: duplicata PROVÁVEL de uma compra do
 //     Compras.gov.br com o mesmo CNPJ do fornecedor, o mesmo preço (2 casas) e
 //     a mesma UF, e com a mesma quantidade até 15 dias de diferença na data —
@@ -62,8 +66,29 @@ export function marcarDuplicidades(
     }
   }
 
-  // 2. BPS × Compras.gov.br, por regra. Cada compra casa com um registro só.
   const compras = registros.filter((r) => r.fonte === "comprasgov" && !marcas.has(r.id));
+
+  // 2. Base PNCP do painel × API, por regra (sem CNPJ: UF, preço, quantidade e data).
+  // Cada regra tem o seu controle: a mesma compra pode estar na base PNCP E no BPS.
+  const usadasPncp = new Set<string>();
+  for (const p of registros) {
+    if (p.fonte !== "pncp" || marcas.has(p.id) || revertidas.has(p.id) || p.qtd === null) continue;
+    let melhor: { r: RegistroParaDuplicidade; d: number } | null = null;
+    for (const c of compras) {
+      if (usadasPncp.has(c.id) || c.qtd === null || Math.abs(c.qtd - p.qtd) > 1e-6) continue;
+      if (Math.round(c.preco * 100) !== Math.round(p.preco * 100)) continue;
+      if ((c.uf ?? "") !== (p.uf ?? "")) continue;
+      const d = dias(c.data, p.data);
+      if (d > DIAS_PROVAVEL_SEM_QTD) continue;
+      if (!melhor || d < melhor.d) melhor = { r: c, d };
+    }
+    if (melhor) {
+      usadasPncp.add(melhor.r.id);
+      marcas.set(p.id, { fonte: "comprasgov", id: melhor.r.id, provavel: true });
+    }
+  }
+
+  // 3. BPS × Compras.gov.br, por regra. Cada compra casa com um registro só.
   const usadas = new Set<string>();
   for (const b of registros) {
     if (b.fonte !== "bps" || marcas.has(b.id) || revertidas.has(b.id)) continue;

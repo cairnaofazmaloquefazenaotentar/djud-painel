@@ -21,42 +21,43 @@ const Dialog = ({
     }
   }, [open])
 
-  // Esc fecha a janela, como o clique fora dela.
+  // Esc fecha a janela, como o clique fora dela — a menos que um componente
+  // de dentro já tenha tratado o Esc (fechar uma lista de sugestões ou um
+  // Select marca o evento com preventDefault): aí só a lista fecha.
   React.useEffect(() => {
     if (!open) return
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onOpenChange(false)
+      if (e.key === "Escape" && !e.defaultPrevented) onOpenChange(false)
     }
     document.addEventListener("keydown", aoTeclar)
     return () => document.removeEventListener("keydown", aoTeclar)
   }, [open, onOpenChange])
 
   // Clique FORA do conteúdo fecha. Só conta quando o botão desceu e subiu no
-  // fundo: arrastar uma seleção de texto de dentro para fora não fecha.
+  // fundo: arrastar uma seleção de texto de dentro para fora não fecha. O fundo
+  // são as duas camadas (a escura e a que centraliza) — um handler só, na de
+  // fora: com um em cada, o mousedown da camada de dentro subia para a de fora
+  // e era sobrescrito, e o clique fora nunca fechava.
+  const fundo = React.useRef<HTMLDivElement>(null)
+  const centro = React.useRef<HTMLDivElement>(null)
   const desceuNoFundo = React.useRef(false)
-  const noFundo = (e: React.MouseEvent) => e.target === e.currentTarget
+  const noFundo = (e: React.MouseEvent) => e.target === fundo.current || e.target === centro.current
 
   if (!open) return null
 
   return (
     <div
+      ref={fundo}
       className="fixed inset-0 z-50 overflow-y-auto bg-black/50"
       onMouseDown={(e) => {
         desceuNoFundo.current = noFundo(e)
       }}
       onClick={(e) => {
         if (desceuNoFundo.current && noFundo(e)) onOpenChange(false)
+        desceuNoFundo.current = false
       }}
     >
-      <div
-        className="flex items-center justify-center min-h-screen px-4 py-8"
-        onMouseDown={(e) => {
-          desceuNoFundo.current = noFundo(e)
-        }}
-        onClick={(e) => {
-          if (desceuNoFundo.current && noFundo(e)) onOpenChange(false)
-        }}
-      >
+      <div ref={centro} className="flex items-center justify-center min-h-screen px-4 py-8">
         {children}
       </div>
     </div>
@@ -69,6 +70,8 @@ const DialogContent = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
+    role="dialog"
+    aria-modal="true"
     className={cn(
       "relative w-full max-w-4xl bg-white rounded-lg shadow-lg",
       className

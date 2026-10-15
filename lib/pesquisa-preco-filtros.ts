@@ -120,3 +120,27 @@ export function normalizarFiltros(f: Partial<FiltrosOpcionais> | null | undefine
 export function filtrosAtivos(f: FiltrosOpcionais): CampoFiltro[] {
   return (Object.keys(ROTULO_FILTRO) as CampoFiltro[]).filter((c) => f[c] != null);
 }
+
+// ── Sugestões (autocomplete) dos filtros opcionais ───────────────────────────
+
+/**
+ * Valor sugerido para um filtro opcional: o que existe nas bases para o item e
+ * a unidade escolhidos, nas MESMAS colunas que o filtro consulta — escolher a
+ * sugestão garante que o filtro encontra ao menos os registros contados.
+ */
+export type SugestaoFiltro = {
+  /** Texto que vai para o campo (CNPJ sempre pontuado). */
+  valor: string;
+  /** Complemento exibido (no CNPJ, o nome do comprador). */
+  detalhe: string | null;
+  /** Registros do item/unidade com esse valor, somadas as bases. */
+  total: number;
+  /** Rótulo das bases em que o valor aparece. */
+  fontes: string[];
+};
+
+export type RespostaSugestoesFiltro = {
+  valores: SugestaoFiltro[];
+  /** Por que a lista veio vazia (item não encontrado, campo sem base…). */
+  motivo: string | null;
+};

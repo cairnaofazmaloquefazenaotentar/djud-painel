@@ -64,6 +64,10 @@ stories/          # Storybook 8 — 8 components × 2-6 stories cada
 
 3. **Cores em oklch(L C H), nunca hsl/rgb/hex.**
 
+4. **Janelas modais** em `components/ui/dialog.tsx`: fecham no Esc e no clique fora (contado só
+   quando o botão desce e sobe no fundo). Esc já tratado por um componente de dentro (lista de
+   sugestões, Select — `preventDefault`) fecha só ele, não a janela.
+
 ## RBAC — Roles e Permissões
 
 | Role     | Pode fazer                                                    |
@@ -124,12 +128,16 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   (REPLACE; criam a tabela se ausente com a mesma DDL do `prisma db push`).
 - Preço CMED é por embalagem (`PrecoCmed.pmvgSemImpostos`); a pesquisa divide por `qtEmbalagem` para
   refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
-- Fontes: CMED (teto), **Compras.gov.br — Painel de Preços** (API de dados abertos), BPS (API do
-  Ministério da Saúde ou, sem coleta, a base histórica `PrecoBps`), SIASG judicial, PNCP, **atas de
-  registro de preços** (API) e os **preços informados pelo responsável** (P13: II contratação similar,
-  III mídia/sítio, IV cotação com fornecedor, V nota fiscal — cada tipo é uma fonte). Cruzamento por
-  código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local o código puro; as fontes de dados
-  abertos gravam o CATMAT sem zeros.
+- Fontes: CMED (teto), **Compras.gov.br** (uma fonte só, com três bases: a API de dados abertos —
+  Painel de Preços —, o SIASG judicial e a base PNCP do painel; `composicao` dá total, fora do período
+  e filtro sem coluna por base, e cada registro traz `base`), BPS (API do Ministério da Saúde ou, sem
+  coleta, a base histórica `PrecoBps`), **atas de registro de preços** (API) e os **preços informados
+  pelo responsável** (P13: II contratação similar, III mídia/sítio, IV cotação com fornecedor, V nota
+  fiscal — cada tipo é uma fonte). O **PNCP não é fonte à parte**: é o link da contratação de cada
+  compra do Compras.gov.br (vínculo abaixo). Rótulos das bases em `ROTULO_BASE`
+  (`lib/pesquisa-preco-fontes.ts`); exclusões gravadas com `fonte` siasg/pncp (antes da fusão) são
+  lidas como `comprasgov`. Cruzamento por código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local
+  o código puro; as fontes de dados abertos gravam o CATMAT sem zeros.
 - A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
   só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços. Não confundir
   com a fonte "Compras.gov.br" (tabela `DadosAbertosPreco`, origem `COMPRASGOV`).
@@ -170,11 +178,13 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
 - Tipos e helpers puros ficam em `lib/pesquisa-preco-filtros.ts`, **não** em `lib/pesquisa-preco.ts`:
   a página é Client Component e importar de lá arrastaria o Prisma para o bundle do navegador.
   `lib/pesquisa-preco.ts` reexporta tudo (`export *`), então o servidor importa de um lugar só.
-- Cobertura por base (`FONTE_SEM_CAMPO`) — a fonte que **não tem a coluna** é excluída da apuração
-  enquanto o filtro estiver ativo, e o motivo aparece no painel, no relatório e nas observações.
-  Misturar registros filtrados com não filtrados falsearia a mediana das medianas.
+- Cobertura por base (`FONTE_SEM_CAMPO`, chaveado pela base: `comprasgov` = API, `siasg`, `pncp`) —
+  a base que **não tem a coluna** é excluída da apuração enquanto o filtro estiver ativo, e o motivo
+  aparece no painel (composição da fonte), no relatório e nas observações. Misturar registros
+  filtrados com não filtrados falsearia a mediana das medianas. Na fonte Compras.gov.br,
+  `filtrosNaoSuportados` só lista o filtro que **nenhuma** das três bases tem.
 
-  | Filtro         | Compras.gov.br | BPS | SIASG              | PNCP              | Atas          | CMED            |
+  | Filtro         | Compras.gov.br — API | BPS | Compras.gov.br — SIASG | Compras.gov.br — base PNCP | Atas | CMED |
   |----------------|----------------|-----|--------------------|-------------------|---------------|-----------------|
   | Fornecedor     | ✅ | ✅  | ✅                 | coluna vazia¹     | ✅            | n/a             |
   | Fabricante     | ✅ `marca` | ✅ (API: `nomeFabricante`) | coluna vazia¹ | ❌ sem coluna | ❌ sem coluna | ✅ laboratório  |
@@ -184,6 +194,14 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   simplesmente não retorna nada. Não entra em `FONTE_SEM_CAMPO` de propósito — passa a filtrar
   sozinha quando os dados chegarem.
 - Fabricante recorta **também o teto**: o PMVG passa a ser o do laboratório escolhido.
+- **Autocomplete** (`GET /api/precos/filtros/sugestoes`, `lib/pesquisa-preco-sugestoes.ts`, campo
+  `components/pesquisa-preco/campo-filtro-sugestoes.tsx`): valores que existem para o item + unidade
+  (+ UF) nas **mesmas colunas** que o filtro consulta, com a contagem e as bases — escolher a sugestão
+  garante ao menos os registros contados. Sem a janela do art. 5º (o que estiver fora aparece no
+  aviso do período). Une grafias só por caixa: o filtro distingue acento e pontuação, então unir
+  "S.A" e "SA" prometeria registros que ele não acha. Fabricante: os laboratórios da CMED vêm num
+  grupo à parte, no topo (recortam o teto). CNPJ: dígitos casam por prefixo; letras procuram pelo
+  nome do comprador e só a sugestão escolhida preenche o campo. O valor continua livre (trecho).
 - A cesta guarda `codigo`+`unidade`+`uf`, a curadoria e as escolhas do item, mas **não** os filtros
   opcionais: o relatório consolidado refaz a pesquisa sem eles. A tela avisa isso ao adicionar um
   item com filtro ativo.
@@ -216,10 +234,12 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   chave de 22 dígitos → prevalece a primeira fonte de `ORDEM_FONTES`; BPS × Compras.gov.br por regra
   (mesmo CNPJ, preço em 2 casas e UF; mesma quantidade até 15 dias, sem quantidade até 3) = provável
   duplicata, reversível na curadoria (`duplicidadesRevertidas`). A cópia sai **só do conjunto
-  único** (`porRegistro`, aba do item: "Compõe = Não — duplicado de …"); cada base mantém a sua
-  estatística no consolidado por fonte.
+  único** (`porRegistro`, aba do item: "Compõe = Não — duplicado de …"); cada fonte mantém a sua
+  estatística no consolidado por fonte. Exceção: cópia **dentro da mesma fonte** — SIASG ou base
+  PNCP repetindo a API (mesma chave, ou base PNCP × API com mesma UF, preço, quantidade e até 3
+  dias) — sai também da estatística da fonte Compras.gov.br (`copiaNaFonte`).
 - O relatório nomina **empresa vencedora, marca e fabricante** em cada registro
-  (BPS: fabricante; SIASG: fabricante + marca; PNCP: só fornecedor).
+  (BPS: fabricante; Compras.gov.br — SIASG: fabricante + marca; base PNCP: só fornecedor).
 - Tela de curadoria: `components/pesquisa-preco/curadoria-dialog.tsx`, usada tanto pela
   pesquisa avulsa (estado efêmero, enviado junto com o relatório) quanto por item da cesta
   (gravado). A prévia do impacto é recalculada **no servidor** (`POST /api/precos/buscar`),
@@ -248,6 +268,11 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   a da emissão; nunca no futuro), `mesesMercado` 12 (padrão) | 24 | 36 | null = todo o período.
   Ampliar exige justificativa (≥ 20 caracteres): a rota **recusa com 400**, não corrige em silêncio;
   a justificativa sai no relatório, na aba Parâmetros e no `AuditLog`. Sem ampliação automática.
+- **Intervalo de datas** (pedido da DLOG): `inicio` ("AAAA-MM-DD", não posterior à data de
+  referência) prevalece sobre `mesesMercado` — as bases vão de `inicio` até a data de referência.
+  Início anterior a 12 meses conta como ampliação (`periodoAmpliado`, exige a justificativa);
+  `inicioDasBases` dá o início efetivo para a justificativa e o relatório ("intervalo de … a …").
+  Na cesta, `CestaItem.periodoInicio`.
 - Janela por fonte (`janelaDaFonte`): bases e atas (I e II) seguem o período escolhido; preços
   informados ficam na janela do seu inciso (II e V: 12 meses; III e IV: 6), mesmo com as bases
   ampliadas. Cada fonte devolve `periodo { inicio, fim, foraDoPeriodo, maisRecenteFora }`; fonte
@@ -301,11 +326,17 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   são decisão do responsável, não resultado de consulta, e não caducam com ela. `exclusoes`
   e `orcamentos` no PATCH do item são **substituição total**, não incremento.
 - Escolhas gravadas no item (`scripts/alter_cesta_dlog.py`): `periodoMeses` (12/24/36; 0 = todo o
-  período) e `justificativaPeriodo` (D1), `corrigirIpca` (D2), `duplicidadesRevertidas` (P18),
+  período), `periodoInicio` (intervalo; prevalece sobre os meses) e `justificativaPeriodo` (D1), `corrigirIpca` (D2), `duplicidadesRevertidas` (P18),
   `metodoPreco`/`regraTeto`/`aliquotaTeto` e `justificativa` (E2 — gravados pela modal a cada
   emissão; a próxima emissão parte deles). `parametrosDoItem` monta a pesquisa do item com a **data
   de referência da emissão**. PATCH que muda curadoria, período, IPCA, duplicatas ou método
   **refaz o snapshot** de preço; quantidade, observação e o texto da justificativa, não.
+- **Incluir preço informado** sem pesquisar (botão ao lado da Cesta,
+  `components/pesquisa-preco/incluir-preco-informado.tsx` → `POST /api/precos/cesta/preco-informado`):
+  material (código ou descrição), unidade (das bases ou digitada — sem registro nas bases, a cotação
+  é o que resta) e UF; o preço é **acrescentado** ao item da cesta com essa chave (o item é criado se
+  não existir) e o snapshot é refeito. O formulário (`formulario-preco-informado.tsx`) é o mesmo da
+  curadoria. O inciso III exige URL e data/hora do acesso também no servidor (`orcamentoSchema`).
 - Gerar o relatório esvazia a cesta por padrão (checkbox na modal permite manter).
 - HTML dos relatórios: blocos compartilhados em `lib/relatorio-pesquisa-preco.ts`, usados tanto pelo
   relatório de um item quanto pelo da cesta.

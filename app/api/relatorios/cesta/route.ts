@@ -34,9 +34,7 @@ import {
   conteudoAtualizacaoMonetaria,
   conteudoPeriodo,
   conteudoPrecosInformados,
-  conteudoPncp,
   conteudoReferencias,
-  conteudoSiasg,
   esc,
   especificacaoDoItem,
   fmtBRL,
@@ -230,14 +228,10 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     ${conteudoAtualizacaoMonetaria(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">CMED/ANVISA — teto regulatório por unidade</strong></div>
     ${conteudoCmed(r)}
-    <div style="margin-top:10px;"><strong style="font-size:11px;">Compras.gov.br — Painel de Preços</strong></div>
+    <div style="margin-top:10px;"><strong style="font-size:11px;">Compras.gov.br — API, SIASG judicial e base PNCP</strong></div>
     ${conteudoComprasGov(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">BPS — Banco de Preços em Saúde</strong></div>
     ${conteudoBps(r)}
-    <div style="margin-top:10px;"><strong style="font-size:11px;">SIASG/Comprasnet — compras com ação judicial</strong></div>
-    ${conteudoSiasg(r)}
-    <div style="margin-top:10px;"><strong style="font-size:11px;">PNCP — Portal Nacional de Contratações Públicas</strong></div>
-    ${conteudoPncp(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">Atas de registro de preços</strong></div>
     ${conteudoArp(r)}
     ${
@@ -307,7 +301,7 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
       }
     </ul>
     <p style="font-size:11px;margin-bottom:6px;"><strong>Validade desta pesquisa:</strong> 90 (noventa) dias, conforme art. 5º, §4º da IN SEGES/ME nº 65/2021 — até <strong>${fmtDateLong(validade)}</strong>.</p>
-    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), Compras.gov.br (Painel de Preços, API de dados abertos), BPS (API de dados abertos do Ministério da Saúde quando coletado; senão, base histórica 2020–2025), SIASG/Comprasnet (compras judiciais 2002–2021), PNCP (materiais 2024–2025) e atas de registro de preços (API de dados abertos).</p>
+    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), Compras.gov.br (API de dados abertos do Painel de Preços, SIASG/Comprasnet judicial 2002–2021 e base PNCP de contratos 2024–2025, com o link da contratação no PNCP), BPS (API de dados abertos do Ministério da Saúde quando coletado; senão, base histórica 2020–2025) e atas de registro de preços (API de dados abertos).</p>
     ${blocoAssinaturas(meta)}`;
 
   const corpo = [

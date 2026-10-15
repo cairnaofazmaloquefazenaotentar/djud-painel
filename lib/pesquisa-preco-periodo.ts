@@ -12,6 +12,9 @@ import { INFO_FONTE, type FonteMercadoChave, type Inciso } from "@/lib/pesquisa-
 //   • Sem ampliação automática: ampliar as bases para 24 ou 36 meses, ou para
 //     todo o período, exige justificativa (mínimo de 20 caracteres), impressa no
 //     relatório e gravada no log.
+//   • Intervalo de datas (pedido da DLOG): as bases de "inicio" até a data de
+//     referência. Mais longo que 12 meses = ampliação (pede justificativa);
+//     mais curto, não.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Janela das bases (incisos I e II): 12 é o padrão; null = todo o período. */
@@ -34,6 +37,8 @@ export type PeriodoPesquisa = {
   dataReferencia: string;
   mesesMercado: MesesMercado;
   justificativaAmpliacao: string | null;
+  /** Intervalo de datas: início das bases ("AAAA-MM-DD"); prevalece sobre `mesesMercado`. */
+  inicio?: string | null;
 };
 
 /** Hoje em Brasília, "AAAA-MM-DD" (o servidor roda em UTC). */
@@ -56,11 +61,25 @@ export function normalizarPeriodo(bruto: unknown, hoje = hojeBrasilia()): Period
   const m = b.mesesMercado;
   const mesesMercado: MesesMercado = m === null ? null : m === 24 || m === "24" ? 24 : m === 36 || m === "36" ? 36 : 12;
   const just = String(b.justificativaAmpliacao ?? "").trim().replace(/\s+/g, " ").slice(0, 1000);
-  return { dataReferencia, mesesMercado, justificativaAmpliacao: just || null };
+  const inicio = dataValida(b.inicio);
+  return {
+    dataReferencia,
+    mesesMercado,
+    justificativaAmpliacao: just || null,
+    inicio: inicio && inicio <= dataReferencia ? inicio : null,
+  };
 }
 
+/** Início da janela das bases (incisos I e II); null = todo o período. */
+export function inicioDasBases(p: PeriodoPesquisa): string | null {
+  if (p.inicio) return p.inicio;
+  return p.mesesMercado === null ? null : subtrairMeses(p.dataReferencia, p.mesesMercado);
+}
+
+/** Janela das bases mais longa que os 12 meses do art. 5º. */
 export function periodoAmpliado(p: PeriodoPesquisa): boolean {
-  return p.mesesMercado !== 12;
+  const inicio = inicioDasBases(p);
+  return inicio === null || inicio < subtrairMeses(p.dataReferencia, 12);
 }
 
 /** Mensagem de erro, ou null quando o período pode ser aplicado. */
@@ -85,14 +104,24 @@ export interface JanelaFonte {
   /** null = sem limite inferior (todo o período). */
   inicio: string | null;
   fim: string;
+  /** Meses da janela; null = todo o período ou intervalo de datas (`personalizado`). */
   meses: number | null;
   inciso: Inciso;
+  /** Intervalo de datas escolhido pelo responsável. */
+  personalizado?: boolean;
 }
 
 /** Janela de uma fonte: bases seguem o período escolhido; preços informados, o do seu inciso. */
 export function janelaDaFonte(fonte: FonteMercadoChave, p: PeriodoPesquisa): JanelaFonte {
   const info = INFO_FONTE[fonte];
-  const meses = info.informado ? JANELA_POR_INCISO[info.inciso] : p.mesesMercado;
+  if (info.informado) {
+    const meses = JANELA_POR_INCISO[info.inciso];
+    return { inicio: subtrairMeses(p.dataReferencia, meses), fim: p.dataReferencia, meses, inciso: info.inciso };
+  }
+  if (p.inicio) {
+    return { inicio: p.inicio, fim: p.dataReferencia, meses: null, inciso: info.inciso, personalizado: true };
+  }
+  const meses = p.mesesMercado;
   return {
     inicio: meses === null ? null : subtrairMeses(p.dataReferencia, meses),
     fim: p.dataReferencia,
@@ -103,8 +132,9 @@ export function janelaDaFonte(fonte: FonteMercadoChave, p: PeriodoPesquisa): Jan
 
 /** Período por fonte, para a aba Parâmetros e o relatório. */
 export function descricaoPeriodo(p: PeriodoPesquisa): string {
-  const base =
-    p.mesesMercado === null
+  const base = p.inicio
+    ? `intervalo de ${dataBr(p.inicio)} a ${dataBr(p.dataReferencia)}`
+    : p.mesesMercado === null
       ? "todo o período disponível"
       : `${p.mesesMercado} meses (de ${dataBr(subtrairMeses(p.dataReferencia, p.mesesMercado))} a ${dataBr(p.dataReferencia)})`;
   return `Data de referência ${dataBr(p.dataReferencia)}. Bases de preços (incisos I e II): ${base}${

@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
     const { codigo, unidade, uf, quantidade, observacao, exclusoes, orcamentos } = parsed.data;
     const config = {
       ...(parsed.data.periodoMeses !== undefined ? { periodoMeses: parsed.data.periodoMeses } : {}),
+      ...(parsed.data.periodoInicio !== undefined ? { periodoInicio: parsed.data.periodoInicio } : {}),
       ...(parsed.data.justificativaPeriodo !== undefined ? { justificativaPeriodo: parsed.data.justificativaPeriodo } : {}),
       ...(parsed.data.corrigirIpca !== undefined ? { corrigirIpca: parsed.data.corrigirIpca } : {}),
       ...(parsed.data.duplicidadesRevertidas !== undefined ? { duplicidadesRevertidas: parsed.data.duplicidadesRevertidas } : {}),
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
       periodo: {
         mesesMercado: config.periodoMeses === 0 ? null : (config.periodoMeses as 12 | 24 | 36 | undefined) ?? 12,
         justificativaAmpliacao: config.justificativaPeriodo ?? null,
+        inicio: config.periodoInicio ?? null,
       },
     });
     if (!resultado) {

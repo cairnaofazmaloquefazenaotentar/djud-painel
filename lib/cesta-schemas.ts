@@ -8,6 +8,7 @@ import {
 } from "@/lib/pesquisa-preco-curadoria";
 import { escolhaItemSchema } from "@/lib/relatorio-schemas";
 import { ALIQUOTAS_TETO, METODOS, REGRAS_TETO } from "@/lib/pesquisa-preco-metodo";
+import { normalizarPeriodo, periodoAmpliado } from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta de itens da Pesquisa de Preços — validação das rotas /api/precos/cesta
@@ -82,6 +83,16 @@ export const orcamentoSchema = z.object({
   documento: z.string().trim().max(120).nullable().optional().default(null),
   observacao: z.string().trim().max(300).nullable().optional().default(null),
   considerarNoCalculo: z.boolean().default(true),
+}).superRefine((o, ctx) => {
+  // Inciso III: o preço só vale com o endereço e a data e hora do acesso — a
+  // tela exige os dois, e o servidor também (o item da cesta vai para o processo).
+  if (o.tipo === "III" && (!o.url || !o.acessadoEm)) {
+    ctx.addIssue({
+      code: "custom",
+      path: [o.url ? "acessadoEm" : "url"],
+      message: "Mídia ou sítio eletrônico (art. 5º, III): informe o endereço (http…) e a data e hora do acesso.",
+    });
+  }
 });
 
 /**
@@ -96,13 +107,23 @@ const configuracaoItemSchema = {
   justificativa: z.string().trim().max(4000).nullable().optional(),
   /** 12 (padrão), 24 ou 36 meses; 0 = todo o período. */
   periodoMeses: z.union([z.literal(0), z.literal(12), z.literal(24), z.literal(36)]).nullable().optional(),
+  /** Intervalo de datas: início das bases ("AAAA-MM-DD"); prevalece sobre periodoMeses. */
+  periodoInicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/, "Data inicial inválida").nullable().optional(),
   justificativaPeriodo: z.string().trim().max(1000).nullable().optional(),
   corrigirIpca: z.boolean().optional(),
   duplicidadesRevertidas: z.array(z.string().max(200)).max(500).optional(),
 };
 
-const periodoComJustificativa = (d: { periodoMeses?: number | null; justificativaPeriodo?: string | null }) =>
-  d.periodoMeses == null || d.periodoMeses === 12 || (d.justificativaPeriodo ?? "").trim().length >= 20;
+/** Ampliação (mais de 12 meses, todo o período ou intervalo que passa de 12 meses hoje) pede justificativa. */
+const periodoComJustificativa = (d: {
+  periodoMeses?: number | null;
+  periodoInicio?: string | null;
+  justificativaPeriodo?: string | null;
+}) => {
+  const justificada = (d.justificativaPeriodo ?? "").trim().length >= 20;
+  if (d.periodoInicio) return justificada || !periodoAmpliado(normalizarPeriodo({ inicio: d.periodoInicio }));
+  return d.periodoMeses == null || d.periodoMeses === 12 || justificada;
+};
 const MSG_PERIODO = "Ampliar o período além de 12 meses exige justificativa (mínimo de 20 caracteres)";
 
 export const adicionarItemCestaSchema = z.object({

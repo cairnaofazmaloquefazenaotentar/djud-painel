@@ -3,8 +3,9 @@
 Colunas da avaliação da DLOG na cesta da Pesquisa de Preços:
 
   * public."CestaItem": método do preço e regra do teto (P11/P12), justificativa
-    editada, período do art. 5º (D1), atualização pelo IPCA (D2) e as prováveis
-    duplicatas revertidas pelo responsável (P18);
+    editada, período do art. 5º (D1, em meses ou intervalo de datas),
+    atualização pelo IPCA (D2) e as prováveis duplicatas revertidas pelo
+    responsável (P18);
   * public."CestaOrcamento": tipo do preço informado (P13 — IV cotação, III
     mídia/sítio, V nota fiscal, II contratação similar), URL e data/hora de
     acesso, chave da NF-e e a justificativa para manter fora do período.
@@ -38,6 +39,7 @@ ALTER TABLE public."CestaItem"
     ADD COLUMN IF NOT EXISTS "justificativaPeriodo" TEXT,
     ADD COLUMN IF NOT EXISTS "metodoPreco" TEXT,
     ADD COLUMN IF NOT EXISTS "periodoMeses" INTEGER,
+    ADD COLUMN IF NOT EXISTS "periodoInicio" TEXT,
     ADD COLUMN IF NOT EXISTS "regraTeto" TEXT;
 
 ALTER TABLE public."CestaOrcamento"

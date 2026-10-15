@@ -69,6 +69,7 @@ import {
   JUSTIFICATIVA_PERIODO_MIN,
   OPCOES_MESES,
   hojeBrasilia,
+  periodoAmpliado as ehAmpliado,
   type MesesMercado,
 } from "@/lib/pesquisa-preco-periodo";
 import type { CestaItemDTO } from "@/lib/cesta";
@@ -107,6 +108,8 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
   const atualizar = useAtualizarItemCesta();
   const [aberto, setAberto] = useState(false);
   const [meses, setMeses] = useState<MesesMercado>(mesesDoItem(item));
+  const [inicio, setInicio] = useState(item.periodoInicio ?? "");
+  const [intervalo, setIntervalo] = useState(!!item.periodoInicio);
   const [justificativa, setJustificativa] = useState(item.justificativaPeriodo ?? "");
   const [ipca, setIpca] = useState(item.corrigirIpca);
 
@@ -114,16 +117,22 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
   const alternar = () => {
     if (!aberto) {
       setMeses(mesesDoItem(item));
+      setInicio(item.periodoInicio ?? "");
+      setIntervalo(!!item.periodoInicio);
       setJustificativa(item.justificativaPeriodo ?? "");
       setIpca(item.corrigirIpca);
     }
     setAberto((v) => !v);
   };
 
-  const ampliado = meses !== 12;
+  // A data de referência da cesta é a da emissão: o intervalo vale até "hoje".
+  const inicioEscolhido = intervalo && inicio ? inicio : null;
+  const ampliado = ehAmpliado({ dataReferencia: hojeBrasilia(), mesesMercado: meses, justificativaAmpliacao: null, inicio: inicioEscolhido });
   const semJustificativa = ampliado && justificativa.trim().length < JUSTIFICATIVA_PERIODO_MIN;
+  const intervaloIncompleto = intervalo && (!inicio || inicio > hojeBrasilia());
   const mudou =
     meses !== mesesDoItem(item) ||
+    inicioEscolhido !== (item.periodoInicio ?? null) ||
     ipca !== item.corrigirIpca ||
     (ampliado && justificativa.trim() !== (item.justificativaPeriodo ?? ""));
 
@@ -131,6 +140,7 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
     await atualizar.mutateAsync({
       id: item.id,
       periodoMeses: meses === null ? 0 : meses,
+      periodoInicio: inicioEscolhido,
       justificativaPeriodo: ampliado ? justificativa.trim() : null,
       corrigirIpca: ipca,
     });
@@ -141,8 +151,11 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
     <div className="space-y-2">
       <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
         <span>
-          Período: {rotuloPeriodo(mesesDoItem(item))}
-          {mesesDoItem(item) !== 12 && " (ampliado)"} · IPCA {item.corrigirIpca ? "ligado" : "desligado"}
+          Período:{" "}
+          {item.periodoInicio
+            ? `desde ${item.periodoInicio.split("-").reverse().join("/")}`
+            : `${rotuloPeriodo(mesesDoItem(item))}${mesesDoItem(item) !== 12 ? " (ampliado)" : ""}`}{" "}
+          · IPCA {item.corrigirIpca ? "ligado" : "desligado"}
         </span>
         <button
           type="button"
@@ -157,8 +170,11 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
       {aberto && (
         <div className="space-y-2 rounded-md border bg-muted/30 p-2">
           <Select
-            value={meses === null ? "todos" : String(meses)}
-            onValueChange={(v) => setMeses(v === "todos" ? null : (Number(v) as 12 | 24 | 36))}
+            value={intervalo ? "intervalo" : meses === null ? "todos" : String(meses)}
+            onValueChange={(v) => {
+              setIntervalo(v === "intervalo");
+              if (v !== "intervalo") setMeses(v === "todos" ? null : (Number(v) as 12 | 24 | 36));
+            }}
           >
             <SelectTrigger className="h-7 w-full text-xs" aria-label="Período das bases">
               <SelectValue />
@@ -169,8 +185,25 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
                   {o.rotulo}
                 </SelectItem>
               ))}
+              <SelectItem value="intervalo">Intervalo de datas…</SelectItem>
             </SelectContent>
           </Select>
+          {intervalo && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  className="h-7 text-xs"
+                  aria-label="Início do intervalo das bases"
+                  max={hojeBrasilia()}
+                  value={inicio}
+                  onChange={(e) => setInicio(e.target.value)}
+                />
+                <span className="shrink-0 text-[11px] text-muted-foreground">até a data da emissão</span>
+              </div>
+              {intervaloIncompleto && <p className="text-[11px] text-destructive">Informe a data inicial.</p>}
+            </div>
+          )}
           {ampliado && (
             <div className="space-y-1">
               <Input
@@ -201,7 +234,7 @@ function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean
               type="button"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              disabled={!mudou || semJustificativa || atualizar.isPending}
+              disabled={!mudou || semJustificativa || intervaloIncompleto || atualizar.isPending}
               onClick={salvar}
             >
               {atualizar.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
@@ -239,7 +272,8 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
       periodo: {
         dataReferencia: hojeBrasilia(),
         mesesMercado: mesesDoItem(item),
-        justificativaAmpliacao: mesesDoItem(item) === 12 ? null : item.justificativaPeriodo,
+        justificativaAmpliacao: item.justificativaPeriodo,
+        inicio: item.periodoInicio,
       },
       corrigirIpca: item.corrigirIpca,
     }),

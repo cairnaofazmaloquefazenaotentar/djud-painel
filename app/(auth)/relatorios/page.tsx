@@ -22,7 +22,7 @@ const relatorios: RelatorioCard[] = [
     id: "pesquisa-preco",
     titulo: "Relatório de Pesquisa de Preços",
     descricao:
-      "Documento padronizado conforme IN SEGES/ME nº 65/2021, com 10 seções: objeto, metodologia, fontes consultadas (CMED, BPS, SIASG, PNCP), análise estatística, remoção de outliers, preço de referência e assinaturas.",
+      "Documento padronizado conforme IN SEGES/ME nº 65/2021, com 10 seções: objeto, metodologia, fontes consultadas (CMED, Compras.gov.br — API, SIASG judicial e base PNCP —, BPS, atas e preços informados), análise estatística, remoção de outliers, preço de referência e assinaturas.",
     permission: "relatorios:gerar",
     status: "disponivel",
     icone: FileText,

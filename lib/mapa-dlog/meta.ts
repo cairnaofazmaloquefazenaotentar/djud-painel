@@ -51,10 +51,10 @@ export async function contextoBases(): Promise<ContextoBases> {
     versaoDados: versao,
     fontesConsultadas: [
       `CMED/ANVISA — tabela vigente no painel${vigencia ? ` (vigência ${vigencia.toISOString().slice(0, 10).split("-").reverse().join("/")})` : ""}; preço por embalagem ÷ Qt_Embal do registro ANVISA.`,
-      `BPS — base carregada no painel, compras de ${faixa(bps._min.data, bps._max.data)}.`,
-      `SIASG — compras com ação judicial, base carregada no painel, ${faixa(siasg._min.data, siasg._max.data)}.`,
-      `PNCP — base carregada no painel, ${faixa(pncp._min.data, pncp._max.data)}.`,
-      "Orçamentos diretos de fornecedor — informados pelo responsável e juntados ao processo (art. 5º, IV).",
+      `Compras.gov.br — uma fonte com três bases: a API de dados abertos do Painel de Preços (coletada por CATMAT), o SIASG/Comprasnet judicial carregado no painel (${faixa(siasg._min.data, siasg._max.data)}) e a base de contratos do PNCP carregada no painel (${faixa(pncp._min.data, pncp._max.data)}). O PNCP é também o link da contratação de cada compra (coluna Referência).`,
+      `BPS — API de dados abertos do Ministério da Saúde quando coletado; senão, base carregada no painel, compras de ${faixa(bps._min.data, bps._max.data)}.`,
+      "Atas de registro de preços — API de dados abertos do Compras.gov.br (vigência iniciada nos últimos 12 meses).",
+      "Preços informados pelo responsável — cotação, mídia especializada, nota fiscal e contratação similar (art. 5º, II a V).",
       "Data/Hora da Cotação das bases do painel = data e hora da consulta na emissão deste arquivo.",
     ],
   };

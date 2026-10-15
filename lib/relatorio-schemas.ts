@@ -28,6 +28,8 @@ export const periodoSchema = z.object({
   dataReferencia: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   mesesMercado: z.union([z.literal(12), z.literal(24), z.literal(36), z.null()]).optional(),
   justificativaAmpliacao: z.string().trim().max(1000).nullable().optional(),
+  /** Intervalo de datas: início das bases (prevalece sobre os meses). */
+  inicio: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 });
 
 const textoOpcional = (max: number) =>

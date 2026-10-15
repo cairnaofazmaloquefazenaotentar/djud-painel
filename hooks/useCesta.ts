@@ -48,6 +48,7 @@ export interface AdicionarItemArgs {
   orcamentos?: OrcamentoFornecedor[];
   /** Período (D1), IPCA (D2) e duplicatas mantidas (P18) da pesquisa da tela. */
   periodoMeses?: 0 | 12 | 24 | 36 | null;
+  periodoInicio?: string | null;
   justificativaPeriodo?: string | null;
   corrigirIpca?: boolean;
   duplicidadesRevertidas?: string[];
@@ -87,6 +88,7 @@ export function useAtualizarItemCesta() {
       aliquotaTeto?: string | null;
       justificativa?: string | null;
       periodoMeses?: 0 | 12 | 24 | 36 | null;
+      periodoInicio?: string | null;
       justificativaPeriodo?: string | null;
       corrigirIpca?: boolean;
       duplicidadesRevertidas?: string[];

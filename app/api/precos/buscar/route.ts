@@ -60,6 +60,7 @@ export async function GET(request: NextRequest) {
       dataReferencia: sp.get("dataReferencia") ?? undefined,
       mesesMercado: sp.get("meses") === "todos" ? null : (Number(sp.get("meses")) as 12 | 24 | 36) || 12,
       justificativaAmpliacao: sp.get("justificativaPeriodo"),
+      inicio: sp.get("inicio"),
     },
     corrigirIpca: sp.get("ipca") !== "0",
   });
