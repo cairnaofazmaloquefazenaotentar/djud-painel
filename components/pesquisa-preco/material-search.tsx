@@ -5,6 +5,7 @@ import { Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSugestoesMaterial } from "@/hooks/usePesquisaPreco";
 import type { TipoCodigo } from "@/lib/pesquisa-preco";
+import { apiPath } from "@/lib/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Campo de busca incremental de material para a Pesquisa de Preços.
@@ -128,6 +129,38 @@ export function MaterialSearch({ modo, selecionado, onSelecionar, disabled, clas
     setTexto("");
   }
 
+  // CATMAT que ainda não está no catálogo local (a planilha das 16 classes chega
+  // depois dos itens novos): busca no catálogo oficial do Compras.gov.br.
+  const codigoDigitado = texto.trim().replace(/\D/g, "");
+  const podeBuscarOficial = modo === "codigo" && /^\d{4,7}$/.test(texto.trim()) && !isFetching && opcoes.length === 0;
+  const [buscandoOficial, setBuscandoOficial] = useState(false);
+  const [erroOficial, setErroOficial] = useState<string | null>(null);
+  async function buscarNoCatalogoOficial() {
+    setBuscandoOficial(true);
+    setErroOficial(null);
+    try {
+      const res = await fetch(apiPath("/api/precos/dados-abertos/catalogo"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codigo: codigoDigitado }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.item) throw new Error(d.error || "CATMAT não encontrado no catálogo oficial");
+      onSelecionar({
+        tipo: "CATMAT",
+        codigo: d.item.codigo,
+        descricao: d.item.descricao,
+        detalhe: `Classe ${d.item.codigoClasse} — ${d.item.nomeClasse} · PDM ${d.item.nomePdm} (catálogo oficial)`,
+      });
+      setEditando(false);
+      setTexto("");
+    } catch (e) {
+      setErroOficial(e instanceof Error ? e.message : "Erro ao consultar o catálogo oficial");
+    } finally {
+      setBuscandoOficial(false);
+    }
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
     if (!aberto) return;
     if (e.key === "ArrowDown") {
@@ -218,8 +251,20 @@ export function MaterialSearch({ modo, selecionado, onSelecionar, disabled, clas
               </div>
             )}
             {!error && opcoes.length === 0 && (
-              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                {isFetching ? "Buscando…" : "Nenhum material encontrado."}
+              <div className="px-2 py-6 text-center text-sm text-muted-foreground space-y-2">
+                <p>{isFetching ? "Buscando…" : "Nenhum material encontrado."}</p>
+                {podeBuscarOficial && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={buscarNoCatalogoOficial}
+                    disabled={buscandoOficial}
+                    className="text-xs text-primary underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+                  >
+                    {buscandoOficial ? "Consultando o catálogo oficial…" : `Buscar o CATMAT ${codigoDigitado} no catálogo oficial do Compras.gov.br`}
+                  </button>
+                )}
+                {erroOficial && <p className="text-xs text-destructive">{erroOficial}</p>}
               </div>
             )}
             {linhas.map(({ cabecalho, opcao, idx }) => (

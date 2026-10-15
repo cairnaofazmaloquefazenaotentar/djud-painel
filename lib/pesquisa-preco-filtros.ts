@@ -10,8 +10,11 @@
 // continua importando de um lugar só.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Fontes de mercado consultadas por código CATMAT (a CMED é tratada à parte). */
-export type FonteMercado = "bps" | "siasg" | "pncp";
+/**
+ * Fontes de mercado consultadas em base por código CATMAT (a CMED é tratada à
+ * parte; os preços informados pelo responsável não passam por estes filtros).
+ */
+export type FonteMercado = "comprasgov" | "bps" | "siasg" | "pncp" | "arp";
 
 // ── Filtros opcionais (fornecedor, fabricante, CNPJ do comprador) ────────────
 //
@@ -50,23 +53,30 @@ export const ROTULO_FILTRO: Record<CampoFiltro, string> = {
 };
 
 export const NOME_FONTE: Record<FonteMercado, string> = {
+  comprasgov: "Compras.gov.br",
   bps: "BPS",
   siasg: "SIASG",
   pncp: "PNCP",
+  arp: "Atas de registro de preços",
 };
 
 /**
  * Campos que a base não possui (coluna ausente no schema Prisma):
  *   • PrecoSiasg guarda o CNPJ do fornecedor, nunca o do órgão comprador.
  *   • PrecoPncp não traz o fabricante do item, só o fornecedor da compra.
+ *   • Compras.gov.br (Painel de Preços) identifica o comprador pela UASG e pelo
+ *     código do órgão, sem CNPJ; o fabricante sai do campo `marca`.
+ *   • Itens de ata não trazem marca, fabricante nem o CNPJ do órgão.
  * Colunas que existem mas ainda estão vazias na carga atual (fabricante no
  * SIASG, fornecedor/cnpjOrgao no PNCP) NÃO entram aqui de propósito: elas são
  * consultadas normalmente e passam a filtrar sozinhas quando os dados chegarem.
  */
 export const FONTE_SEM_CAMPO: Record<FonteMercado, CampoFiltro[]> = {
+  comprasgov: ["cnpjComprador"],
   bps: [],
   siasg: ["cnpjComprador"],
   pncp: ["fabricante"],
+  arp: ["fabricante", "cnpjComprador"],
 };
 
 /** Texto de filtro utilizável: aparado e com no mínimo 2 caracteres. */

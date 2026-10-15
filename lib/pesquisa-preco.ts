@@ -27,6 +27,9 @@ import {
 } from "@/lib/pesquisa-preco-curadoria";
 
 import type { ContratacaoRef, DuplicidadeRef } from "@/lib/pesquisa-preco-fontes";
+import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
+import { situacaoColetas, type OrigemColeta, type SituacaoColeta } from "@/lib/dados-abertos/situacao";
+import { urlPncp } from "@/lib/pncp";
 import {
   ESCOLHA_PADRAO,
   ROTULO_METODO,
@@ -279,6 +282,10 @@ export interface RegistroMercado {
 export interface FonteMercadoResultado {
   /** Filtros opcionais que esta base não possui como campo — ver FONTE_SEM_CAMPO. */
   filtrosNaoSuportados: CampoFiltro[];
+  /** Base carregada no painel, coleta das APIs de dados abertos ou preço informado. */
+  origemDados?: "BASE_PAINEL" | "API" | "INFORMADO";
+  /** Situação da coleta (fontes de dados abertos): quando e se ainda vale (P19). */
+  coleta?: { coletadoEm: string | null; valida: boolean; origemCarga: string | null } | null;
   total: number;
   amostra: number;
   /** Média, mediana e menor valor (art. 6º) sobre a amostra já depurada. */
@@ -438,6 +445,8 @@ function contemTexto(valor: string | null | undefined, termo: string): boolean {
 
 interface OpcoesConsolidacao {
   fonte: FonteCurada;
+  origemDados?: FonteMercadoResultado["origemDados"];
+  coleta?: FonteMercadoResultado["coleta"];
   /** Lista a amostra inteira (mapa XLSX), sem o recorte de REGISTROS_ANALISE. */
   completos?: boolean;
   filtrosNaoSuportados?: CampoFiltro[];
@@ -512,6 +521,8 @@ function consolidar(
   return {
     resultado: {
       filtrosNaoSuportados: opcoes.filtrosNaoSuportados ?? [],
+      ...(opcoes.origemDados ? { origemDados: opcoes.origemDados } : {}),
+      ...(opcoes.coleta !== undefined ? { coleta: opcoes.coleta } : {}),
       total,
       amostra,
       estatisticas: calcularEstatisticas(dentro),
@@ -686,10 +697,15 @@ export async function sugerirMateriais(q: string): Promise<Sugestoes> {
 
 // ── Unidades de fornecimento disponíveis ─────────────────────────────────────
 
+/** Fontes cujas unidades vêm brutas da base (as de dados abertos já gravam a normalizada). */
+type FonteComUnidadeBruta = "bps" | "siasg" | "pncp";
+
 interface MapaUnidades {
   opcoes: UnidadeOpcao[];
   /** unidade normalizada → valores brutos por fonte (filtro por igualdade no banco). */
-  brutas: Record<FonteMercado, Map<string, string[]>>;
+  brutas: Record<FonteComUnidadeBruta, Map<string, string[]>>;
+  /** O BPS desta pesquisa vem da coleta da API (P21), e não de PrecoBps. */
+  bpsDaApi: boolean;
 }
 
 interface GrupoUnidade {
@@ -736,13 +752,30 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     });
     return rows.map((r) => r.registro).filter((r): r is string => r != null);
   };
+  // Dados abertos (Compras.gov.br, BPS pela API, atas): unidade já normalizada.
+  const gruposDadosAbertos = async (): Promise<Array<{ origem: string; unidadeNorm: string | null; n: number }>> => {
+    if (!item.catmat) return [];
+    try {
+      const grupos = await db.dadosAbertosPreco.groupBy({
+        by: ["origem", "unidadeNorm"],
+        where: { codigoCatmat: item.catmat },
+        _count: { _all: true },
+      });
+      return grupos.map((g) => ({ origem: g.origem, unidadeNorm: g.unidadeNorm, n: g._count._all }));
+    } catch {
+      // Tabela ainda não criada (scripts/create_dadosabertos_tables.py).
+      return [];
+    }
+  };
 
-  const [bps, siasg, pncp, cmedComPreco] = await Promise.all([
+  const [bps, siasg, pncp, cmedComPreco, dadosAbertos] = await Promise.all([
     gruposBps(),
     gruposSiasg(),
     gruposPncp(),
     registrosComPreco(),
+    gruposDadosAbertos(),
   ]);
+  const bpsDaApi = dadosAbertos.some((g) => g.origem === "BPS");
 
   const brutas: MapaUnidades["brutas"] = {
     bps: new Map(),
@@ -756,14 +789,14 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     const atual = opcoes.get(unidadeNorm) ?? {
       unidade: unidadeNorm,
       total: 0,
-      fontes: { cmed: 0, bps: 0, siasg: 0, pncp: 0 },
+      fontes: { cmed: 0, comprasgov: 0, bps: 0, siasg: 0, pncp: 0, arp: 0 },
     };
     atual.total += n;
     atual.fontes[fonte] += n;
     opcoes.set(unidadeNorm, atual);
   };
 
-  const registrar = (fonte: FonteMercado, grupos: GrupoUnidade[]) => {
+  const registrar = (fonte: FonteComUnidadeBruta, grupos: GrupoUnidade[]) => {
     for (const g of grupos) {
       if (g.unidade == null) continue;
       const norm = normalizarUnidade(g.unidade);
@@ -775,9 +808,15 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     }
   };
 
-  registrar("bps", bps);
+  // P21: com coleta do BPS pela API, as unidades do BPS saem dela.
+  if (!bpsDaApi) registrar("bps", bps);
   registrar("siasg", siasg);
   registrar("pncp", pncp);
+  const fonteDaOrigem: Record<string, FonteMercado> = { COMPRASGOV: "comprasgov", BPS: "bps", ARP_ITEM: "arp" };
+  for (const g of dadosAbertos) {
+    const fonte = fonteDaOrigem[g.origem];
+    if (fonte && g.unidadeNorm) somar(fonte, g.unidadeNorm, g.n);
+  }
 
   const comPreco = new Set(cmedComPreco);
   for (const r of item.registros) {
@@ -789,6 +828,7 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
       (a, b) => b.total - a.total || a.unidade.localeCompare(b.unidade, "pt-BR")
     ),
     brutas,
+    bpsDaApi,
   };
 }
 
@@ -838,6 +878,7 @@ interface LinhaPncp {
   orgao: string | null;
   fornecedor: string | null;
   cnpjFornecedor: string | null;
+  numeroControlePncp: string | null;
 }
 
 const toISO = (d: Date) => d.toISOString();
@@ -878,7 +919,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const uf = p.uf ? p.uf.toUpperCase() : null;
   const escolha = normalizarEscolha(p.escolha, ESCOLHA_PADRAO);
   const completos = p.registrosCompletos === true;
-  const { brutas } = await mapearUnidades(item);
+  const [{ brutas, bpsDaApi }, coletas] = await Promise.all([
+    mapearUnidades(item),
+    item.catmat ? situacaoColetas(item.catmat) : Promise.resolve(null),
+  ]);
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
 
   const brutasBps = brutas.bps.get(unidade) ?? [];
@@ -903,8 +947,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // da coluna muda (cnpjInstituicao no BPS, cnpjOrgao no PNCP).
   const cnpjVariantes = variantesCnpj(filtros.cnpjComprador);
 
+  // P21: com coleta do BPS pela API, a fonte BPS lê DadosAbertosPreco; sem
+  // coleta, a base carregada no painel (PrecoBps), com aviso.
   const whereBps: Prisma.PrecoBpsWhereInput | null =
-    variantes && brutasBps.length && !semCampo("bps").length
+    !bpsDaApi && variantes && brutasBps.length && !semCampo("bps").length
       ? {
           codigoCatmat: { in: variantes.bps },
           unidade: { in: brutasBps },
@@ -1012,6 +1058,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         orgao: true,
         fornecedor: true,
         cnpjFornecedor: true,
+        numeroControlePncp: true,
       },
     });
     return rows;
@@ -1040,7 +1087,13 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     return n;
   };
 
-  const [bpsRows, siasgRows, pncpRows, cmedRows, totalBps, totalSiasg, totalPncp] =
+  // Fontes de dados abertos (Compras.gov.br, BPS pela API, atas).
+  const consultaDA = (origem: OrigemColeta, fonte: FonteMercado): Promise<ResultadoDadosAbertos | null> =>
+    item.catmat && !semCampo(fonte).length
+      ? consultarDadosAbertos({ origem, catmat: item.catmat, unidade, uf, filtros, amostra: AMOSTRA })
+      : Promise.resolve(null);
+
+  const [bpsRows, siasgRows, pncpRows, cmedRows, totalBps, totalSiasg, totalPncp, daComprasGov, daBps, daArp] =
     await Promise.all([
       buscarBps(),
       buscarSiasg(),
@@ -1049,9 +1102,41 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       contarBps(),
       contarSiasg(),
       contarPncp(),
+      consultaDA("COMPRASGOV", "comprasgov"),
+      bpsDaApi ? consultaDA("BPS", "bps") : Promise.resolve(null),
+      consultaDA("ARP_ITEM", "arp"),
     ]);
+  const coletaDe = (origem: OrigemColeta): FonteMercadoResultado["coleta"] => {
+    const s: SituacaoColeta | undefined = coletas?.porOrigem[origem];
+    return s ? { coletadoEm: s.coletadoEm, valida: s.valida, origemCarga: s.origemCarga } : null;
+  };
 
-  const analiseBps = consolidar(
+  const analiseComprasGov = consolidar(daComprasGov?.total ?? 0, daComprasGov?.registros ?? [], daComprasGov?.registros.length ?? 0, {
+    fonte: "comprasgov",
+    completos,
+    origemDados: "API",
+    coleta: coletaDe("COMPRASGOV"),
+    filtrosNaoSuportados: semCampo("comprasgov"),
+    excluidos: excluidosPorFonte.get("comprasgov"),
+  });
+  const analiseArp = consolidar(daArp?.total ?? 0, daArp?.registros ?? [], daArp?.registros.length ?? 0, {
+    fonte: "arp",
+    completos,
+    origemDados: "API",
+    coleta: coletaDe("ARP_ITEM"),
+    filtrosNaoSuportados: semCampo("arp"),
+    excluidos: excluidosPorFonte.get("arp"),
+  });
+  const analiseBps = bpsDaApi
+    ? consolidar(daBps?.total ?? 0, daBps?.registros ?? [], daBps?.registros.length ?? 0, {
+        fonte: "bps",
+        completos,
+        origemDados: "API",
+        coleta: coletaDe("BPS"),
+        filtrosNaoSuportados: semCampo("bps"),
+        excluidos: excluidosPorFonte.get("bps"),
+      })
+    : consolidar(
     totalBps,
     bpsRows.map((r) => ({
       id: r.id,
@@ -1072,6 +1157,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     {
       fonte: "bps",
       completos,
+      origemDados: "BASE_PAINEL",
       filtrosNaoSuportados: semCampo("bps"),
       excluidos: excluidosPorFonte.get("bps"),
     }
@@ -1098,6 +1184,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     {
       fonte: "siasg",
       completos,
+      origemDados: "BASE_PAINEL",
       filtrosNaoSuportados: semCampo("siasg"),
       excluidos: excluidosPorFonte.get("siasg"),
     }
@@ -1118,11 +1205,30 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       cnpjFornecedor: r.cnpjFornecedor,
       marca: null,
       fabricante: null,
+      // A base carregada tem a coluna, mas hoje vazia (diagnóstico de out/2026).
+      contratacao: r.numeroControlePncp
+        ? {
+            tipo: r.modalidade,
+            numero: null,
+            uasg: null,
+            nomeUasg: null,
+            numeroItem: null,
+            processo: null,
+            criterioJulgamento: null,
+            situacao: null,
+            numeroControlePncp: r.numeroControlePncp,
+            numeroControlePncpAta: null,
+            url: urlPncp(r.numeroControlePncp),
+            referencia: null,
+            indisponivel: "não disponível na base PNCP do painel",
+          }
+        : null,
     })),
     pncpRows.length,
     {
       fonte: "pncp",
       completos,
+      origemDados: "BASE_PAINEL",
       filtrosNaoSuportados: semCampo("pncp"),
       excluidos: excluidosPorFonte.get("pncp"),
     }
@@ -1157,13 +1263,15 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
           fabricante: o.fabricante,
         })),
         orcamentos.length,
-        { fonte: "orcamentos", completos, semIqr: true, excluidos: foraDoCalculo }
+        { fonte: "orcamentos", completos, origemDados: "INFORMADO", semIqr: true, excluidos: foraDoCalculo }
       )
     : null;
 
   const bps = analiseBps.resultado;
   const siasg = analiseSiasg.resultado;
   const pncp = analisePncp.resultado;
+  const comprasgov = analiseComprasGov.resultado;
+  const arp = analiseArp.resultado;
 
   // EAN só no modo do mapa: vem da lista mensal (CmedPrecoVersao), uma consulta
   // a mais que a tela não precisa.
@@ -1238,9 +1346,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   //   porFonte    — cada base pesa igual; é dela que sai o preço adotado.
   //   porRegistro — cada compra pesa igual; contraprova da anterior.
   const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = [
+    { fonte: "comprasgov", analise: analiseComprasGov },
     { fonte: "bps", analise: analiseBps },
     { fonte: "siasg", analise: analiseSiasg },
     { fonte: "pncp", analise: analisePncp },
+    { fonte: "arp", analise: analiseArp },
   ];
   if (analiseOrcamentos) analises.push({ fonte: "orcamentos", analise: analiseOrcamentos });
 
@@ -1277,7 +1387,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // Método e teto saem de lib/pesquisa-preco-metodo.ts, o mesmo código que a
   // tela usa para mostrar o efeito de cada escolha antes da emissão.
   const preco = camposDoPreco(consolidado, cmed, escolha);
-  const { precoReferencia, limitePmvg, precoFinal } = preco;
+  const { precoReferencia, limitePmvg } = preco;
   const pmvgAplicado = preco.tetoAplicado;
   const capAplica = cmedRegistros.some((r) => r.cap);
 
@@ -1288,7 +1398,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         .map((c) => `${ROTULO_FILTRO[c]} "${filtros[c]}"`)
         .join("; ")}. Os preços apurados consideram somente os registros que atendem a esses critérios.`
     );
-    for (const fonte of ["bps", "siasg", "pncp"] as FonteMercado[]) {
+    for (const fonte of ["comprasgov", "bps", "siasg", "pncp", "arp"] as FonteMercado[]) {
       const faltando = semCampo(fonte);
       if (!faltando.length) continue;
       observacoes.push(
@@ -1333,7 +1443,25 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       `Apenas ${fontes.length} fonte(s) com dados para este item e unidade. Recomenda-se busca adicional ou orçamento direto de fornecedor (art. 5º, IV).`
     );
   }
-  if (bps.total === 0 && siasg.total === 0 && pncp.total === 0) {
+  if (item.catmat && !bpsDaApi && bps.total > 0) {
+    observacoes.push(
+      "BPS de base histórica (carga do painel, sem nº do processo nem da ata). Atualize pela API do BPS para trazer a identificação da compra."
+    );
+  }
+  for (const [origem, nome] of [["COMPRASGOV", "Compras.gov.br"], ["BPS", "BPS"], ["ARP_ITEM", "Atas de registro de preços"]] as const) {
+    const s = coletas?.porOrigem[origem];
+    if (s?.coletadoEm && !s.valida) {
+      observacoes.push(
+        `${nome}: dados coletados em ${new Date(s.coletadoEm).toLocaleDateString("pt-BR")}, há mais de 7 dias — atualize a coleta antes de emitir o relatório.`
+      );
+    }
+  }
+  if (item.catmat && coletas && !coletas.indisponivel && !coletas.porOrigem.COMPRASGOV.registros) {
+    observacoes.push(
+      "Compras.gov.br (Painel de Preços) ainda não coletado para este CATMAT: use \"Coletar dados abertos\" para incluir as compras públicas dos últimos meses."
+    );
+  }
+  if (bps.total === 0 && siasg.total === 0 && pncp.total === 0 && comprasgov.total === 0 && arp.total === 0) {
     observacoes.push(
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
@@ -1357,9 +1485,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     filtros,
     resultados: {
       cmed,
+      comprasgov,
       bps,
       siasg,
       pncp,
+      arp,
       orcamentos: analiseOrcamentos?.resultado ?? null,
     },
     consolidado,

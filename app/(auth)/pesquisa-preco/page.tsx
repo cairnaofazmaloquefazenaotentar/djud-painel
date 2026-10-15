@@ -40,6 +40,7 @@ import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-
 import { CestaSheet } from "@/components/pesquisa-preco/cesta-sheet";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { CamposEscolhaPreco, PreviaPrecoAdotado } from "@/components/pesquisa-preco/escolha-preco";
+import { DadosAbertosPanel } from "@/components/pesquisa-preco/dados-abertos-panel";
 import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
 import { useAdicionarItemCesta } from "@/hooks/useCesta";
 // Os filtros opcionais vêm do módulo puro: importar lib/pesquisa-preco aqui
@@ -66,6 +67,7 @@ import type {
   FonteMercadoResultado,
   ItemPesquisa,
   Recomendacao,
+  RegistroMercado,
   UnidadeOpcao,
 } from "@/lib/pesquisa-preco";
 
@@ -98,6 +100,43 @@ const UFS = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
   "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
 ];
+
+// ── Contratação de origem do registro (obs. 7 e 8 da DLOG) ───────────────────
+
+function ContratacaoLinha({ r }: { r: RegistroMercado }) {
+  const c = r.contratacao;
+  if (!c) return null;
+  const partes = [
+    [c.tipo, c.numero].filter(Boolean).join(" "),
+    c.uasg ? `UASG ${c.uasg}` : null,
+    c.numeroItem ? `item ${c.numeroItem}` : null,
+    c.processo ? `processo ${c.processo}` : null,
+    c.situacao,
+    c.referencia,
+  ].filter(Boolean);
+  if (!partes.length && !c.url && !c.indisponivel) return null;
+  return (
+    <p className="text-muted-foreground truncate">
+      Contratação: {partes.join(" · ") || "—"}
+      {c.url ? (
+        <>
+          {" · "}
+          <a
+            href={c.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-primary underline underline-offset-2 hover:text-foreground"
+          >
+            PNCP
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </a>
+        </>
+      ) : c.indisponivel ? (
+        <span> · {c.indisponivel}</span>
+      ) : null}
+    </p>
+  );
+}
 
 // ── Painel de fonte de mercado ────────────────────────────────────────────────
 
@@ -132,6 +171,13 @@ function SourcePanel({
           </Badge>
         )}
       </div>
+      {stats?.origemDados === "API" && stats.coleta?.coletadoEm && (
+        <p className={`text-[11px] ${stats.coleta.valida ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`}>
+          {stats.coleta.origemCarga === "EXTRATOR" ? "Carga do extrator" : "Coletado"} em{" "}
+          {new Date(stats.coleta.coletadoEm).toLocaleDateString("pt-BR")}
+          {stats.coleta.valida ? "" : " — há mais de 7 dias; atualize antes de emitir"}
+        </p>
+      )}
 
       {loading && (
         <div className="h-16 flex items-center justify-center text-muted-foreground text-sm animate-pulse">
@@ -245,6 +291,7 @@ function SourcePanel({
                             : ""}
                         </p>
                       )}
+                      <ContratacaoLinha r={r} />
                       {r.excluidoPor && (
                         <p className="text-destructive">Desconsiderado: {r.excluidoPor}</p>
                       )}
@@ -792,8 +839,8 @@ export default function PesquisaPrecoPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Pesquisa de Preço</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Consulta consolidada nas bases CMED, BPS, SIASG judicial e PNCP por código CATMAT ·
-            Metodologia IN 65/2021
+            Consulta consolidada por código CATMAT na CMED, no Compras.gov.br (Painel de Preços), no BPS,
+            no SIASG judicial, no PNCP e nas atas de registro de preços · Metodologia IN 65/2021
           </p>
         </div>
         <CestaSheet podeGerarRelatorio={canReport} />
@@ -851,8 +898,9 @@ export default function PesquisaPrecoPage() {
             </Select>
             {unidadeSelecionada && (
               <p className="text-[11px] text-muted-foreground">
-                CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · BPS {fmtInt(unidadeSelecionada.fontes.bps)} · SIASG{" "}
-                {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP {fmtInt(unidadeSelecionada.fontes.pncp)}
+                CMED {fmtInt(unidadeSelecionada.fontes.cmed)} · Compras.gov.br {fmtInt(unidadeSelecionada.fontes.comprasgov)} · BPS{" "}
+                {fmtInt(unidadeSelecionada.fontes.bps)} · SIASG {fmtInt(unidadeSelecionada.fontes.siasg)} · PNCP{" "}
+                {fmtInt(unidadeSelecionada.fontes.pncp)} · Atas {fmtInt(unidadeSelecionada.fontes.arp)}
               </p>
             )}
           </div>
@@ -983,6 +1031,7 @@ export default function PesquisaPrecoPage() {
           </p>
         )}
         {material && detalhe && <ItemResumo item={detalhe.item} unidades={unidades} />}
+        {material && detalhe && canSearch && <DadosAbertosPanel codigo={material.codigo} />}
       </div>
 
       {/* Filtros opcionais desta pesquisa */}
@@ -1113,7 +1162,18 @@ export default function PesquisaPrecoPage() {
           fabricante={result?.filtros.fabricante ?? null}
         />
         <SourcePanel
-          label="BPS — Banco de Preços em Saúde"
+          label="Compras.gov.br — Painel de Preços (inciso I)"
+          color="bg-indigo-500"
+          stats={result?.resultados.comprasgov ?? null}
+          loading={loading}
+          comFiltros={filtrosAplicados.length > 0}
+        />
+        <SourcePanel
+          label={
+            result?.resultados.bps.origemDados === "API"
+              ? "BPS — API do Ministério da Saúde (inciso I)"
+              : "BPS — base histórica do painel (inciso I)"
+          }
           color="bg-blue-500"
           stats={result?.resultados.bps ?? null}
           loading={loading}
@@ -1127,9 +1187,16 @@ export default function PesquisaPrecoPage() {
           comFiltros={filtrosAplicados.length > 0}
         />
         <SourcePanel
-          label="PNCP — Portal Nacional (2024–2025)"
+          label="PNCP — base do painel, 2024–2025 (inciso II)"
           color="bg-emerald-500"
           stats={result?.resultados.pncp ?? null}
+          loading={loading}
+          comFiltros={filtrosAplicados.length > 0}
+        />
+        <SourcePanel
+          label="Atas de registro de preços (inciso II)"
+          color="bg-teal-500"
+          stats={result?.resultados.arp ?? null}
           loading={loading}
           comFiltros={filtrosAplicados.length > 0}
         />
@@ -1191,11 +1258,13 @@ export default function PesquisaPrecoPage() {
       <div className="rounded-lg border bg-muted/30 p-4 text-xs text-muted-foreground space-y-1">
         <p className="font-medium text-foreground">Metodologia</p>
         <p>
-          Conforme IN SEGES/ME nº 65/2021: os preços são coletados por código CATMAT nas bases BPS, SIASG
-          (compras judiciais) e PNCP, na unidade de fornecimento selecionada, aplicando-se o critério de
-          remoção de outliers (método IQR). O preço de referência é a mediana das medianas por fonte. O
+          Conforme IN SEGES/ME nº 65/2021: os preços são coletados por código CATMAT no Compras.gov.br
+          (Painel de Preços), no BPS, no SIASG (compras judiciais), no PNCP e nas atas de registro de
+          preços, na unidade de fornecimento selecionada, aplicando-se o critério de remoção de outliers
+          (método IQR). No padrão do painel, o preço de referência é a mediana das medianas por fonte, e o
           PMVG vigente (CMED), convertido para a unidade de fornecimento pela quantidade por embalagem, é
-          aplicado como teto obrigatório. Registros ANVISA sem CATMAT retornam apenas o preço CMED.
+          aplicado como teto obrigatório; o método e a regra do teto podem ser escolhidos na emissão.
+          Registros ANVISA sem CATMAT retornam apenas o preço CMED.
         </p>
       </div>
 

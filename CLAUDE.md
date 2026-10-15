@@ -110,11 +110,41 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   (REPLACE; criam a tabela se ausente com a mesma DDL do `prisma db push`).
 - Preço CMED é por embalagem (`PrecoCmed.pmvgSemImpostos`); a pesquisa divide por `qtEmbalagem` para
   refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
-- Fontes: CMED (teto), BPS, SIASG judicial, PNCP e **orçamento direto de fornecedor**
-  (art. 5º, IV — informado pelo usuário, não consultado em base). Cruzamento por código:
-  BPS/SIASG usam `"BR0" + CATMAT`, PNCP usa o código puro.
+- Fontes: CMED (teto), **Compras.gov.br — Painel de Preços** (API de dados abertos), BPS (API do
+  Ministério da Saúde ou, sem coleta, a base histórica `PrecoBps`), SIASG judicial, PNCP, **atas de
+  registro de preços** (API) e **orçamento direto de fornecedor** (art. 5º, IV — informado pelo
+  usuário). Cruzamento por código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local o código puro;
+  as fontes de dados abertos gravam o CATMAT sem zeros.
 - A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
-  só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços.
+  só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços. Não confundir
+  com a fonte "Compras.gov.br" (tabela `DadosAbertosPreco`, origem `COMPRASGOV`).
+- Ordem e rótulos das fontes (incisos do art. 5º) em `lib/pesquisa-preco-fontes.ts` — a tela, o HTML
+  e o mapa XLSX usam a mesma lista.
+
+### Dados abertos (Compras.gov.br, BPS, atas) e vínculo com o PNCP
+
+- `lib/dados-abertos/`: `cliente.ts` (timeout, 5xx, 429 → `aguardarMs`, 404 = contrato alterado,
+  200 sem JSON = erro, cota de 90/min por processo), `comprasgov.ts`, `bps.ts`, `pncp-vinculo.ts`,
+  `coleta.ts`, `pesquisa.ts` e `mapear.ts` — o ÚNICO que conhece os nomes de campo das APIs, com
+  espelho em `scripts/dados_abertos_mapear.py` (os dois conferidos contra
+  `scripts/fixtures/dados-abertos/esperado_mapear.json`).
+- Coleta **uma página por chamada** (`POST /api/precos/dados-abertos/coletar`); a tela repete, espaça
+  700 ms e obedece `aguardarMs` — a função nunca dorme esperando a cota. Janela: 36 meses
+  (Compras.gov.br e BPS), 365 dias (atas). Coleta completa remove da janela o que a API não devolve mais.
+  Relatórios nunca coletam.
+- **Ids estáveis**: `COMPRASGOV:<idCompra(17)+item(5)>`, `BPS:<sha1 do conteúdo>`,
+  `ARP:<nº de controle da ata>:<item>`. Nunca `cuid()` — a curadoria grava exclusões pelo id.
+- `idCompra` tem 16 ou 17 dígitos e vem da API como inteiro acima de 2^53: leia com
+  `parseJsonSeguro` e normalize para 17 dígitos (o PNCP não acha a compra com 16).
+- Vínculo PNCP (`PncpVinculo`, `POST /api/precos/dados-abertos/vincular-pncp`): 1.1 (contratação) +
+  2.1 (itens) por `idCompra`; encontrado = permanente, não encontrado = 30 dias. Dá a coluna
+  "Anulada/Revogada" (situação), o processo e o link (`lib/pncp.ts`).
+- Fonte BPS (P21): com coleta pela API, lê `DadosAbertosPreco` (processo, ata, registro ANVISA,
+  fabricante); sem coleta, `PrecoBps` com aviso de base histórica. Itens de ata herdam a unidade de
+  fornecimento da compra com a mesma chave de 22 dígitos.
+- Carga em lote: `scripts/import_extrator_da.py` (saída do Extrator-CATMAT-DA, mesmas chaves).
+  `scripts/probe_dados_abertos.py` confere o contrato das APIs. Resumo da API em
+  `docs/api/compras-dadosabertos.md`.
 - `normalizarTexto`/`normalizarUnidade` (TS) são espelhadas em `scripts/precos_norm.py` — alterar as duas.
 
 ### Filtros opcionais ("Mais filtros")
@@ -129,11 +159,11 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   enquanto o filtro estiver ativo, e o motivo aparece no painel, no relatório e nas observações.
   Misturar registros filtrados com não filtrados falsearia a mediana das medianas.
 
-  | Filtro         | BPS | SIASG              | PNCP              | CMED            |
-  |----------------|-----|--------------------|-------------------|-----------------|
-  | Fornecedor     | ✅  | ✅                 | coluna vazia¹     | n/a             |
-  | Fabricante     | ✅  | coluna vazia¹      | ❌ sem coluna     | ✅ laboratório  |
-  | CNPJ Comprador | ✅ `cnpjInstituicao` | ❌ só `cnpjFornecedor` | coluna vazia¹ (`cnpjOrgao`) | n/a |
+  | Filtro         | Compras.gov.br | BPS | SIASG              | PNCP              | Atas          | CMED            |
+  |----------------|----------------|-----|--------------------|-------------------|---------------|-----------------|
+  | Fornecedor     | ✅ | ✅  | ✅                 | coluna vazia¹     | ✅            | n/a             |
+  | Fabricante     | ✅ `marca` | ✅ (API: `nomeFabricante`) | coluna vazia¹ | ❌ sem coluna | ❌ sem coluna | ✅ laboratório  |
+  | CNPJ Comprador | ❌ só UASG/órgão | ✅ `cnpjInstituicao` | ❌ só `cnpjFornecedor` | coluna vazia¹ (`cnpjOrgao`) | ❌ sem coluna | n/a |
 
   ¹ A coluna existe no schema e é consultada normalmente; hoje a carga está vazia, então o filtro
   simplesmente não retorna nada. Não entra em `FONTE_SEM_CAMPO` de propósito — passa a filtrar

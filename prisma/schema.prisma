@@ -847,3 +847,121 @@ model SiafiPagamento {
   @@index([ano])
   @@schema("sismat")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dados abertos — preços coletados das APIs públicas (Frente D0 da avaliação
+// da DLOG). Não confundir com sismat."ComprasGovPreco", que é outra base (sem
+// CATMAT) e alimenta só a aba Preços.
+//
+//   • DadosAbertosPreco — um registro por item comprado: Compras.gov.br (Painel
+//     de Preços, /modulo-pesquisa-preco/1_consultarMaterial), BPS do Ministério
+//     da Saúde (/economia-da-saude/bps), itens de ata (/modulo-arp) e, depois,
+//     itens de contratação PNCP. Vem da coleta pelo painel (um CATMAT por vez)
+//     ou da carga em lote da saída do Extrator-CATMAT-DA
+//     (scripts/import_extrator_da.py). O mapeamento campo a campo fica em
+//     lib/dados-abertos/mapear.ts (espelho: scripts/dados_abertos_mapear.py).
+//     O id é DETERMINÍSTICO (COMPRASGOV:<chave22>, BPS:<sha1>, ARP:<ata>:<item>):
+//     a curadoria grava exclusões pelo id, e recoletar não pode mudá-lo.
+//   • DadosAbertosColeta — uma linha por coleta (origem × CATMAT × janela), com
+//     o relatório de integridade (esperados × baixados) do extrator.
+//   • PncpVinculo — compra (idCompra, 17 dígitos) → contratação no PNCP. Cache
+//     permanente quando encontrada; "não encontrada" vale 30 dias.
+//
+// Tabelas criadas por scripts/create_dadosabertos_tables.py (mesma DDL que o
+// `prisma db push` geraria a partir destes modelos).
+// ─────────────────────────────────────────────────────────────────────────────
+model DadosAbertosPreco {
+  id                    String    @id // COMPRASGOV:<chave22> | BPS:<sha1> | ARP:<ata>:<item> | PNCP:<idCompraItem>
+  origem                String // COMPRASGOV | BPS | PNCP_ITEM | ARP_ITEM
+  chaveOrigem           String // a chave sem o prefixo
+  chaveItemCompra22     String? // idCompra (17) + nº do item (5) — deduplicação entre bases
+  codigoCatmat          String // sem zeros à esquerda
+  codigoPdm             String?
+  descricao             String    @db.Text // limpa pelas regras do extrator
+  descricaoDetalhada    String?   @db.Text
+  unidade               String?
+  unidadeNorm           String? // normalizarUnidade — filtro da pesquisa
+  capacidade            Float?
+  quantidade            Float?
+  precoUnitario         Float
+  valorUnitarioEstimado Float?
+  dataCompra            DateTime? @db.Date // BPS: homologação; ata: início da vigência
+  dataResultado         DateTime? @db.Date
+  dataInsercao          DateTime? @db.Date
+  idCompra              String? // 17 dígitos
+  numeroCompra          String? // "90041/2026"
+  numeroItemCompra      String?
+  modalidade            String? // nome, já traduzido do código
+  criterioJulgamento    String?
+  forma                 String? // SISRP | SISPP
+  situacao              String?
+  codigoUasg            String?
+  nomeUasg              String?
+  orgao                 String?
+  cnpjOrgao             String?
+  esfera                String?
+  poder                 String?
+  uf                    String?
+  municipio             String?
+  niFornecedor          String?
+  nomeFornecedor        String?
+  marca                 String?
+  cnpjFabricante        String?
+  nomeFabricante        String?
+  registroAnvisa        String?
+  generico              Boolean?
+  processoCompra        String? // BPS: numeroProcessoCompra
+  numeroAta             String? // BPS e atas
+  validadeCompra        String?
+  observacoes           String?   @db.Text
+  numeroControlePncp    String?
+  numeroControlePncpAta String?
+  origemCarga           String // API_PAINEL | EXTRATOR
+  bruto                 Json? // item como veio da origem (auditoria)
+  coletadoEm            DateTime  @default(now())
+
+  @@unique([origem, chaveOrigem])
+  @@index([codigoCatmat, origem, dataCompra])
+  @@index([idCompra])
+  @@schema("public")
+}
+
+model DadosAbertosColeta {
+  id           String    @id @default(cuid())
+  origem       String // COMPRASGOV | BPS | PNCP_ITEM | ARP_ITEM
+  codigoCatmat String
+  dataInicio   DateTime  @db.Date
+  dataFim      DateTime  @db.Date
+  assinatura   String? // "tipo+codigo" | "codigoItemCatalogo" (recuo da API antiga)
+  status       String // EM_ANDAMENTO | OK | PARCIAL | ERRO | CONTRATO_ALTERADO
+  paginas      Int       @default(0)
+  esperados    Int?
+  baixados     Int       @default(0)
+  erro         String?   @db.Text
+  origemCarga  String    @default("API_PAINEL") // API_PAINEL | EXTRATOR
+  usuarioId    String?
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+
+  @@index([codigoCatmat, origem, iniciadoEm])
+  @@schema("public")
+}
+
+model PncpVinculo {
+  idCompra           String   @id // 17 dígitos
+  encontrado         Boolean
+  numeroControlePncp String?
+  situacao           String? // situação da contratação no PNCP
+  modalidade         String?
+  numeroCompra       String?
+  processo           String?
+  objeto             String?  @db.Text
+  cnpjOrgao          String?
+  url                String? // página pública da contratação
+  /// nº do item → { situacao, criterio, valorHomologado } (/2.1_…_Id)
+  itens              Json?
+  bruto              Json?
+  consultadoEm       DateTime @default(now())
+
+  @@schema("public")
+}

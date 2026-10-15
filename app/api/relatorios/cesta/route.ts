@@ -22,7 +22,9 @@ import {
   AZUL,
   blocoAssinaturas,
   conteudoAnalise,
+  conteudoArp,
   conteudoBps,
+  conteudoComprasGov,
   conteudoCmed,
   conteudoDescartes,
   conteudoEspecificacao,
@@ -226,12 +228,16 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     ${conteudoEspecificacao(r, especificacaoDoItem(r, ""))}
     <div style="margin-top:10px;"><strong style="font-size:11px;">CMED/ANVISA — teto regulatório por unidade</strong></div>
     ${conteudoCmed(r)}
+    <div style="margin-top:10px;"><strong style="font-size:11px;">Compras.gov.br — Painel de Preços</strong></div>
+    ${conteudoComprasGov(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">BPS — Banco de Preços em Saúde</strong></div>
     ${conteudoBps(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">SIASG/Comprasnet — compras com ação judicial</strong></div>
     ${conteudoSiasg(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">PNCP — Portal Nacional de Contratações Públicas</strong></div>
     ${conteudoPncp(r)}
+    <div style="margin-top:10px;"><strong style="font-size:11px;">Atas de registro de preços</strong></div>
+    ${conteudoArp(r)}
     ${
       r.orcamentos.length
         ? `<div style="margin-top:10px;"><strong style="font-size:11px;">Orçamentos diretos de fornecedor (art. 5º, IV)</strong></div>
@@ -299,7 +305,7 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
       }
     </ul>
     <p style="font-size:11px;margin-bottom:6px;"><strong>Validade desta pesquisa:</strong> 90 (noventa) dias, conforme art. 5º, §4º da IN SEGES/ME nº 65/2021 — até <strong>${fmtDateLong(validade)}</strong>.</p>
-    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), BPS 2020–2025, SIASG/Comprasnet (compras judiciais 2002–2021) e PNCP (materiais 2024–2025).</p>
+    <p style="font-size:11px;margin-bottom:16px;"><strong>Bases consultadas:</strong> CMED/ANVISA (tabela vigente, preço por unidade de fornecimento), Compras.gov.br (Painel de Preços, API de dados abertos), BPS (API de dados abertos do Ministério da Saúde quando coletado; senão, base histórica 2020–2025), SIASG/Comprasnet (compras judiciais 2002–2021), PNCP (materiais 2024–2025) e atas de registro de preços (API de dados abertos).</p>
     ${blocoAssinaturas(meta)}`;
 
   const corpo = [

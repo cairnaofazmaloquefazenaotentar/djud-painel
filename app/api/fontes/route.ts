@@ -9,6 +9,35 @@ export interface FontesData {
   sismatEntradas: string | null;
   sismatSaidas:   string | null;
   fns:            string | null;
+  // Pesquisa de Preços — tabela CMED e última coleta de cada origem de dados abertos
+  cmed:           string | null;
+  comprasGov:     string | null;
+  bpsApi:         string | null;
+  atas:           string | null;
+  extrator:       string | null;
+}
+
+/** Última coleta concluída por origem (OK ou PARCIAL); sem as tabelas, tudo null. */
+async function ultimasColetas(): Promise<Pick<FontesData, "comprasGov" | "bpsApi" | "atas" | "extrator">> {
+  try {
+    const grupos = await db.dadosAbertosColeta.groupBy({
+      by: ["origem", "origemCarga"],
+      where: { status: { in: ["OK", "PARCIAL"] } },
+      _max: { concluidoEm: true },
+    });
+    const max = (filtro: (g: (typeof grupos)[number]) => boolean) => {
+      const datas = grupos.filter(filtro).map((g) => g._max.concluidoEm).filter((d): d is Date => !!d);
+      return datas.length ? new Date(Math.max(...datas.map((d) => d.getTime()))).toISOString() : null;
+    };
+    return {
+      comprasGov: max((g) => g.origem === "COMPRASGOV"),
+      bpsApi: max((g) => g.origem === "BPS"),
+      atas: max((g) => g.origem === "ARP_ITEM"),
+      extrator: max((g) => g.origemCarga === "EXTRATOR"),
+    };
+  } catch {
+    return { comprasGov: null, bpsApi: null, atas: null, extrator: null };
+  }
 }
 
 export async function GET() {
@@ -21,7 +50,7 @@ export async function GET() {
     // Prisma aggregate() não funciona bem com modelos em schemas não-padrão
     // (multiSchema preview). Usamos raw SQL para as tabelas do schema sismat,
     // exatamente como fazemos em lib/metrics.ts e lib/sismat-*-metrics.ts.
-    const [redmine, sismatRow] = await Promise.all([
+    const [redmine, sismatRow, cmed, coletas] = await Promise.all([
       // Demanda está no schema public — aggregate() funciona normalmente.
       db.demanda.aggregate({ _max: { atualizadoEm: true } }),
 
@@ -36,6 +65,8 @@ export async function GET() {
           (SELECT MAX("dtBaixa")         FROM sismat."SismatSaida")    AS "sismatSaidas",
           (SELECT MAX("dtPagtoSiafi")    FROM sismat."SiafiPagamento") AS fns
       `,
+      db.precoCmed.aggregate({ _max: { vigencia: true } }),
+      ultimasColetas(),
     ]);
 
     const row = sismatRow[0];
@@ -45,6 +76,8 @@ export async function GET() {
       sismatEntradas: row?.sismatEntradas?.toISOString()        ?? null,
       sismatSaidas:   row?.sismatSaidas?.toISOString()          ?? null,
       fns:            row?.fns?.toISOString()                   ?? null,
+      cmed:           cmed._max.vigencia?.toISOString()         ?? null,
+      ...coletas,
     };
 
     return NextResponse.json(data);

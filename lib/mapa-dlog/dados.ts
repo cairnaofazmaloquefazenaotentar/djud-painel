@@ -193,7 +193,8 @@ export function nomeMedicamento(r: ResultadoPesquisa): string {
     const reg = item.registros[0];
     return [reg.substancia, reg.apresentacao].filter(Boolean).join(" — ") || item.descricao;
   }
-  const concentracao = /CONCENTRA[ÇC][ÃA]O:?\s*([^,]+)/i.exec(item.descricao)?.[1]?.trim();
+  // Até o próximo ", RÓTULO:" — a concentração pode ter vírgula decimal ("56,25 MG/ML").
+  const concentracao = /CONCENTRA[ÇC][ÃA]O:?\s*(.+?)\s*(?:,\s*[A-ZÀ-Úa-zà-ú. /]+:|$)/i.exec(item.descricao)?.[1]?.trim();
   const base = item.nomePdm || item.descricao.split(",")[0].trim();
   return concentracao ? `${base} ${concentracao}` : item.descricao;
 }
@@ -250,7 +251,7 @@ function linhaDaBase(
   let numeroCompra = c?.numero ?? (c?.processo ? `Processo ${c.processo}` : semDado);
   let referencia: LinhaBase["referencia"] = c?.url
     ? { texto: c.numeroControlePncpAta ?? c.numeroControlePncp ?? "PNCP", url: c.url }
-    : { texto: c?.numeroControlePncp ?? semDado, url: null };
+    : { texto: c?.referencia ?? c?.numeroControlePncp ?? semDado, url: null };
   if (orcamento) {
     numeroCompra = texto(orcamento.documento, "proposta juntada ao processo");
     referencia = {

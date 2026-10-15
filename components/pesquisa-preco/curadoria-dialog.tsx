@@ -126,6 +126,14 @@ function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCur
       r.marca || r.fabricante ? `Marca/fabr.: ${[r.marca, r.fabricante].filter(Boolean).join(" / ")}` : null,
       r.orgao,
       r.modalidade,
+      // Contratação de origem (obs. 7 da DLOG): nº da compra, UASG e item.
+      r.contratacao?.numero
+        ? [r.contratacao.numero, r.contratacao.uasg ? `UASG ${r.contratacao.uasg}` : null, r.contratacao.numeroItem ? `item ${r.contratacao.numeroItem}` : null]
+            .filter(Boolean)
+            .join(" · ")
+        : null,
+      r.contratacao?.situacao,
+      r.registroAnvisa ? `Reg. ANVISA ${r.registroAnvisa}` : null,
     ]
       .filter(Boolean)
       .join(" · "),

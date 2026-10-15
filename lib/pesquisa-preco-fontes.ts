@@ -112,6 +112,9 @@ export interface ContratacaoRef {
   numeroControlePncpAta: string | null;
   /** Página pública (PNCP) da contratação ou da ata. */
   url: string | null;
+  /** Texto da coluna "Referência" quando não há link (BPS: "Ata 188, validade 12 meses"). */
+  referencia: string | null;
+  /** Por que a base não traz a identificação — impresso no lugar do dado. */
   indisponivel: string | null;
 }
 

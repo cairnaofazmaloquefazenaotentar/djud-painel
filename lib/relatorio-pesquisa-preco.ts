@@ -192,9 +192,11 @@ export function conteudoMetodo(
   return `<p style="font-size:11px;margin-bottom:6px;">A pesquisa foi realizada em conformidade com o art. 5º da IN SEGES/ME nº 65/2021, a partir do código CATMAT e da unidade de fornecimento do item, consultando as seguintes bases de dados oficiais:</p>
       <ul style="padding-left:18px;font-size:11px;line-height:1.8;">
         <li><strong>CMED/ANVISA</strong> — Câmara de Regulação do Mercado de Medicamentos: preço máximo de venda ao governo (PMVG) como teto regulatório obrigatório, convertido da embalagem para a unidade de fornecimento pela quantidade por embalagem (Qt_Embal) do registro ANVISA.</li>
-        <li><strong>BPS</strong> — Banco de Preços em Saúde (DATASUS/MS): registros de compras hospitalares públicas 2020–2025, por código CATMAT.</li>
+        <li><strong>Compras.gov.br — Painel de Preços</strong> (inciso I): preços praticados em todas as compras públicas registradas no Compras.gov.br, por código CATMAT, coletados da API de dados abertos (compras dos últimos 36 meses), com o número da compra, a UASG, o item e, quando publicada, a contratação no PNCP.</li>
+        <li><strong>BPS</strong> — Banco de Preços em Saúde (Ministério da Saúde): compras hospitalares públicas por código CATMAT, coletadas da API de dados abertos (com nº do processo, da ata e registro ANVISA) ou, sem coleta, da base histórica carregada no painel (2020–2025).</li>
         <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
-        <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT).</li>
+        <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT), na base carregada no painel.</li>
+        <li><strong>Atas de registro de preços</strong> (inciso II): itens de atas com vigência iniciada nos últimos 12 meses, por código CATMAT, coletados da API de dados abertos, com o link da ata no PNCP.</li>
         <li><strong>Orçamento direto de fornecedor</strong> (art. 5º, IV) — propostas apresentadas diretamente ao órgão, quando juntadas ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
       <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. ${
@@ -227,9 +229,27 @@ export function marcaFabricante(r: {
  * ela é filtro obrigatório da pesquisa, então é a mesma em todas as linhas.
  * Empresa vencedora e marca/fabricante são obrigatórias no relatório.
  */
+/** "Pregão 90041/2026 · UASG 120195 · item 122 · PNCP ↗" (obs. 7 e 8 da DLOG). */
+export function contratacaoHtml(r: RegistroMercado): string {
+  const c = r.contratacao;
+  if (!c) return "—";
+  const partes = [
+    [c.tipo, c.numero].filter(Boolean).join(" "),
+    c.uasg ? `UASG ${c.uasg}` : null,
+    c.numeroItem ? `item ${c.numeroItem}` : null,
+    c.processo && !c.numero?.includes(c.processo) ? `proc. ${c.processo}` : null,
+    c.referencia,
+    c.situacao,
+  ].filter(Boolean) as string[];
+  const link = c.url ? ` <a href="${esc(c.url)}" style="color:#1a56db;">PNCP&nbsp;↗</a>` : "";
+  const texto = partes.length ? esc(partes.join(" · ")) : esc(c.indisponivel ?? "—");
+  return `${texto}${link}`;
+}
+
 function colunasMercado(ultima: Coluna<RegistroMercado>): Coluna<RegistroMercado>[] {
   return [
-    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 45)) },
+    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 38)) },
+    { label: "Contratação de referência", fn: contratacaoHtml },
     {
       // Um valor descartado pelo IQR continua na amostra impressa, mas riscado:
       // sem a marca, quem lê vê um preço dez vezes menor que a mediana ao lado
@@ -339,12 +359,47 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
 
 export function conteudoBps(resultado: ResultadoPesquisa): string {
   const { item, unidade, uf, resultados } = resultado;
+  const daApi = resultados.bps.origemDados === "API";
   return conteudoMercado(
     resultados.bps,
     "Nenhum registro encontrado no BPS para este código e unidade de fornecimento.",
     (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no BPS (anos 2020–2025) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
+      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no BPS (${
+        daApi ? "API de dados abertos do Ministério da Saúde, compras dos últimos 36 meses" : "base histórica carregada no painel, anos 2020–2025"
+      }) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
     { label: "Instituição", fn: (r) => esc((r.orgao || "—").substring(0, 40)) }
+  );
+}
+
+/** Data da coleta da API, para o texto da fonte. */
+function textoColeta(f: FonteMercadoResultado): string {
+  if (!f.coleta?.coletadoEm) return "";
+  return ` Dados coletados em ${fmtDate(f.coleta.coletadoEm)}${f.coleta.valida ? "" : " (há mais de 7 dias)"}.`;
+}
+
+export function conteudoComprasGov(resultado: ResultadoPesquisa): string {
+  const { item, unidade, uf, resultados } = resultado;
+  const fonte = resultados.comprasgov;
+  if (!fonte) return `<p style="color:#666;font-style:italic;font-size:11px;">Fonte não consultada nesta pesquisa.</p>`;
+  return conteudoMercado(
+    fonte,
+    `Nenhuma compra no Compras.gov.br para este código e unidade de fornecimento${fonte.coleta?.coletadoEm ? "" : " — o CATMAT ainda não foi coletado da API de dados abertos"}.`,
+    (f) =>
+      `Foram identificadas <strong>${fmtInt(f.total)}</strong> compras no Compras.gov.br (Painel de Preços, API de dados abertos) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.${textoColeta(f)}`,
+    { label: "UASG / Órgão", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
+  );
+}
+
+export function conteudoArp(resultado: ResultadoPesquisa): string {
+  const { item, unidade, resultados } = resultado;
+  const fonte = resultados.arp;
+  if (!fonte) return `<p style="color:#666;font-style:italic;font-size:11px;">Fonte não consultada nesta pesquisa.</p>`;
+  return conteudoMercado(
+    fonte,
+    "Nenhum item de ata de registro de preços com vigência iniciada nos últimos 12 meses para este código e unidade de fornecimento.",
+    (f) =>
+      `Foram identificados <strong>${fmtInt(f.total)}</strong> itens de atas de registro de preços (vigência iniciada nos últimos 12 meses) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>.${textoColeta(f)}`,
+    { label: "Gerenciadora", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
   );
 }
 
