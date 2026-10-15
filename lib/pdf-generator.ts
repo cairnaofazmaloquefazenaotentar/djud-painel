@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { formatFileSize } from "@/lib/file-utils";
 
@@ -41,35 +42,10 @@ export async function generateDemandaHTML(demandaId: string): Promise<string> {
 /**
  * Gera um relatório em HTML com múltiplas demandas
  */
-export async function generateRelatórioHTML(filters?: {
-  startDate?: Date;
-  endDate?: Date;
-  status?: string;
-  prioridade?: string;
-  organizacaoId?: string;
-}): Promise<string> {
+export async function generateRelatórioHTML(where: Prisma.DemandaWhereInput): Promise<string> {
   try {
-    // Buscar demandas com filtros
-    const where: any = {};
-
-    if (filters?.startDate) {
-      where.criadoEm = { gte: filters.startDate };
-    }
-    if (filters?.endDate) {
-      where.criadoEm = where.criadoEm
-        ? { ...where.criadoEm, lte: filters.endDate }
-        : { lte: filters.endDate };
-    }
-    if (filters?.status) {
-      where.status = filters.status;
-    }
-    if (filters?.prioridade) {
-      where.prioridade = filters.prioridade;
-    }
-    if (filters?.organizacaoId) {
-      where.organizacaoId = filters.organizacaoId;
-    }
-
+    // `where` vem do filtro único (lib/demandas-filtro.ts): o mesmo recorte da
+    // lista e do Dashboard, sem a lixeira.
     const demandas = await db.demanda.findMany({
       where,
       include: {
@@ -100,7 +76,6 @@ export async function generateRelatórioHTML(filters?: {
     return generateRelatorioPDFHTML({
       demandas,
       stats,
-      filters,
       generatedAt: new Date(),
     });
   } catch (error) {

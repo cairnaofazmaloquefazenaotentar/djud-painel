@@ -45,6 +45,7 @@ import {
   type PeriodoPesquisa,
 } from "@/lib/pesquisa-preco-periodo";
 import { CONVENCAO_IPCA, fatorIpca, mesBaseIpca } from "@/lib/ipca";
+import { normalizarTexto } from "@/lib/texto-norm";
 import { carregarIpca } from "@/lib/ipca-indices";
 import { marcarDuplicidades } from "@/lib/pesquisa-preco-duplicidade";
 import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
@@ -134,16 +135,8 @@ export const UNIDADE_EMBALAGEM = "EMBALAGEM";
 
 // ── Normalização (espelhada em scripts/precos_norm.py — manter em sincronia) ──
 
-/** Texto de busca: sem acentos, minúsculas, só [a-z0-9 ,-]. Mesma regra das rotas de preços. */
-export function normalizarTexto(texto: string): string {
-  return String(texto ?? "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s,\-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+/** Texto de busca: sem acentos, minúsculas, só [a-z0-9 ,-] (módulo puro lib/texto-norm.ts). */
+export { normalizarTexto };
 
 /**
  * Unidade de fornecimento comparável entre fontes. Idempotente.

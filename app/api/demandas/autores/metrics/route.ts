@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
 import { jsonComVersao } from "@/lib/data-version";
+import { aplicarFiltro, sqlDemandas } from "@/lib/demandas-filtro";
+import { lerFiltroDemandas, semPeriodoDeCriacao } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -21,15 +23,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const sp = request.nextUrl.searchParams;
-    const startDate = sp.get("startDate") ? new Date(sp.get("startDate")!) : undefined;
-    const endDate   = sp.get("endDate")   ? new Date(sp.get("endDate")!)   : undefined;
-
-    // Condições opcionais de filtro de período
-    const conds: Prisma.Sql[] = [Prisma.sql`autor IS NOT NULL`, Prisma.sql`"deletedAt" IS NULL`];
-    if (startDate) conds.push(Prisma.sql`"criadoEm" >= ${startDate}`);
-    if (endDate)   conds.push(Prisma.sql`"criadoEm" <= ${endDate}`);
-    const where = Prisma.sql`WHERE ${Prisma.join(conds, " AND ")}`;
+    // O mesmo filtro único do painel (medicamento, CATMAT, status…): antes a
+    // aba Autores só respeitava as datas (B2).
+    const filtro = lerFiltroDemandas(request.nextUrl.searchParams);
+    const [aplicado, semDatas] = await Promise.all([
+      aplicarFiltro(filtro),
+      aplicarFiltro(semPeriodoDeCriacao(filtro)),
+    ]);
+    const where = Prisma.sql`WHERE autor IS NOT NULL AND ${sqlDemandas(aplicado)}`;
+    // O "primeiro mês" de cada autor é apurado no recorte SEM as datas: quem já
+    // tinha demanda antes do período continua reincidente dentro dele.
+    const whereNovos = Prisma.sql`WHERE autor IS NOT NULL AND ${sqlDemandas(semDatas)}`;
 
     // ── 1. Autores únicos por mês ────────────────────────────────────────────
     const unicosRaw = await db.$queryRaw<Array<{ mes: Date; autores_unicos: bigint }>>`
@@ -42,14 +46,14 @@ export async function GET(request: NextRequest) {
     `;
 
     // ── 2. Autores novos por mês (primeira demanda no mês) ───────────────────
-    // Usa a base COMPLETA (sem filtro de período) para calcular corretamente
-    // qual foi o primeiro mês de cada autor — independente do filtro aplicado.
+    // Usa o recorte sem o filtro de período para calcular corretamente qual
+    // foi o primeiro mês de cada autor — independente das datas escolhidas.
     const novosRaw = await db.$queryRaw<Array<{ mes: Date; autores_novos: bigint }>>`
       WITH primeiro_mes AS (
         SELECT autor,
                DATE_TRUNC('month', MIN("criadoEm")) AS mes
         FROM "Demanda"
-        WHERE autor IS NOT NULL AND "deletedAt" IS NULL
+        ${whereNovos}
         GROUP BY autor
       )
       SELECT mes, COUNT(*) AS autores_novos

@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { paramsDeMetrics } from "@/hooks/useMetrics";
+import type { FiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { apiPath } from "@/lib/url";
 
 export interface AutoresMesData {
@@ -10,34 +12,20 @@ export interface AutoresMesData {
   autoresReincidentes: number;
 }
 
-interface UseAutoresMetricsOptions {
-  startDate?: Date;
-  endDate?: Date;
-}
-
-export function useAutoresMetrics(options: UseAutoresMetricsOptions = {}) {
-  const queryKey = [
-    "autores-metrics",
-    {
-      startDate: options.startDate?.toISOString(),
-      endDate: options.endDate?.toISOString(),
-    },
-  ];
-
+/** Série de autores com o MESMO filtro do painel (B2: antes só as datas valiam). */
+export function useAutoresMetrics(filtro: FiltroDemandas, enabled = true) {
+  const chave = paramsDeMetrics(filtro).toString();
   return useQuery<AutoresMesData[]>({
-    queryKey,
-    queryFn: async () => {
-      const params = new URLSearchParams();
-      if (options.startDate) params.append("startDate", options.startDate.toISOString());
-      if (options.endDate)   params.append("endDate",   options.endDate.toISOString());
-
-      const res = await fetch(apiPath(`/api/demandas/autores/metrics?${params.toString()}`));
+    queryKey: ["autores-metrics", chave],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(apiPath(`/api/demandas/autores/metrics?${chave}`), { signal });
       if (!res.ok) throw new Error("Erro ao carregar métricas de autores");
 
       const raw = await res.json();
       // Deserializar datas que vêm como string do JSON
-      return raw.map((r: any) => ({ ...r, mes: new Date(r.mes) }));
+      return raw.map((r: AutoresMesData & { mes: string }) => ({ ...r, mes: new Date(r.mes) }));
     },
+    enabled,
     staleTime: 60 * 1000,
     gcTime: 5 * 60 * 1000,
   });

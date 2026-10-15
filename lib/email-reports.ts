@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Resend } from "resend";
 import { generateDemandaHTML, generateRelatórioHTML } from "@/lib/pdf-generator";
 
@@ -87,13 +88,8 @@ export async function sendDemandaReport(
  */
 export async function sendRelatórioReport(
   to: string,
-  filters?: {
-    startDate?: Date;
-    endDate?: Date;
-    status?: string;
-    prioridade?: string;
-    organizacaoId?: string;
-  }
+  /** Recorte do filtro único (lib/demandas-filtro.ts → whereDemandas). */
+  where: Prisma.DemandaWhereInput
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {
     // Validar email
@@ -105,7 +101,7 @@ export async function sendRelatórioReport(
     }
 
     // Gerar HTML do relatório
-    const html = await generateRelatórioHTML(filters);
+    const html = await generateRelatórioHTML(where);
 
     // Enviar email com Resend
     const resend = getResendClient();

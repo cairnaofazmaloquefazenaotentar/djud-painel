@@ -6,3 +6,4 @@ export { ConfirmDialog } from "./confirm-dialog";
 export { AuditLogTable } from "./audit-log-table";
 export { EmptyState } from "./empty-state";
 export { ChartCard } from "./chart-card";
+export { FilterMultiSelect } from "./filter-multi-select";

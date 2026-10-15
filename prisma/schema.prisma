@@ -185,6 +185,14 @@ model Demanda {
   deletedAt                    DateTime?
   attachments                  Attachment[]
 
+  // Avaliação da DLOG (out/2026) — colunas criadas por scripts/alter_demanda_busca.py
+  nupSei                       String?          // NUP_SEI Principal, formato canônico "25000.123456/2021-11" (A6)
+  medicamento                  String?          // Medicamento identificado (A5; scripts/enriquecer_demandas.py)
+  medicamentoOrigem            String?          // REDMINE | TITULO | DESCRICAO | SISMAT
+  apresentacoes                Json?            // Apresentações identificadas (A5)
+  catmatsDerivados             String[]         @default([]) // CATMATs derivados da apresentação (A5)
+  buscaNorm                    String?          @db.Text // Texto normalizado da busca (A4; lib/demandas-filtro-tipos.ts)
+
   @@index([ano])
   @@index([formaCumprimento])
   @@index([trfRegiao])
@@ -201,6 +209,9 @@ model Demanda {
   @@index([fornecedor])
   @@index([autor])
   @@index([deletedAt])
+  @@index([nupSei])
+  // Busca sem acento por trecho (P8): GIN pg_trgm — a extensão é criada pelo script.
+  @@index([buscaNorm(ops: raw("gin_trgm_ops"))], type: Gin, map: "Demanda_buscaNorm_trgm_idx")
   @@schema("public")
 }
 

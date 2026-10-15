@@ -2,68 +2,35 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { MetricsData } from "@/lib/metrics";
+import { filtroParaQuery, type FiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { apiPath } from "@/lib/url";
 
-interface UseMetricsOptions {
-  startDate?: Date;
-  endDate?: Date;
-  status?: string;
-  prioridade?: string;
-  principioAtivo?: string;
-  organizacaoId?: string;
-  /** CATMAT (até 6 dígitos) ou registro ANVISA (13). */
-  catmat?: string;
-  eixoDataValor?: "pagamento" | "processo";
+/**
+ * Query string comum ao painel, à lista e às exportações: o filtro único
+ * (lib/demandas-filtro-tipos.ts) — mesma leitura, mesmo recorte.
+ */
+export function paramsDeMetrics(filtro: FiltroDemandas): URLSearchParams {
+  return filtroParaQuery(filtro);
 }
 
-/** Query string comum ao painel e às exportações — mesma leitura, mesmo recorte. */
-export function paramsDeMetrics(options: UseMetricsOptions): URLSearchParams {
-  const params = new URLSearchParams();
-  if (options.startDate) params.append("startDate", options.startDate.toISOString());
-  if (options.endDate) params.append("endDate", options.endDate.toISOString());
-  if (options.status) params.append("status", options.status);
-  if (options.prioridade) params.append("prioridade", options.prioridade);
-  if (options.principioAtivo) params.append("principioAtivo", options.principioAtivo);
-  if (options.organizacaoId) params.append("organizacaoId", options.organizacaoId);
-  if (options.catmat) params.append("catmat", options.catmat);
-  if (options.eixoDataValor) params.append("eixoDataValor", options.eixoDataValor);
-  return params;
-}
+export function useMetrics(filtro: FiltroDemandas, eixoDataValor?: "pagamento" | "processo") {
+  const qs = paramsDeMetrics(filtro);
+  if (eixoDataValor) qs.set("eixoDataValor", eixoDataValor);
+  const chave = qs.toString();
 
-export type { UseMetricsOptions };
-
-export function useMetrics(options: UseMetricsOptions = {}) {
-  // Create stable cache key from normalized options
-  const queryKey = [
-    "metrics",
-    {
-      startDate: options.startDate?.toISOString(),
-      endDate: options.endDate?.toISOString(),
-      status: options.status,
-      prioridade: options.prioridade,
-      principioAtivo: options.principioAtivo,
-      organizacaoId: options.organizacaoId,
-      catmat: options.catmat,
-      eixoDataValor: options.eixoDataValor,
-    },
-  ];
-
-  const query = useQuery<MetricsData>({
-    queryKey,
-    queryFn: async () => {
-      const params = paramsDeMetrics(options);
-
-      const response = await fetch(apiPath(`/api/demandas/metrics?${params.toString()}`));
-
+  return useQuery<MetricsData>({
+    queryKey: ["metrics", chave],
+    queryFn: async ({ signal }) => {
+      const response = await fetch(apiPath(`/api/demandas/metrics?${chave}`), { signal });
       if (!response.ok) {
-        throw new Error("Erro ao carregar métricas");
+        const d = await response.json().catch(() => ({}));
+        throw new Error(d?.error || "Erro ao carregar métricas");
       }
-
       return response.json();
     },
+    // Sem keepPreviousData de propósito: número do filtro anterior na tela,
+    // mesmo por um instante, seria lido como resultado do filtro novo.
     staleTime: 60 * 1000, // 1 minute
     gcTime: 5 * 60 * 1000, // 5 minutes
   });
-
-  return query;
 }

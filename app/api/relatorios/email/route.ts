@@ -3,6 +3,8 @@ import { sendDemandaReport, sendRelatórioReport } from "@/lib/email-reports";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { aplicarFiltro, whereDemandas } from "@/lib/demandas-filtro";
+import { lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 
 export const runtime = "nodejs";
 
@@ -84,17 +86,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Senão, enviar relatório em lote
-    const convertedFilters = filters
-      ? {
-          startDate: filters.startDate ? new Date(filters.startDate) : undefined,
-          endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-          status: filters.status,
-          prioridade: filters.prioridade,
-          organizacaoId: filters.organizacaoId,
-        }
-      : undefined;
+    // Filtro único (lib/demandas-filtro.ts): o mesmo recorte da lista, sem a lixeira.
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters ?? {})) if (v) sp.append(k, String(v));
+    const where = whereDemandas(await aplicarFiltro(lerFiltroDemandas(sp)));
 
-    const result = await sendRelatórioReport(email, convertedFilters);
+    const result = await sendRelatórioReport(email, where);
 
     if (!result.success) {
       return NextResponse.json(

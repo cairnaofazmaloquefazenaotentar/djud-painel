@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { updateDemandaSchema } from "@/lib/schemas";
 import { createAuditLog } from "@/lib/audit";
 import { hasPermission } from "@/lib/permissions";
+import { montarBuscaNorm } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function GET(
@@ -81,6 +82,9 @@ export async function PUT(
       where: { id },
       data: {
         ...data,
+        // A coluna da busca acompanha a edição (A4): título, processo ou
+        // princípio ativo novos têm de ser achados pela busca já.
+        buscaNorm: montarBuscaNorm({ ...demanda, ...data }),
         atualizadoPorId: session.user.id,
       },
       include: {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { MetricCard } from "@/components/dashboard/metric-card";
@@ -30,8 +30,17 @@ import type { DimensaoRanking } from "@/lib/metrics-ranking-anual";
 import { useAutoresMetrics } from "@/hooks/useAutoresMetrics";
 import { usePrincipiosAtivos } from "@/hooks/usePrincipiosAtivos";
 import { useFontes, fmtDataFonte } from "@/hooks/useFontes";
-import { Combobox } from "@/components/ui/combobox";
-import { FilterSelect } from "@/components/backoffice";
+import { FilterMultiSelect } from "@/components/backoffice";
+import { MedicamentoInput } from "@/components/dashboard/medicamento-input";
+import { RecorteMedicamento } from "@/components/dashboard/recorte-medicamento";
+import { useOpcoesDemandas } from "@/hooks/useDemandas";
+import {
+  ATALHOS_STATUS,
+  FILTRO_VAZIO,
+  filtroParaQuery,
+  type FiltroDemandas,
+  type SelecaoCampo,
+} from "@/lib/demandas-filtro-tipos";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -246,11 +255,13 @@ export default function DashboardPage() {
 
   const activeGroup = group(activeTab);
 
-  const [startDate,            setStartDate]            = useState("");
-  const [endDate,              setEndDate]              = useState("");
-  const [filterStatus,         setFilterStatus]         = useState("");
-  const [filterPrioridade,     setFilterPrioridade]     = useState("");
-  const [filterPrincipioAtivo, setFilterPrincipioAtivo] = useState("");
+  const [startDate,        setStartDate]        = useState("");
+  const [endDate,          setEndDate]          = useState("");
+  // Status e prioridade com o seletor múltiplo da lista (A1/B3).
+  const [selStatus,        setSelStatus]        = useState<SelecaoCampo>({ incluir: [], excluir: [] });
+  const [selPrioridade,    setSelPrioridade]    = useState<SelecaoCampo>({ incluir: [], excluir: [] });
+  // Medicamento digitado (B3): aplicado pelo próprio campo (pausa, Enter ou sugestão).
+  const [medicamento,      setMedicamento]      = useState("");
 
   const [catmatInput, setCatmatInput] = useState("");
   const [catmat,      setCatmat]      = useState("");
@@ -264,33 +275,42 @@ export default function DashboardPage() {
   const [exportando, setExportando] = useState<"csv" | "html" | null>(null);
 
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
-  const principioOptions = (principios ?? []).map((p) => ({ value: p.value, count: p.count }));
+  const { data: opcoes, isLoading: opcoesLoading } = useOpcoesDemandas();
   const hasActiveFilters = !!(
-    startDate || endDate || filterStatus || filterPrioridade || filterPrincipioAtivo || catmatInput
+    startDate || endDate || medicamento || catmatInput ||
+    selStatus.incluir.length || selStatus.excluir.length ||
+    selPrioridade.incluir.length || selPrioridade.excluir.length
   );
 
-  const metricsFilters = {
-    startDate:      startDate      ? new Date(startDate)  : undefined,
-    endDate:        endDate        ? new Date(endDate)     : undefined,
-    status:         filterStatus      || undefined,
-    prioridade:     filterPrioridade  || undefined,
-    principioAtivo: filterPrincipioAtivo || undefined,
-    catmat:         catmat || undefined,
-  };
+  // O filtro único das demandas (lib/demandas-filtro-tipos.ts): o mesmo da
+  // lista, das exportações e dos relatórios — mesmo filtro, mesmo total.
+  const filtro: FiltroDemandas = useMemo(
+    () => ({
+      ...FILTRO_VAZIO,
+      criadoDe: startDate || null,
+      criadoAte: endDate || null,
+      medicamento: medicamento || null,
+      catmat: catmat || null,
+      campos: {
+        ...(selStatus.incluir.length || selStatus.excluir.length ? { status: selStatus } : {}),
+        ...(selPrioridade.incluir.length || selPrioridade.excluir.length ? { prioridade: selPrioridade } : {}),
+      },
+    }),
+    [startDate, endDate, medicamento, catmat, selStatus, selPrioridade]
+  );
 
-  const { data: metrics, isLoading, error } = useMetrics({ ...metricsFilters, eixoDataValor });
-  const { data: autoresData, isLoading: autoresLoading } = useAutoresMetrics({
-    startDate: metricsFilters.startDate,
-    endDate:   metricsFilters.endDate,
-  });
+  const { data: metrics, isLoading, error, isPlaceholderData: metricsDoFiltroAnterior } = useMetrics(filtro, eixoDataValor);
+  const { data: autoresData, isLoading: autoresLoading } = useAutoresMetrics(filtro);
   const { data: rankingAnual, isLoading: rankingLoading } = useRankingAnual(
-    metricsFilters,
+    filtro,
     activeTab === "ranking-anual"
   );
 
   const handleReset = () => {
-    setStartDate(""); setEndDate(""); setFilterStatus("");
-    setFilterPrioridade(""); setFilterPrincipioAtivo("");
+    setStartDate(""); setEndDate("");
+    setSelStatus({ incluir: [], excluir: [] });
+    setSelPrioridade({ incluir: [], excluir: [] });
+    setMedicamento("");
     setCatmatInput(""); setCatmat("");
   };
 
@@ -298,7 +318,7 @@ export default function DashboardPage() {
     setExportando(formato);
     const janela = formato === "html" ? window.open("", "_blank") : null;
     try {
-      const params = paramsDeMetrics(metricsFilters);
+      const params = paramsDeMetrics(filtro);
       params.set("format", formato);
       if (activeTab === "ranking-anual") params.set("rankingAnual", "1");
       const res = await fetch(apiPath(`/api/demandas/metrics/export?${params.toString()}`));
@@ -435,41 +455,30 @@ export default function DashboardPage() {
                   <Label className="text-xs text-muted-foreground">Data fim</Label>
                   <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-36" />
                 </div>
-                <FilterSelect
-                  label="Status" value={filterStatus} onChange={setFilterStatus}
-                  placeholder="Todos os status"
-                  options={[
-                    { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
-                    { value: "Entrega Pendente",  label: "Entrega Pendente" },
-                    { value: "Cessar Atos",       label: "Cessar Atos" },
-                    { value: "Concluída",         label: "Concluída" },
-                    { value: "Cancelada",         label: "Cancelada" },
-                    { value: "Suspensa",          label: "Suspensa" },
-                  ]}
+                <FilterMultiSelect
+                  label="Status"
+                  className="w-56"
+                  opcoes={opcoes?.status ?? []}
+                  carregando={opcoesLoading}
+                  valor={selStatus}
+                  onChange={setSelStatus}
+                  atalhos={ATALHOS_STATUS}
                 />
-                <FilterSelect
-                  label="Prioridade" value={filterPrioridade} onChange={setFilterPrioridade}
-                  placeholder="Todas as prioridades"
-                  options={[
-                    { value: "Crítica", label: "Crítica" },
-                    { value: "Alta",    label: "Alta" },
-                    { value: "Média",   label: "Média" },
-                    { value: "Normal",  label: "Normal" },
-                    { value: "Baixa",   label: "Baixa" },
-                  ]}
+                <FilterMultiSelect
+                  label="Prioridade"
+                  className="w-56"
+                  opcoes={opcoes?.prioridade ?? []}
+                  carregando={opcoesLoading}
+                  valor={selPrioridade}
+                  onChange={setSelPrioridade}
                 />
-                <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs text-muted-foreground">Princípio Ativo</Label>
-                  <Combobox
-                    value={filterPrincipioAtivo} onChange={setFilterPrincipioAtivo}
-                    options={principioOptions} loading={principiosLoading}
-                    placeholder="Selecione o medicamento..."
-                    searchPlaceholder="Buscar princípio ativo..."
-                    allLabel="Todos os princípios ativos"
-                    emptyText="Nenhum princípio ativo encontrado."
-                    className="w-64"
-                  />
-                </div>
+                <MedicamentoInput
+                  className="w-64"
+                  valor={medicamento}
+                  onAplicar={setMedicamento}
+                  sugestoes={principios ?? []}
+                  carregando={principiosLoading}
+                />
                 <div className="flex flex-col gap-1.5">
                   <Label className="text-xs text-muted-foreground">CATMAT / Registro ANVISA</Label>
                   <Input
@@ -550,6 +559,20 @@ export default function DashboardPage() {
                     </p>
                   )}
                 </div>
+              )}
+
+              {/* Medicamento direto na tela (B3): resumo e processos do recorte */}
+              {(medicamento || (catmat && metrics?.filtroCatmat?.encontrado)) && metrics && (
+                // Enquanto a consulta do filtro novo não volta, os números na
+                // tela ainda são do anterior: o resumo não os mostra como se fossem deste.
+                metricsDoFiltroAnterior ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Calculando o resumo do recorte…
+                  </div>
+                ) : (
+                  <RecorteMedicamento key={filtroParaQuery(filtro).toString()} filtro={filtro} metrics={metrics} />
+                )
               )}
 
               {/* Erro */}

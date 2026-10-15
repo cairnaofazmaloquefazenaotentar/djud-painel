@@ -28,6 +28,18 @@ O upload nao publica dados diretamente no painel. O importador deve validar colu
 
 Enquanto o importador automatizado nao estiver instalado, a equipe responsavel deve avisar que a carga foi enviada para que a validacao e a importacao controlada sejam executadas.
 
+## Colunas novas de Demanda (avaliacao da DLOG)
+
+Uma vez por ambiente, **antes** de publicar a versao que le as colunas e **antes** da proxima carga do Redmine (o importador agora grava `nupSei` e `buscaNorm` e aborta no preflight se elas nao existirem):
+
+```bash
+python scripts/alter_demanda_busca.py --dry-run
+python scripts/alter_demanda_busca.py --confirm --redmine baseRedmine_AAAAMMDD.xlsx
+```
+
+- Cria a extensao `pg_trgm` (disponivel no Neon), as colunas `buscaNorm`, `nupSei`, `medicamento`, `medicamentoOrigem`, `apresentacoes`, `catmatsDerivados` e os indices; preenche `buscaNorm` de todas as demandas e, com `--redmine`, o `nupSei` pela coluna "NUP_SEI Principal" (casando pelo id do Redmine, sem REPLACE).
+- Depois de cada carga do Redmine, o proprio importador grava `nupSei` e `buscaNorm`. Se a regra da busca mudar (`montarBuscaNorm`), recalcular com `--confirm --somente-busca`.
+
 ## Exportacao do Redmine
 
 - Exportar sempre com **Status: todos** (abertos e fechados). A planilha de 17/03/2026 trazia os 17 status em uso.

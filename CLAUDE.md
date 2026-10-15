@@ -104,9 +104,12 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
 python scripts/create_dadosabertos_tables.py --dry-run|--confirm   # DadosAbertosPreco/Coleta, PncpVinculo
 python scripts/alter_cesta_dlog.py --dry-run|--confirm             # colunas de D1/D2/P11–P13/P18 na cesta
 python scripts/import_ipca.py --dry-run|--confirm                  # IndiceIpca (SIDRA 1737); mensal, UPSERT
+python scripts/alter_demanda_busca.py --dry-run|--confirm [--redmine base.xlsx]  # Demanda: buscaNorm (pg_trgm), nupSei, colunas da A5
 
 # Autotestes e conferências (sem banco, exceto o mapa gerado)
 npx tsx scripts/autoteste-pesquisa-preco.ts       # período, IPCA, duplicidade, escolha gravada (roda no CI)
+npx tsx scripts/autoteste-demandas.ts             # filtro único, busca, buscaNorm/NUP × Python (roda no CI)
+python scripts/demandas_busca.py && python scripts/substancia.py   # espelhos Python × casos_busca.json
 npx tsx scripts/conferir-mapear-dados-abertos.ts  # mapear.ts × esperado_mapear.json (roda no CI)
 python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--painel r.json]
 ```
@@ -332,6 +335,49 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
 - Deduplicação real ~2,7× (779.595 versões para 2.127.976 pares): a TARJA muda de formato quase todo
   mês ("Tarja Vermelha(*)" / "- (*)" / "Tarja -(*)") e qualquer campo diferente gera versão nova.
 
+## Demandas — filtro único (A1–A4 e B da avaliação da DLOG)
+
+- **Um filtro só** para a lista, o Dashboard (ORM, SQL e SQL com alias `d` do JOIN com o SIAFI),
+  o ranking anual, a aba Autores, as exportações e os relatórios: `FiltroDemandas` em
+  `lib/demandas-filtro-tipos.ts` (**puro**: tipos, URL, rótulos, atalhos, busca) e
+  `whereDemandas`/`sqlDemandas(a, alias?)` em `lib/demandas-filtro.ts` (servidor), com a
+  **mesma semântica** e **sempre `deletedAt IS NULL`**. `aplicarFiltro` resolve antes o que
+  depende do banco (código CATMAT do campo ou da busca, radicais do medicamento). Mexeu numa
+  das duas formas, rode a paridade (mesmos totais no ORM, no SQL e no SQL com alias).
+- Semântica (P1): OR entre os incluídos e NOT IN para os excluídos dentro do campo; AND entre
+  campos; `__null__` = "(não informado)". Excluir um valor **mantém** as linhas nulas (NOT
+  (NULL) não é verdadeiro no SQL — a condição as inclui de propósito). `pontoControle` e
+  `objetoAcao` são listas "A | B": casam **por item** (igual, início, fim ou meio da lista).
+- URL: parâmetros repetidos (`?status=A&status=B&status_excluir=C`); `?status=X` antigo vale, e
+  os nomes antigos do Dashboard (`startDate`, `endDate`, `principioAtivo`) são lidos como
+  `criadoDe`, `criadoAte`, `medicamento`. Datas `AAAA-MM-DD`, inclusive nas duas pontas.
+- Opções dos filtros = valores do banco com contagem (`GET /api/demandas/opcoes`, P2); seletor
+  `components/backoffice/filter-multi-select.tsx` (tri-estado, busca, "Selecionar todos",
+  atalhos). Atalhos de status (P3, a confirmar): "Em análise (todos)", "Encerrados"
+  (`STATUS_RESOLVIDOS`), "Ativos" (= excluir os encerrados). **"Cessar Atos" não é status**: é
+  item do Ponto de Controle (diagnóstico 3.1).
+- Visões salvas (P4): `GET/POST/DELETE /api/demandas/visoes` sobre `UserView`, com a
+  querystring canônica.
+- Exportação (A2): `GET /api/demandas/export?formato=csv|xlsx|html&colunas=…&agrupar=…` +
+  filtro (ou `ids` = seleção). **Sem teto de linhas** e em **streaming** (o arquivo inteiro passa
+  do limite de 4,5 MB de resposta da Vercel). Colunas e agrupamentos em
+  `lib/demandas-colunas.ts` (puro); autor e descrição completa não saem. Grava `AuditLog` e
+  `RelatorioGerado` (`DEMANDAS`).
+- Busca (A4): `interpretarBusca` — CATMAT (4–6 dígitos) ou registro (13) reconhecido aplica o
+  filtro por substância **OU** o número no texto (um nº DJUD não some); só dígitos e
+  separadores com 8+ dígitos (nº CNJ, NUP SEI) compara os dígitos; texto: termos de
+  `normalizarTexto`, palavras de 6+ letras pelo radical. Tudo sobre `Demanda.buscaNorm`
+  (`montarBuscaNorm`, espelho `scripts/demandas_busca.py`; índice GIN pg_trgm, P8). A tela
+  aplica com 400 ms de pausa e cancela a requisição anterior (`signal` + `keepPreviousData`).
+- **`buscaNorm` precisa acompanhar a demanda**: o importador do Redmine, `POST /api/demandas`,
+  o `PUT /api/demandas/[id]` e `scripts/alter_demanda_busca.py` (carga inicial e recálculo)
+  gravam a coluna. Campo novo na busca → `montarBuscaNorm` + espelho Python + rodar
+  `alter_demanda_busca.py --confirm --somente-busca`.
+- Dashboard (B3): campo "Medicamento" (sugestões por substância canônica com contagem,
+  `/api/demandas/principios-ativos`; aplica ao escolher, com Enter ou após 450 ms), "Resumo do
+  recorte" e "Processos do recorte" (a mesma rota da lista, 20 por página, botão "Abrir na
+  lista de Demandas"). `jsonComVersao` das métricas inclui `siafiPagamento`.
+
 ## Demandas — filtro por CATMAT / Registro ANVISA
 
 - `Demanda` **não tem coluna CATMAT**: o medicamento vem do Redmine como texto livre em
@@ -339,10 +385,12 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   só em `titulo`/`descricao`. O filtro `?catmat=` da lista (`GET /api/demandas`) traduz o código
   para substância em `lib/demandas-catmat.ts`: `resolverItem()` (o mesmo da Pesquisa de Preços) →
   substância do `CatmatItem` + `substancia` dos `CmedRegistro` do código → radicais → `contains`
-  em `principioAtivo`/`titulo`/`descricao`.
-- Radical = palavra mais longa da substância, sem sal/veículo na frente ("SUCCINATO DE"), sem
-  sufixo ("SÓDICA") e sem a vogal final: NUSINERSENA → NUSINERSEN casa "Nusinersen" e
-  "Nusinersena"; procurado com e sem acento. Mínimo de 5 caracteres.
+  em `principioAtivo`/`medicamento`/`titulo`/`descricao` (`whereTermos`/`sqlTermos`).
+- Radical (`lib/substancia.ts`, puro; espelho `scripts/substancia.py`) = palavra mais longa da
+  substância, sem sal/veículo na frente ("SUCCINATO DE"), sem sufixo ("SÓDICA") e sem a
+  terminação portuguesa — vogal final, ou o "UE" de "-GUE": NUSINERSENA → NUSINERSEN,
+  ELTROMBOPAGUE → ELTROMBOPAG (casa "Eltrombopag"); procurado com e sem acento. Mínimo de 5
+  caracteres.
 - **OR entre grupos, AND dentro**: o registro "CANABIDIOL;TETRAIDROCANABINOL" exige as duas
   substâncias (é aquele produto, não qualquer canabidiol). Marca comercial (`produto`) só entra
   na busca por registro ANVISA — pelo CATMAT seriam dezenas de marcas.
@@ -351,11 +399,10 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   por quais substâncias está filtrando.
 - O campo da tela aplica o valor com 450 ms de pausa (`catmatInput` → `catmat`): um código tem
   de 4 a 13 dígitos e cada tecla resolveria um código parcial.
-- O dashboard também recebe o filtro: `getMetricsData` resolve o código e aplica
-  `whereDemandaPorCatmat` (ORM) e `sqlDemandaPorCatmat` (`$queryRaw` das séries por mês e
-  por ano). **As duas versões precisam casar exatamente** — números diferentes entre a lista
-  e o painel para o mesmo código seriam impossíveis de explicar. Código não encontrado →
-  painel zerado com o motivo na tela, não gráficos vazios sem explicação.
+- O dashboard recebe o filtro pelo filtro único (acima): ORM e SQL (com e sem alias) casam
+  exatamente — números diferentes entre a lista e o painel para o mesmo código seriam
+  impossíveis de explicar. Código não encontrado → painel zerado com o motivo na tela, não
+  gráficos vazios sem explicação.
 
 ## Dashboard — ranking por ano e exportação
 

@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { getRankingAnual } from "@/lib/metrics-ranking-anual";
-import { filterMetricsSchema } from "@/lib/schemas";
+import { lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -22,27 +22,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    const sp = request.nextUrl.searchParams;
-    const filters = filterMetricsSchema.parse({
-      startDate: sp.get("startDate") ?? undefined,
-      endDate: sp.get("endDate") ?? undefined,
-      status: sp.get("status") ?? undefined,
-      prioridade: sp.get("prioridade") ?? undefined,
-      principioAtivo: sp.get("principioAtivo") ?? undefined,
-      organizacaoId: sp.get("organizacaoId") ?? undefined,
-      catmat: sp.get("catmat") ?? undefined,
-    });
-
     return jsonComVersao(request, ["demanda"], () =>
-      getRankingAnual({
-        startDate: filters.startDate ? new Date(filters.startDate) : undefined,
-        endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-        status: filters.status,
-        prioridade: filters.prioridade,
-        principioAtivo: filters.principioAtivo,
-        organizacaoId: filters.organizacaoId,
-        catmat: filters.catmat,
-      })
+      getRankingAnual({ filtro: lerFiltroDemandas(request.nextUrl.searchParams) })
     );
   } catch (error) {
     console.error("[metrics/ranking-anual] Erro:", error);

@@ -35,6 +35,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from xml.etree.ElementTree import iterparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from demandas_busca import montar_busca_norm, normalizar_nup_sei  # noqa: E402
+
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 SHEET_PATH = "xl/worksheets/sheet1.xml"
 DEFAULT_XLSX = "baseRedmine_20260827.xlsx"
@@ -72,6 +75,9 @@ COLUMNS = [
     "areaTematica", "regiaoBrasil", "objetoAcao", "principioAtivo", "autor",
     "numeroProcesso", "dataEntradaDJUD", "formaCumprimento", "valorEstimado",
     "dataInicio", "criadoPorId", "tags", "criadoEm", "atualizadoEm",
+    # Avaliacao da DLOG (scripts/alter_demanda_busca.py cria as colunas):
+    # NUP SEI canonico (A6) e o texto da busca (A4, espelho de montarBuscaNorm).
+    "nupSei", "buscaNorm",
 ]
 
 
@@ -123,6 +129,13 @@ def txt(v) -> str | None:
         return None
     s = str(v).strip()
     return s or None
+
+
+def txt_espacos(v) -> str | None:
+    """Texto com espacos repetidos colapsados — "Cessar  Atos" e "Cessar Atos"
+    sao a mesma opcao no filtro (A3). Nao renomeia nada."""
+    s = txt(v)
+    return re.sub(r"\s+", " ", s) if s else None
 
 
 def _lixo(s: str) -> bool:
@@ -373,9 +386,13 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
     it = iter_rows(xlsx, limit=(limit + 1) if limit else None)
     header = next(it)
     idx = {h: i for i, h in enumerate(header) if h}
+    # Cabecalhos com espaco sobrando ("UF_Residência ") tambem pelo nome aparado.
+    idx_aparado = {h.strip(): i for i, h in enumerate(header) if h}
 
     def g(row, name):
         i = idx.get(name)
+        if i is None:
+            i = idx_aparado.get(name.strip())
         if i is None or i >= len(row):
             return None
         return row[i]
@@ -437,9 +454,9 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "projeto": txt(g(row, "project")),
             "ano": to_int(g(row, "Ano Ação Judicial"), lo=1990, hi=2100),
             "origemDemanda": txt(g(row, "tracker")),
-            "status": txt(g(row, "status")),
-            "prioridade": txt(g(row, "priority")),
-            "pontoControle": txt(g(row, "Ponto de Controle")),
+            "status": txt_espacos(g(row, "status")),
+            "prioridade": txt_espacos(g(row, "priority")),
+            "pontoControle": txt_espacos(g(row, "Ponto de Controle")),
             "trfRegiao": trf,
             "ufResidencia": uf_res,
             "ufOcorrencia": to_uf(g(row, "UF")),
@@ -462,7 +479,9 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "tags": [],
             "criadoEm": criado,
             "atualizadoEm": atualizado,
+            "nupSei": normalizar_nup_sei(g(row, "NUP_SEI Principal")),
         }
+        rec["buscaNorm"] = montar_busca_norm(rec)
 
         for k, v in rec.items():
             if v is not None and v != [] and v != "":
