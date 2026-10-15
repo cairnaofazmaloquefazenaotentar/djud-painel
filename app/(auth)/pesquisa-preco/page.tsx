@@ -1500,11 +1500,11 @@ export default function PesquisaPrecoPage() {
 
       {/* Modal — metadados do relatório */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto pb-6 [&>*:not(:first-child)]:mx-6">
           <DialogHeader>
             <DialogTitle>Gerar Relatório de Pesquisa de Preços</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground -mt-2">
+          <p className="mt-4 text-sm text-muted-foreground">
             Preencha os dados institucionais para instrução do processo. Todos os campos são opcionais.
           </p>
           {result && (

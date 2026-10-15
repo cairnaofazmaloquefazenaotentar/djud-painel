@@ -812,11 +812,11 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
 
       {/* Metadados do relatório consolidado */}
       <Dialog open={modalRelatorio} onOpenChange={setModalRelatorio}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto pb-6 [&>*:not(:first-child)]:mx-6">
           <DialogHeader>
             <DialogTitle>Relatório consolidado da cesta</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground -mt-2">
+          <p className="mt-4 text-sm text-muted-foreground">
             {fmtInt(total)} item(ns) serão pesquisados novamente, com a data de hoje como data de
             referência, para que o documento traga os preços da emissão. O período, o IPCA, os
             registros desconsiderados e os preços informados salvos em cada item são reaplicados na
