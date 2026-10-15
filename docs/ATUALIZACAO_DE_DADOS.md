@@ -38,7 +38,19 @@ python scripts/alter_demanda_busca.py --confirm --redmine baseRedmine_AAAAMMDD.x
 ```
 
 - Cria a extensao `pg_trgm` (disponivel no Neon), as colunas `buscaNorm`, `nupSei`, `medicamento`, `medicamentoOrigem`, `apresentacoes`, `catmatsDerivados` e os indices; preenche `buscaNorm` de todas as demandas e, com `--redmine`, o `nupSei` pela coluna "NUP_SEI Principal" (casando pelo id do Redmine, sem REPLACE).
-- Depois de cada carga do Redmine, o proprio importador grava `nupSei` e `buscaNorm`. Se a regra da busca mudar (`montarBuscaNorm`), recalcular com `--confirm --somente-busca`.
+- Depois de cada carga do Redmine, o proprio importador grava `nupSei` e `buscaNorm` (e une as colunas CB e CC no `principioAtivo`). Se a regra da busca mudar (`montarBuscaNorm`), recalcular com `--confirm --somente-busca`.
+- O importador le a planilha exportada pelo Redmine e tambem a mesma planilha aberta e salva no Excel.
+
+### Enriquecimento das demandas (depois de CADA carga do Redmine e do SISMAT)
+
+```bash
+python scripts/enriquecer_demandas.py --dry-run --relatorio cobertura.csv   # revisar as substancias derivadas do texto
+python scripts/enriquecer_demandas.py --confirm
+```
+
+- Grava `medicamento`, `medicamentoOrigem`, `apresentacoes`, `catmatsDerivados` e `unidadesDerivadas` (o importador e REPLACE: elas voltam vazias a cada carga). Idempotente: rodar de novo nao muda nada.
+- A apresentacao vem das saidas do SISMAT com o mesmo NUP SEI: carregar o SISMAT antes. Sem `nupSei` (planilha sem a coluna), so a concentracao citada no texto.
+- Se o relatorio mostrar uma "substancia" que e palavra comum, acrescentar em `PALAVRAS_GENERICAS` no script.
 
 ## Exportacao do Redmine
 

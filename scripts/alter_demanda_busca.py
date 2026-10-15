@@ -6,8 +6,9 @@ Colunas da avaliacao da DLOG em public."Demanda" (A4, A5 e A6):
     montarBuscaNorm; espelho em scripts/demandas_busca.py), com indice GIN
     pg_trgm: a busca por trecho deixa de varrer as ~59 mil linhas (P8);
   * "nupSei"     — NUP_SEI Principal do Redmine, formato canonico (A6);
-  * "medicamento", "medicamentoOrigem", "apresentacoes", "catmatsDerivados"
-    — preenchidas pelo enriquecimento (A5, scripts/enriquecer_demandas.py).
+  * "medicamento", "medicamentoOrigem", "apresentacoes", "catmatsDerivados",
+    "unidadesDerivadas" — preenchidas pelo enriquecimento (A5,
+    scripts/enriquecer_demandas.py).
 
 A DDL e a MESMA que `prisma db push` geraria (tirada de `prisma migrate diff`),
 com IF NOT EXISTS: um db:push depois e no-op. A extensao pg_trgm precisa
@@ -15,9 +16,13 @@ existir antes do indice (`CREATE EXTENSION IF NOT EXISTS pg_trgm` — no Neon
 ela esta disponivel e nao instalada; confirmar antes do --confirm).
 
 Depois da DDL, o script preenche "buscaNorm" de todas as demandas (UPDATE em
-lote; nao mexe em "atualizadoEm"). Com --redmine, preenche tambem o "nupSei"
-pela coluna "NUP_SEI Principal" da planilha, casando pelo id do Redmine
-("numero") — sem o REPLACE do importador. Nao apaga nada.
+lote; nao mexe em "atualizadoEm"). Com --redmine, casando pelo id do Redmine
+("numero") e sem o REPLACE do importador:
+  * preenche o "nupSei" pela coluna "NUP_SEI Principal";
+  * ACRESCENTA ao "principioAtivo" os itens da coluna CB ("Princípio
+    Ativo_JEF/TRF4") — o importador ja une CB e CC nas cargas novas. So
+    acrescenta: a planilha pode ser mais antiga que a carga.
+Nao apaga nada.
 
 Rode ANTES de publicar a versao do painel que le estas colunas.
 
@@ -37,7 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from demandas_busca import montar_busca_norm, normalizar_nup_sei  # noqa: E402
-from import_redmine_base import load_database_url  # noqa: E402
+from import_redmine_base import load_database_url, unir_listas  # noqa: E402
 
 EXTENSAO = "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
@@ -48,7 +53,8 @@ ALTER TABLE public."Demanda"
     ADD COLUMN IF NOT EXISTS "catmatsDerivados" TEXT[] DEFAULT ARRAY[]::TEXT[],
     ADD COLUMN IF NOT EXISTS "medicamento" TEXT,
     ADD COLUMN IF NOT EXISTS "medicamentoOrigem" TEXT,
-    ADD COLUMN IF NOT EXISTS "nupSei" TEXT;
+    ADD COLUMN IF NOT EXISTS "nupSei" TEXT,
+    ADD COLUMN IF NOT EXISTS "unidadesDerivadas" TEXT[] DEFAULT ARRAY[]::TEXT[];
 
 CREATE INDEX IF NOT EXISTS "Demanda_nupSei_idx" ON public."Demanda"("nupSei");
 CREATE INDEX IF NOT EXISTS "Demanda_buscaNorm_trgm_idx" ON public."Demanda" USING GIN ("buscaNorm" gin_trgm_ops);
@@ -57,23 +63,30 @@ CREATE INDEX IF NOT EXISTS "Demanda_buscaNorm_trgm_idx" ON public."Demanda" USIN
 CAMPOS = ["id", "numero", "numeroProcesso", "nupSei", "titulo", "principioAtivo", "medicamento", "descricao"]
 
 
-def nups_da_planilha(caminho: Path) -> dict[str, str]:
-    """id do Redmine -> NUP canonico, lendo a planilha em streaming (como o importador)."""
-    from import_redmine_base import iter_rows, txt  # noqa: E402
+def dados_da_planilha(caminho: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """id do Redmine -> NUP canonico e id -> itens da coluna CB, lendo a
+    planilha em streaming (como o importador)."""
+    from import_redmine_base import iter_rows, normalizar_lista, txt  # noqa: E402
 
     it = iter_rows(str(caminho))
     cab = next(it)
     idx = {(h or "").strip(): i for i, h in enumerate(cab) if h}
-    i_id, i_nup = idx.get("id"), idx.get("NUP_SEI Principal")
+    i_id, i_nup, i_jef = idx.get("id"), idx.get("NUP_SEI Principal"), idx.get("Princípio Ativo_JEF/TRF4")
     if i_id is None or i_nup is None:
         sys.exit('ERRO: a planilha precisa das colunas "id" e "NUP_SEI Principal".')
-    saida: dict[str, str] = {}
+    nups: dict[str, str] = {}
+    jef: dict[str, str] = {}
     for row in it:
         rid = txt(row[i_id]) if i_id < len(row) else None
+        if not rid:
+            continue
         nup = normalizar_nup_sei(row[i_nup]) if i_nup < len(row) else None
-        if rid and nup:
-            saida.setdefault(rid, nup)
-    return saida
+        if nup:
+            nups.setdefault(rid, nup)
+        itens = normalizar_lista(row[i_jef]) if i_jef is not None and i_jef < len(row) else None
+        if itens:
+            jef.setdefault(rid, itens)
+    return nups, jef
 
 
 def main() -> int:
@@ -87,9 +100,9 @@ def main() -> int:
 
     import psycopg
 
-    nups = nups_da_planilha(args.redmine) if args.redmine else {}
+    nups, jef = dados_da_planilha(args.redmine) if args.redmine else ({}, {})
     if args.redmine:
-        print(f"planilha: {len(nups):,} demandas com NUP_SEI Principal reconhecido")
+        print(f"planilha: {len(nups):,} demandas com NUP_SEI Principal; {len(jef):,} com Princípio Ativo_JEF/TRF4")
 
     with psycopg.connect(load_database_url()) as conn:
         with conn.cursor() as cur:
@@ -118,7 +131,7 @@ def main() -> int:
             # Carga em lote: tabela temporaria + um UPDATE so.
             t0 = time.time()
             cur.execute(
-                'CREATE TEMP TABLE _busca (id TEXT PRIMARY KEY, "buscaNorm" TEXT, "nupSei" TEXT) ON COMMIT DROP'
+                'CREATE TEMP TABLE _busca (id TEXT PRIMARY KEY, "buscaNorm" TEXT, "nupSei" TEXT, "principioAtivo" TEXT) ON COMMIT DROP'
             )
             colunas = ", ".join(f'"{c}"' for c in CAMPOS)
             linhas = []
@@ -129,14 +142,16 @@ def main() -> int:
                     d = dict(zip(CAMPOS, row))
                     nup = nups.get(str(d["numero"])) or d["nupSei"]
                     d["nupSei"] = nup
-                    linhas.append((d["id"], montar_busca_norm(d), nup))
-            with cur.copy('COPY _busca (id, "buscaNorm", "nupSei") FROM STDIN') as cp:
+                    d["principioAtivo"] = unir_listas(d["principioAtivo"], jef.get(str(d["numero"])))
+                    linhas.append((d["id"], montar_busca_norm(d), nup, d["principioAtivo"]))
+            with cur.copy('COPY _busca (id, "buscaNorm", "nupSei", "principioAtivo") FROM STDIN') as cp:
                 for linha in linhas:
                     cp.write_row(linha)
             cur.execute(
-                'UPDATE public."Demanda" d SET "buscaNorm" = b."buscaNorm", "nupSei" = b."nupSei" '
+                'UPDATE public."Demanda" d SET "buscaNorm" = b."buscaNorm", "nupSei" = b."nupSei", '
+                '"principioAtivo" = b."principioAtivo" '
                 'FROM _busca b WHERE d.id = b.id AND (d."buscaNorm" IS DISTINCT FROM b."buscaNorm" '
-                'OR d."nupSei" IS DISTINCT FROM b."nupSei")'
+                'OR d."nupSei" IS DISTINCT FROM b."nupSei" OR d."principioAtivo" IS DISTINCT FROM b."principioAtivo")'
             )
             atualizadas = cur.rowcount
             cur.execute('SELECT count(*) FILTER (WHERE "nupSei" IS NOT NULL), count(*) FILTER (WHERE "buscaNorm" IS NOT NULL) FROM public."Demanda"')

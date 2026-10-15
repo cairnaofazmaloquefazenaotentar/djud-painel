@@ -46,6 +46,7 @@ import {
 } from "@/lib/pesquisa-preco-periodo";
 import { CONVENCAO_IPCA, fatorIpca, mesBaseIpca } from "@/lib/ipca";
 import { normalizarTexto } from "@/lib/texto-norm";
+import { radicalPalavra } from "@/lib/substancia";
 import { carregarIpca } from "@/lib/ipca-indices";
 import { marcarDuplicidades } from "@/lib/pesquisa-preco-duplicidade";
 import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
@@ -734,28 +735,41 @@ export async function sugerirMateriais(q: string): Promise<Sugestoes> {
 
   // Descrição: todas as palavras precisam ocorrer, em qualquer ordem — no
   // catálogo "insulina glargina" está como "INSULINA, TIPO: GLARGINA, …".
+  // Palavra de 6 letras ou mais vai pelo radical (lib/substancia.ts): quem
+  // digita "eltrombopague" (como o Redmine e a CMED escrevem) acha o catálogo,
+  // que escreve "ELTROMBOPAG OLAMINA".
   const palavras = normalizarTexto(termo)
     .split(" ")
     .map((p) => p.replace(/^[,\-]+|[,\-]+$/g, ""))
-    .filter((p) => p.length >= 2);
+    .filter((p) => p.length >= 2)
+    .map((p) => (/^[a-z]+$/.test(p) ? radicalPalavra(p).toLowerCase() : p));
   if (palavras.length === 0) return { itens: [], registros: [] };
 
-  const itensPromise = db.catmatItem.findMany({
+  const itens = await db.catmatItem.findMany({
     where: { AND: palavras.map((p) => ({ descricaoNorm: { contains: p } })) },
     orderBy: [{ codigoClasse: "asc" }, { descricaoItem: "asc" }],
     take: 30,
   });
-  const registrosPromise = db.cmedRegistro.findMany({
+  // Registros ANVISA: pela marca ou substância (com e sem acento, já que a
+  // CMED acentua e quem digita nem sempre) e pelos CATMATs achados acima.
+  const variantes = (p: string) => Array.from(new Set([p, p.toUpperCase()]));
+  const registros = await db.cmedRegistro.findMany({
     where: {
       OR: [
-        { produto: { contains: termo, mode: "insensitive" } },
-        { substancia: { contains: termo, mode: "insensitive" } },
+        {
+          AND: palavras.map((p) => ({
+            OR: variantes(p).flatMap((v) => [
+              { produto: { contains: v, mode: "insensitive" as const } },
+              { substancia: { contains: v, mode: "insensitive" as const } },
+            ]),
+          })),
+        },
+        ...(itens.length ? [{ catmat: { in: itens.map((i) => i.codigoItem) } }] : []),
       ],
     },
     orderBy: [{ substancia: "asc" }, { produto: "asc" }],
     take: 10,
   });
-  const [itens, registros] = await Promise.all([itensPromise, registrosPromise]);
   return { itens: itens.map(sugestaoItem), registros: registros.map(sugestaoRegistro) };
 }
 

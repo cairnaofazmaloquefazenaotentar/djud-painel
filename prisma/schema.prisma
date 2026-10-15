@@ -191,6 +191,7 @@ model Demanda {
   medicamentoOrigem            String?          // REDMINE | TITULO | DESCRICAO | SISMAT
   apresentacoes                Json?            // Apresentações identificadas (A5)
   catmatsDerivados             String[]         @default([]) // CATMATs derivados da apresentação (A5)
+  unidadesDerivadas            String[]         @default([]) // Unidades de fornecimento desses CATMATs (CMED), normalizadas
   buscaNorm                    String?          @db.Text // Texto normalizado da busca (A4; lib/demandas-filtro-tipos.ts)
 
   @@index([ano])

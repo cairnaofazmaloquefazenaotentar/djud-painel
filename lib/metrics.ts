@@ -67,6 +67,8 @@ export interface MetricsData {
 
   // ── Resumo do recorte (B3) ──────────────────────────────────────────────────
   demandasEncerradas: number;
+  /** Apresentações (CATMAT derivado, A5) no recorte; "não identificada" sempre presente. */
+  apresentacaoDistribution: Array<{ catmat: string | null; rotulo: string; count: number }>;
   /** Demandas com "Cessar Atos" no Ponto de Controle (não é status: diagnóstico 3.1). */
   demandasCessarAtos: number;
   primeiraEntrada: Date | null;
@@ -135,6 +137,7 @@ function metricsVazio(filtroCatmat: FiltroCatmat | null): MetricsData {
     filtroCatmat,
     medicamento: null,
     demandasEncerradas: 0,
+    apresentacaoDistribution: [],
     demandasCessarAtos: 0,
     primeiraEntrada: null,
     ultimaEntrada: null,
@@ -427,9 +430,16 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
 
   // Resumo do recorte (B3): primeira e última entrada e Cessar Atos — este é
   // item do Ponto de Controle, não status (diagnóstico 3.1).
-  const [datasEntrada, cessarAtosCount] = await Promise.all([
+  const [datasEntrada, cessarAtosCount, apresentacoesRaw, semApresentacao] = await Promise.all([
     db.demanda.aggregate({ where, _min: { dataEntradaDJUD: true }, _max: { dataEntradaDJUD: true } }),
     db.demanda.count({ where: e(whereSelecao("pontoControle", { incluir: ["Cessar Atos"], excluir: [] })) }),
+    db.$queryRaw<Array<{ catmat: string; descricao: string | null; count: bigint }>>`
+      SELECT t.c AS catmat, MAX(ci."descricaoItem") AS descricao, COUNT(*) AS count
+      FROM (SELECT unnest("catmatsDerivados") AS c FROM "Demanda" ${whereRaw}) t
+      LEFT JOIN "CatmatItem" ci ON ci."codigoItem" = t.c
+      GROUP BY t.c ORDER BY count DESC LIMIT 10
+    `,
+    db.demanda.count({ where: e({ catmatsDerivados: { isEmpty: true } }) }),
   ]);
 
   // Buscar nomes dos top responsáveis
@@ -571,6 +581,14 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     filtroCatmat: aplicado.catmat,
     medicamento: aplicado.medicamento,
     demandasEncerradas: resolvedCount,
+    apresentacaoDistribution: [
+      ...apresentacoesRaw.map((r) => ({
+        catmat: r.catmat,
+        rotulo: `CATMAT ${r.catmat}${r.descricao ? ` — ${r.descricao}` : ""}`,
+        count: Number(r.count),
+      })),
+      { catmat: null, rotulo: "apresentação não identificada", count: semApresentacao },
+    ],
     demandasCessarAtos: cessarAtosCount,
     primeiraEntrada: datasEntrada._min.dataEntradaDJUD,
     ultimaEntrada: datasEntrada._max.dataEntradaDJUD,

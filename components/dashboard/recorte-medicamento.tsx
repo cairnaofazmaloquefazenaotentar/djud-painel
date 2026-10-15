@@ -103,8 +103,12 @@ export function RecorteMedicamento({ filtro, metrics }: { filtro: FiltroDemandas
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-        <Lista titulo="Status" itens={metrics.statusDistribution.map((s) => ({ rotulo: s.status, n: s.count }))} />
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+        <Lista titulo="Situação no Redmine" itens={metrics.statusDistribution.map((s) => ({ rotulo: s.status, n: s.count }))} />
+        <Lista
+          titulo="Apresentações"
+          itens={metrics.apresentacaoDistribution.map((a) => ({ rotulo: a.rotulo, n: a.count }))}
+        />
         <Lista
           titulo="Cinco principais UFs"
           itens={metrics.ufResidenciaDistribution.slice(0, 5).map((u) => ({ rotulo: u.uf ?? "(não informada)", n: u.count }))}

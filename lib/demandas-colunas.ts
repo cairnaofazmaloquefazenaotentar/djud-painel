@@ -13,8 +13,10 @@ export const COLUNAS_EXPORT = [
   { id: "titulo", rotulo: "Título" },
   { id: "principioAtivo", rotulo: "Princípio ativo (Redmine)" },
   { id: "medicamento", rotulo: "Medicamento" },
-  { id: "status", rotulo: "Status" },
-  { id: "pontoControle", rotulo: "Ponto de controle" },
+  { id: "medicamentoOrigem", rotulo: "Origem do medicamento" },
+  { id: "apresentacao", rotulo: "Apresentação" },
+  { id: "pontoControle", rotulo: "Status (Ponto de Controle)" },
+  { id: "status", rotulo: "Situação no Redmine" },
   { id: "prioridade", rotulo: "Prioridade" },
   { id: "areaTematica", rotulo: "Grupo temático" },
   { id: "objetoAcao", rotulo: "Objeto da ação" },
@@ -41,9 +43,10 @@ export const COLUNAS_PADRAO: ColunaExport[] = [
   "numeroProcesso",
   "nupSei",
   "titulo",
-  "principioAtivo",
-  "status",
+  "medicamento",
+  "apresentacao",
   "pontoControle",
+  "status",
   "prioridade",
   "areaTematica",
   "trfRegiao",
@@ -52,11 +55,13 @@ export const COLUNAS_PADRAO: ColunaExport[] = [
 ];
 
 export const AGRUPAMENTOS = [
-  { id: "status", rotulo: "Status" },
+  { id: "pontoControle", rotulo: "Status (Ponto de Controle)" },
+  { id: "status", rotulo: "Situação no Redmine" },
   { id: "areaTematica", rotulo: "Grupo temático" },
   { id: "regiaoBrasil", rotulo: "Região" },
   { id: "trfRegiao", rotulo: "TRF" },
   { id: "medicamento", rotulo: "Medicamento" },
+  { id: "apresentacao", rotulo: "Apresentação" },
 ] as const;
 
 export type Agrupamento = (typeof AGRUPAMENTOS)[number]["id"];

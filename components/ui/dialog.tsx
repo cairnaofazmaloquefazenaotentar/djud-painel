@@ -21,11 +21,42 @@ const Dialog = ({
     }
   }, [open])
 
+  // Esc fecha a janela, como o clique fora dela.
+  React.useEffect(() => {
+    if (!open) return
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onOpenChange(false)
+    }
+    document.addEventListener("keydown", aoTeclar)
+    return () => document.removeEventListener("keydown", aoTeclar)
+  }, [open, onOpenChange])
+
+  // Clique FORA do conteúdo fecha. Só conta quando o botão desceu e subiu no
+  // fundo: arrastar uma seleção de texto de dentro para fora não fecha.
+  const desceuNoFundo = React.useRef(false)
+  const noFundo = (e: React.MouseEvent) => e.target === e.currentTarget
+
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/50">
-      <div className="flex items-center justify-center min-h-screen px-4 py-8">
+    <div
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/50"
+      onMouseDown={(e) => {
+        desceuNoFundo.current = noFundo(e)
+      }}
+      onClick={(e) => {
+        if (desceuNoFundo.current && noFundo(e)) onOpenChange(false)
+      }}
+    >
+      <div
+        className="flex items-center justify-center min-h-screen px-4 py-8"
+        onMouseDown={(e) => {
+          desceuNoFundo.current = noFundo(e)
+        }}
+        onClick={(e) => {
+          if (desceuNoFundo.current && noFundo(e)) onOpenChange(false)
+        }}
+      >
         {children}
       </div>
     </div>

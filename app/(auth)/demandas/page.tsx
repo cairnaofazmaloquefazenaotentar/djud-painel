@@ -17,10 +17,13 @@ import {
   FilterBar,
   FilterInput,
   FilterMultiSelect,
+  Paginacao,
   StatusBadge,
   ConfirmDialog,
   EmptyState,
 } from "@/components/backoffice";
+import { Badge } from "@/components/ui/badge";
+import { FiltroMaterial } from "@/components/demandas/filtro-material";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,8 +33,6 @@ import {
   Edit2,
   Download,
   Lock,
-  ChevronLeft,
-  ChevronRight,
   AlertCircle,
   CheckSquare,
   Square,
@@ -48,6 +49,7 @@ import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
 import {
   ATALHOS_STATUS,
   ROTULO_CAMPO,
+  ROTULO_CURTO,
   comSelecao,
   filtroAtivo,
   filtroParaQuery,
@@ -96,16 +98,32 @@ const prioridadeColors: Record<string, "active" | "warning" | "error"> = {
   Critica: "error",
 };
 
-/** Filtros sempre à vista; os demais ficam em "Mais filtros". */
-const CAMPOS_PRINCIPAIS: CampoDemanda[] = ["status", "pontoControle", "areaTematica", "trfRegiao", "ufResidencia"];
+/**
+ * Filtros sempre à vista (pedido da DLOG): CATMAT/Registro, Descrição, Unidade
+ * de fornecimento, Status e Sub-status (Ponto de Controle) e Processo SEI. Os
+ * demais ficam em "Mais filtros".
+ */
+const CAMPOS_PRINCIPAIS: CampoDemanda[] = ["pontoControle", "subStatus"];
 const CAMPOS_SECUNDARIOS: CampoDemanda[] = [
+  "status",
   "prioridade",
+  "areaTematica",
+  "trfRegiao",
+  "ufResidencia",
   "regiaoBrasil",
   "objetoAcao",
   "formaCumprimento",
   "origemDemanda",
   "responsavelId",
+  "apresentacao",
 ];
+
+const ROTULO_ORIGEM: Record<string, string> = {
+  REDMINE: "Redmine",
+  TITULO: "título",
+  DESCRICAO: "descrição",
+  SISMAT: "SISMAT",
+};
 
 /** Pausa antes de aplicar o que foi digitado: busca 400 ms (A4), código 450 ms. */
 const PAUSA_BUSCA = 400;
@@ -161,15 +179,15 @@ export default function DemandasPage() {
     [chaveUrl, router]
   );
 
-  // ── Busca e código: o digitado só vira filtro depois de uma pausa ─────────
+  // ── Busca e processo SEI: o digitado só vira filtro depois de uma pausa ───
   const [buscaInput, setBuscaInput] = useState(filtro.busca ?? "");
-  const [catmatInput, setCatmatInput] = useState(filtro.catmat ?? "");
+  const [nupInput, setNupInput] = useState(filtro.nupSei ?? "");
   const timerBusca = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const timerCodigo = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerNup = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
       if (timerBusca.current) clearTimeout(timerBusca.current);
-      if (timerCodigo.current) clearTimeout(timerCodigo.current);
+      if (timerNup.current) clearTimeout(timerNup.current);
     },
     []
   );
@@ -178,10 +196,10 @@ export default function DemandasPage() {
     if (timerBusca.current) clearTimeout(timerBusca.current);
     timerBusca.current = setTimeout(() => navegar({ ...filtro, busca: v.trim() || null }), PAUSA_BUSCA);
   };
-  const onCatmat = (v: string) => {
-    setCatmatInput(v);
-    if (timerCodigo.current) clearTimeout(timerCodigo.current);
-    timerCodigo.current = setTimeout(() => navegar({ ...filtro, catmat: v.trim() || null }), PAUSA_CODIGO);
+  const onNup = (v: string) => {
+    setNupInput(v);
+    if (timerNup.current) clearTimeout(timerNup.current);
+    timerNup.current = setTimeout(() => navegar({ ...filtro, nupSei: v.trim() || null }), PAUSA_CODIGO);
   };
 
   // ── Dados ──────────────────────────────────────────────────────────────────
@@ -199,6 +217,7 @@ export default function DemandasPage() {
   const totalPages = data?.pagination.totalPages ?? 1;
   const filtroCatmat = data?.filtroCatmat ?? null;
   const buscaAplicada = data?.busca ?? null;
+  const gruposCatmat = data?.gruposCatmat ?? null;
 
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean;
@@ -210,13 +229,15 @@ export default function DemandasPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
   const [exportar, setExportar] = useState<null | "filtro" | "selecao">(null);
-  const [maisFiltros, setMaisFiltros] = useState(() =>
-    CAMPOS_SECUNDARIOS.some((c) => !!filtro.campos[c]) || !!(filtro.dataEntradaDe || filtro.dataEntradaAte)
+  const [maisFiltros, setMaisFiltros] = useState(
+    () =>
+      CAMPOS_SECUNDARIOS.some((c) => !!filtro.campos[c]) ||
+      !!(filtro.dataEntradaDe || filtro.dataEntradaAte || filtro.busca)
   );
 
   // Column visibility (chaves = accessorKey ou id da coluna)
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(
-    new Set(["regiaoBrasil", "dataEntradaDJUD", "pontoControle", "ufResidencia"])
+    new Set(["regiaoBrasil", "dataEntradaDJUD", "prioridade", "ufResidencia"])
   );
   const [showColPicker, setShowColPicker] = useState(false);
 
@@ -275,9 +296,9 @@ export default function DemandasPage() {
 
   const handleReset = () => {
     if (timerBusca.current) clearTimeout(timerBusca.current);
-    if (timerCodigo.current) clearTimeout(timerCodigo.current);
+    if (timerNup.current) clearTimeout(timerNup.current);
     setBuscaInput("");
-    setCatmatInput("");
+    setNupInput("");
     setSelectedIds(new Set());
     router.replace(`/demandas?pageSize=${pageSize}`, { scroll: false });
   };
@@ -307,13 +328,13 @@ export default function DemandasPage() {
 
   const ALL_COLUMNS = [
     "numero", "numeroProcesso", "nupSei", "titulo", "areaTematica",
-    "status", "pontoControle", "prioridade", "trfRegiao", "regiaoBrasil",
+    "pontoControle", "status", "prioridade", "trfRegiao", "regiaoBrasil",
     "ufResidencia", "dataEntradaDJUD", "responsavel",
   ];
 
   const COL_LABELS: Record<string, string> = {
-    numero: "Nº DJUD", numeroProcesso: "Nº Processo", nupSei: "Nº SEI", titulo: "Título / Princípio Ativo",
-    areaTematica: "Grupo Temático", status: "Status", pontoControle: "Ponto de controle", prioridade: "Prioridade",
+    numero: "Nº DJUD", numeroProcesso: "Nº Processo", nupSei: "Nº SEI", titulo: "Título / Medicamento / Apresentação",
+    areaTematica: "Grupo Temático", status: "Situação (Redmine)", pontoControle: "Status (Ponto de Controle)", prioridade: "Prioridade",
     trfRegiao: "TRF", regiaoBrasil: "Região Brasil", ufResidencia: "UF", dataEntradaDJUD: "Entrada DJUD",
     responsavel: "Responsável",
   };
@@ -379,12 +400,14 @@ export default function DemandasPage() {
     },
     {
       accessorKey: "titulo",
-      header: "Título / Princípio Ativo",
+      header: "Título / Medicamento / Apresentação",
       cell: ({ row }) => {
         // Demandas de serviço/material não têm medicamento — daí o traço.
         const principios = row.original.medicamento ?? normalizarPrincipioAtivo(row.original.principioAtivo);
+        const origem = row.original.medicamentoOrigem;
+        const apresentacao = row.original.apresentacoes?.[0];
         return (
-          <div className="max-w-[220px]">
+          <div className="max-w-[260px]">
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -417,6 +440,20 @@ export default function DemandasPage() {
             ) : (
               <p className="text-xs text-muted-foreground/40">—</p>
             )}
+            {principios && (
+              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                {origem && origem !== "REDMINE" && (
+                  <Badge variant="outline" className="h-4 px-1 text-[10px]" title="De onde veio o medicamento">
+                    {ROTULO_ORIGEM[origem] ?? origem}
+                  </Badge>
+                )}
+                <span className="truncate" title={apresentacao?.descricao ?? "apresentação não identificada"}>
+                  {apresentacao
+                    ? `CATMAT ${apresentacao.catmat}${apresentacao.unidades?.length ? ` · ${apresentacao.unidades.join(", ")}` : ""}`
+                    : "apresentação não identificada"}
+                </span>
+              </p>
+            )}
           </div>
         );
       },
@@ -441,23 +478,24 @@ export default function DemandasPage() {
         ) : traco,
     },
     {
-      accessorKey: "status",
-      header: "Status",
-      cell: ({ row }) => (
-        <StatusBadge status={statusColors[row.original.status || ""] || "pending"}>
-          {row.original.status || "Sem status"}
-        </StatusBadge>
-      ),
-    },
-    {
+      // "Status" na tela de Demandas é o Ponto de Controle (coluna BZ do Redmine).
       accessorKey: "pontoControle",
-      header: "Ponto de controle",
+      header: "Status",
       cell: ({ row }) =>
         row.original.pontoControle ? (
           <span className="block max-w-[180px] truncate text-xs" title={row.original.pontoControle}>
             {row.original.pontoControle}
           </span>
         ) : traco,
+    },
+    {
+      accessorKey: "status",
+      header: "Situação",
+      cell: ({ row }) => (
+        <StatusBadge status={statusColors[row.original.status || ""] || "pending"}>
+          {row.original.status || "Sem situação"}
+        </StatusBadge>
+      ),
     },
     {
       accessorKey: "prioridade",
@@ -560,18 +598,23 @@ export default function DemandasPage() {
   });
 
   const multi = (campo: CampoDemanda) => {
-    const lista = opcoes?.[campo] ?? [];
+    let lista = opcoes?.[campo] ?? [];
+    // Sub-status: só as combinações que contêm algum dos Status escolhidos.
+    const status = filtro.campos.pontoControle?.incluir ?? [];
+    if (campo === "subStatus" && status.length) {
+      lista = lista.filter((o) => o.itens?.some((i) => status.includes(i)) || filtro.campos.subStatus?.incluir.includes(o.valor));
+    }
     // Campo só com "(não informado)" (p.ex. responsável, hoje vazio na base) não vira filtro.
-    if (!carregandoOpcoes && lista.length <= 1 && !filtro.campos[campo]) return null;
+    if (!carregandoOpcoes && lista.length <= 1 && !filtro.campos[campo] && campo !== "subStatus") return null;
     return (
       <FilterMultiSelect
         key={campo}
-        label={ROTULO_CAMPO[campo]}
+        label={ROTULO_CURTO[campo] ?? ROTULO_CAMPO[campo]}
         opcoes={lista}
         carregando={carregandoOpcoes}
         valor={filtro.campos[campo]}
         atalhos={campo === "status" ? ATALHOS_STATUS : []}
-        onChange={(s) => navegar(comSelecao(filtro, campo, s))}
+        onChange={(sel) => navegar(comSelecao(filtro, campo, sel))}
       />
     );
   };
@@ -653,21 +696,26 @@ export default function DemandasPage() {
         onReset={isFiltered ? handleReset : undefined}
         isActive={isFiltered}
       >
-        <FilterInput
-          label="Buscar"
-          placeholder="Nome, nº DJUD, nº do processo, NUP SEI ou CATMAT…"
-          value={buscaInput}
-          onChange={onBusca}
-        />
-        <FilterInput
-          label="CATMAT / Registro ANVISA"
-          placeholder="Ex.: 457888 ou 1006811570015"
-          value={catmatInput}
-          onChange={onCatmat}
+        <FiltroMaterial
+          catmat={filtro.catmat}
+          unidade={filtro.unidade}
+          onChange={({ catmat, unidade }) => navegar({ ...filtro, catmat, unidade, catmatGrupo: null })}
         />
         {CAMPOS_PRINCIPAIS.map(multi)}
+        <FilterInput
+          label="Processo SEI"
+          placeholder="Ex.: 25000.123456/2021-11"
+          value={nupInput}
+          onChange={onNup}
+        />
         {maisFiltros && (
           <>
+            <FilterInput
+              label="Buscar (texto, nº DJUD, nº do processo)"
+              placeholder="Nome do medicamento, nº DJUD, nº CNJ…"
+              value={buscaInput}
+              onChange={onBusca}
+            />
             {CAMPOS_SECUNDARIOS.map(multi)}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Entrada no DJUD</Label>
@@ -675,7 +723,7 @@ export default function DemandasPage() {
                 <Input
                   type="date"
                   aria-label="Entrada no DJUD a partir de"
-                  className="h-8 text-sm"
+                  className="h-9 text-sm"
                   value={filtro.dataEntradaDe ?? ""}
                   onChange={(e) => navegar({ ...filtro, dataEntradaDe: e.target.value || null })}
                 />
@@ -683,7 +731,7 @@ export default function DemandasPage() {
                 <Input
                   type="date"
                   aria-label="Entrada no DJUD até"
-                  className="h-8 text-sm"
+                  className="h-9 text-sm"
                   value={filtro.dataEntradaAte ?? ""}
                   onChange={(e) => navegar({ ...filtro, dataEntradaAte: e.target.value || null })}
                 />
@@ -696,7 +744,7 @@ export default function DemandasPage() {
             type="button"
             variant="ghost"
             size="sm"
-            className="h-8 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+            className="h-9 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => setMaisFiltros((v) => !v)}
             aria-expanded={maisFiltros}
           >
@@ -734,7 +782,7 @@ export default function DemandasPage() {
         </div>
       )}
 
-      {/* Tradução do código: a Demanda não tem CATMAT, o filtro é por substância */}
+      {/* Tradução do código: a Demanda não tem CATMAT, o filtro é por substância e apresentação */}
       {filtro.catmat && filtroCatmat && (
         filtroCatmat.encontrado ? (
           <div className="-mt-4 rounded-md border bg-muted/30 px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -750,9 +798,32 @@ export default function DemandasPage() {
               · {filtroCatmat.descricao}
             </span>
             <span className="basis-full text-muted-foreground">
-              Demandas cujo medicamento corresponde a:{" "}
-              <span className="text-foreground">{filtroCatmat.grupos.map((g) => g.rotulo).join(" ou ")}</span>
+              Substância: <span className="text-foreground">{filtroCatmat.grupos.map((g) => g.rotulo).join(" ou ")}</span>
+              {filtro.unidade && <> · unidade <span className="text-foreground">{filtro.unidade}</span></>}
             </span>
+            {gruposCatmat && (
+              <span className="basis-full flex flex-wrap items-center gap-1.5 pt-1">
+                {([
+                  [null, `Todas (${(gruposCatmat.exata + gruposCatmat.naoIdentificada).toLocaleString("pt-BR")})`],
+                  ["exata", `Apresentação exata (${gruposCatmat.exata.toLocaleString("pt-BR")})`],
+                  ["nao_identificada", `Mesma substância, apresentação não identificada (${gruposCatmat.naoIdentificada.toLocaleString("pt-BR")})`],
+                ] as const).map(([grupo, rotulo]) => (
+                  <button
+                    key={grupo ?? "todas"}
+                    type="button"
+                    aria-pressed={filtro.catmatGrupo === grupo}
+                    onClick={() => navegar({ ...filtro, catmatGrupo: grupo })}
+                    className={
+                      filtro.catmatGrupo === grupo
+                        ? "rounded-full border border-primary bg-primary px-2 py-0.5 text-[11px] text-primary-foreground"
+                        : "rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }
+                  >
+                    {rotulo}
+                  </button>
+                ))}
+              </span>
+            )}
           </div>
         ) : (
           <div className="-mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
@@ -811,15 +882,31 @@ export default function DemandasPage() {
       )}
 
       {!isLoading && !error && (
-        <div className={isFetching ? "relative opacity-60 transition-opacity" : "relative"}>
+        <div className={isFetching ? "relative space-y-3 opacity-60 transition-opacity" : "relative space-y-3"}>
+          {/* Itens por página e paginação acima do cabeçalho dos registros */}
+          <Paginacao
+            pagina={page}
+            totalPaginas={totalPages}
+            totalRegistros={total}
+            onPagina={setPagina}
+            tamanho={pageSize}
+            onTamanho={(n) => {
+              const sp = new URLSearchParams(chaveUrl);
+              sp.set("pageSize", String(n));
+              sp.delete("page");
+              router.replace(`/demandas?${sp.toString()}`, { scroll: false });
+            }}
+            carregando={isFetching}
+          />
           {isFetching && (
-            <Loader2 className="absolute right-2 -top-6 h-4 w-4 animate-spin text-muted-foreground" aria-label="Atualizando" />
+            <Loader2 className="absolute right-2 top-9 h-4 w-4 animate-spin text-muted-foreground" aria-label="Atualizando" />
           )}
           <DataTable<Demanda>
             columns={visibleColumns}
             data={demandas}
             loading={false}
             pageSize={pageSize}
+            paginacaoInterna={false}
             onRowClick={(row) => router.push(`/demandas/${row.id}`)}
             renderEmptyState={() => (
               <EmptyState
@@ -844,68 +931,12 @@ export default function DemandasPage() {
               />
             )}
           />
+          {/* Repetida embaixo, sem o tamanho da página: quem rolou até o fim avança dali. */}
+          {totalPages > 1 && (
+            <Paginacao pagina={page} totalPaginas={totalPages} onPagina={setPagina} carregando={isFetching} />
+          )}
         </div>
       )}
-
-      {/* Paginação + pagesize selector */}
-      <div className="flex items-center justify-between px-1 flex-wrap gap-3">
-        {/* Pagesize selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Itens por página:</span>
-          <div className="flex gap-1">
-            {[20, 50, 100].map((size) => (
-              <Button
-                key={size}
-                variant={pageSize === size ? "default" : "outline"}
-                size="sm"
-                className="h-7 px-2.5 text-xs"
-                onClick={() => {
-                  const sp = new URLSearchParams(chaveUrl);
-                  sp.set("pageSize", String(size));
-                  sp.delete("page");
-                  router.replace(`/demandas?${sp.toString()}`, { scroll: false });
-                }}
-              >
-                {size}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {/* Paginação */}
-        {totalPages > 1 && (
-          <div className="flex items-center gap-3">
-            <p className="text-xs text-muted-foreground">
-              Página{" "}
-              <span className="font-semibold text-foreground">{page}</span>{" "}
-              de{" "}
-              <span className="font-semibold text-foreground">
-                {totalPages.toLocaleString("pt-BR")}
-              </span>
-            </p>
-            <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-                disabled={page <= 1}
-                onClick={() => setPagina(Math.max(1, page - 1))}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-                disabled={page >= totalPages}
-                onClick={() => setPagina(Math.min(totalPages, page + 1))}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
 
       {exportar && (
         <ExportarDialog

@@ -22,6 +22,8 @@ export interface DemandaLista {
   prioridade?: string | null;
   numeroProcesso?: string | null;
   nupSei?: string | null;
+  apresentacoes?: Array<{ catmat: string; descricao: string | null; origem: string; unidades?: string[] }> | null;
+  catmatsDerivados?: string[];
   areaTematica?: string | null;
   trfRegiao?: number | null;
   regiaoBrasil?: string | null;
@@ -44,6 +46,8 @@ export interface RespostaDemandas {
   filtroCatmat: FiltroCatmat | null;
   busca: BuscaAplicada | null;
   medicamento: GrupoTermos | null;
+  /** Com código CATMAT: demandas da apresentação exata e da mesma substância sem apresentação identificada. */
+  gruposCatmat: { exata: number; naoIdentificada: number } | null;
 }
 
 async function lerErro(res: Response, padrao: string): Promise<never> {

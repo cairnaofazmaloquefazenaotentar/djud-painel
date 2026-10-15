@@ -92,9 +92,29 @@ def _col_index(ref: str) -> int:
     return n - 1
 
 
+def _strings_compartilhadas(zf: zipfile.ZipFile) -> list[str]:
+    """Textos de xl/sharedStrings.xml, na ordem (planilha salva pelo Excel).
+
+    A exportacao direta do Redmine grava o texto na propria celula (inline);
+    a mesma planilha aberta e salva no Excel passa a guardar um indice para
+    esta tabela. O leitor aceita as duas formas.
+    """
+    if "xl/sharedStrings.xml" not in zf.namelist():
+        return []
+    textos: list[str] = []
+    with zf.open("xl/sharedStrings.xml") as fh:
+        for ev, el in iterparse(fh, events=("end",)):
+            if el.tag == NS + "si":
+                textos.append("".join(t.text or "" for t in el.iter(NS + "t")))
+                el.clear()
+    return textos
+
+
 def iter_rows(path: str, limit: int | None = None):
     """Gera cada linha da planilha como lista de strings (None onde vazio)."""
-    with zipfile.ZipFile(path) as zf, zf.open(SHEET_PATH) as fh:
+    with zipfile.ZipFile(path) as zf:
+        compartilhadas = _strings_compartilhadas(zf)
+        fh = zf.open(SHEET_PATH)
         count = 0
         cur: dict[int, str] | None = None
         for ev, el in iterparse(fh, events=("start", "end")):
@@ -108,7 +128,10 @@ def iter_rows(path: str, limit: int | None = None):
                     if node is None:
                         node = el.find(NS + "v")
                     if node is not None and node.text is not None:
-                        cur[_col_index(el.get("r", ""))] = node.text
+                        texto = node.text
+                        if el.get("t") == "s" and compartilhadas:
+                            texto = compartilhadas[int(texto)]
+                        cur[_col_index(el.get("r", ""))] = texto
                 el.clear()
             elif el.tag == NS + "row":
                 if cur:
@@ -196,6 +219,27 @@ def normalizar_lista(v) -> str | None:
             vistos.setdefault(item, None)
 
     return " | ".join(vistos) or None
+
+
+def unir_listas(*valores) -> str | None:
+    """Itens de varias colunas numa lista "A | B", sem repetir (ignora caixa)."""
+    itens: list[str] = []
+    vistos: set[str] = set()
+    for v in valores:
+        s = normalizar_lista(v)
+        for item in (s.split(" | ") if s else []):
+            chave = item.casefold()
+            if chave not in vistos:
+                vistos.add(chave)
+                itens.append(item)
+    return " | ".join(itens) or None
+
+
+def principio_ativo_redmine(principio, principio_jef) -> str | None:
+    """Medicamento do Redmine: colunas CC ("Princípio_Ativo") e CB ("Princípio
+    Ativo_JEF/TRF4") unidas — a segunda traz o medicamento de 1.266 demandas
+    dos Juizados/TRF4 que a primeira deixa como N/A (planilha de 17/03/2026)."""
+    return unir_listas(principio, principio_jef)
 
 
 def to_autor(v) -> str | None:
@@ -468,7 +512,7 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "areaTematica": txt(g(row, "Grupo Temático")),
             "regiaoBrasil": regiao,
             "objetoAcao": normalizar_lista(g(row, "Objeto da Ação")),
-            "principioAtivo": normalizar_lista(g(row, "Princípio_Ativo")),
+            "principioAtivo": principio_ativo_redmine(g(row, "Princípio_Ativo"), g(row, "Princípio Ativo_JEF/TRF4")),
             "autor": to_autor(g(row, "Autor(a)")),
             "numeroProcesso": numero_processo,
             "dataEntradaDJUD": to_date(g(row, "Data de Entrada_DJUD")),

@@ -11,8 +11,7 @@ import {
   FilterSelect,
   FilterDateRange,
   StatusBadge,
-  EmptyState,
-} from "@/components/backoffice";
+  EmptyState, Paginacao } from "@/components/backoffice";
 import { formatDateTime } from "@/lib/utils";
 import { ENTITY_LABELS, parseChanges } from "@/lib/log-labels";
 import { apiPath } from "@/lib/url";
@@ -263,11 +262,18 @@ export default function LogsPage() {
       </FilterBar>
 
       <div className="space-y-2">
+        <Paginacao
+          pagina={Number(page) || 1}
+          totalPaginas={totalPages}
+          onPagina={(p) => setPage(String(p))}
+          carregando={loading}
+        />
         <DataTable<AuditLog>
           columns={columns}
           data={logs}
           loading={loading}
           pageSize={20}
+          paginacaoInterna={false}
           renderEmptyState={() => (
             <EmptyState
               title="Nenhum log encontrado"

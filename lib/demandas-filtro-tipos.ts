@@ -18,6 +18,8 @@ import { radicalPalavra } from "@/lib/substancia";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const CAMPOS_DEMANDA = [
+  "pontoControle",
+  "subStatus",
   "status",
   "prioridade",
   "areaTematica",
@@ -26,15 +28,21 @@ export const CAMPOS_DEMANDA = [
   "ufResidencia",
   "objetoAcao",
   "formaCumprimento",
-  "pontoControle",
   "origemDemanda",
   "responsavelId",
+  "apresentacao",
 ] as const;
 
 export type CampoDemanda = (typeof CAMPOS_DEMANDA)[number];
 
+// "Status" na tela de Demandas é o Ponto de Controle (coluna BZ do Redmine),
+// em dois níveis: o Status (cada item, em qualquer posição) e o Sub-status (a
+// combinação exata de itens). O status do fluxo do Redmine ("Em Análise
+// COAJUD"…) virou "Situação no Redmine", em "Mais filtros".
 export const ROTULO_CAMPO: Record<CampoDemanda, string> = {
-  status: "Status",
+  pontoControle: "Status (Ponto de Controle)",
+  subStatus: "Sub-status (Ponto de Controle)",
+  status: "Situação no Redmine",
   prioridade: "Prioridade",
   areaTematica: "Grupo temático",
   regiaoBrasil: "Região",
@@ -42,9 +50,15 @@ export const ROTULO_CAMPO: Record<CampoDemanda, string> = {
   ufResidencia: "UF de residência",
   objetoAcao: "Objeto da ação",
   formaCumprimento: "Forma de cumprimento",
-  pontoControle: "Ponto de controle",
   origemDemanda: "Origem (tipo no Redmine)",
   responsavelId: "Responsável",
+  apresentacao: "Apresentação",
+};
+
+/** Rótulo curto na tela (o longo vai para exportações e relatórios). */
+export const ROTULO_CURTO: Partial<Record<CampoDemanda, string>> = {
+  pontoControle: "Status",
+  subStatus: "Sub-status",
 };
 
 /** Gravados pelo importador como "A | B": o filtro casa por item da lista. */
@@ -54,6 +68,27 @@ export const SEPARADOR_MULTIVALOR = " | ";
 /** Valor especial da opção "(não informado)" (coluna nula). */
 export const NAO_INFORMADO = "__null__";
 export const ROTULO_NAO_INFORMADO = "(não informado)";
+export const ROTULO_SEM_APRESENTACAO = "apresentação não identificada";
+
+/**
+ * Sub-status: a combinação de itens do Ponto de Controle, sem a ordem — o
+ * Redmine grava "Cessar Atos | Arquivado" e "Arquivado | Cessar Atos" para a
+ * mesma situação. É a chave da opção; o servidor a expande para as grafias.
+ */
+export function comboCanonico(bruto: string): string {
+  const itens = Array.from(
+    new Set(
+      bruto
+        .split("|")
+        .map((i) => i.trim().replace(/\s+/g, " "))
+        .filter(Boolean)
+    )
+  );
+  return itens.sort((a, b) => a.localeCompare(b, "pt-BR")).join(SEPARADOR_MULTIVALOR);
+}
+
+/** Grupos do filtro por CATMAT (A5): só a apresentação exata, ou só a não identificada. */
+export type GrupoCatmat = "exata" | "nao_identificada";
 
 /** Status considerados encerrados (P3: confirmar com o usuário). */
 export const STATUS_RESOLVIDOS = ["Fechada", "Concluída", "Encerrada", "Cancelada"];
@@ -73,6 +108,15 @@ export type FiltroDemandas = {
   catmat: string | null;
   /** Medicamento digitado (B3): casa pelo radical da substância. */
   medicamento: string | null;
+  /**
+   * Unidade de fornecimento do CATMAT escolhido (só com `catmat`): restringe a
+   * apresentação exata às demandas daquela unidade (ou sem unidade apurada).
+   */
+  unidade: string | null;
+  /** Grupo do filtro por código: null = os dois (apresentação exata e não identificada). */
+  catmatGrupo: GrupoCatmat | null;
+  /** Processo SEI (NUP): completo ou trecho dos dígitos. */
+  nupSei: string | null;
   campos: Partial<Record<CampoDemanda, SelecaoCampo>>;
   /** "AAAA-MM-DD", inclusive nas duas pontas. */
   dataEntradaDe: string | null;
@@ -88,6 +132,9 @@ export const FILTRO_VAZIO: FiltroDemandas = {
   busca: null,
   catmat: null,
   medicamento: null,
+  unidade: null,
+  catmatGrupo: null,
+  nupSei: null,
   campos: {},
   dataEntradaDe: null,
   dataEntradaAte: null,
@@ -139,6 +186,11 @@ export function lerFiltroDemandas(sp: ParametrosLidos): FiltroDemandas {
     catmat: texto(sp.get("catmat"), 20),
     // Nome antigo do Dashboard: ?principioAtivo=
     medicamento: texto(sp.get("medicamento") ?? sp.get("principioAtivo")),
+    unidade: texto(sp.get("unidade"), 120),
+    catmatGrupo: sp.get("catmatGrupo") === "exata" || sp.get("catmatGrupo") === "nao_identificada"
+      ? (sp.get("catmatGrupo") as GrupoCatmat)
+      : null,
+    nupSei: texto(sp.get("nupSei"), 40),
     campos,
     dataEntradaDe: dataDoFiltro(sp.get("dataEntradaDe")),
     dataEntradaAte: dataDoFiltro(sp.get("dataEntradaAte")),
@@ -156,6 +208,9 @@ export function filtroParaQuery(f: FiltroDemandas, base?: URLSearchParams): URLS
   const pares: Array<[string, string | null]> = [
     ["busca", f.busca],
     ["catmat", f.catmat],
+    ["unidade", f.unidade],
+    ["catmatGrupo", f.catmatGrupo],
+    ["nupSei", f.nupSei],
     ["medicamento", f.medicamento],
     ["dataEntradaDe", f.dataEntradaDe],
     ["dataEntradaAte", f.dataEntradaAte],
@@ -179,6 +234,9 @@ export function parametrosDoFiltro(): string[] {
   return [
     "busca",
     "catmat",
+    "unidade",
+    "catmatGrupo",
+    "nupSei",
     "medicamento",
     "principioAtivo",
     "dataEntradaDe",
@@ -195,7 +253,7 @@ export function parametrosDoFiltro(): string[] {
 
 export function quantidadeDeFiltros(f: FiltroDemandas): number {
   let n = 0;
-  for (const v of [f.busca, f.catmat, f.medicamento, f.organizacaoId]) if (v) n += 1;
+  for (const v of [f.busca, f.catmat, f.medicamento, f.nupSei, f.organizacaoId]) if (v) n += 1;
   if (f.dataEntradaDe || f.dataEntradaAte) n += 1;
   if (f.criadoDe || f.criadoAte) n += 1;
   for (const c of CAMPOS_DEMANDA) if (f.campos[c]) n += 1;
@@ -221,7 +279,8 @@ export function semPeriodoDeCriacao(f: FiltroDemandas): FiltroDemandas {
 }
 
 export function rotuloValor(campo: CampoDemanda, valor: string): string {
-  if (valor === NAO_INFORMADO) return ROTULO_NAO_INFORMADO;
+  if (valor === NAO_INFORMADO) return campo === "apresentacao" ? ROTULO_SEM_APRESENTACAO : ROTULO_NAO_INFORMADO;
+  if (campo === "apresentacao") return `CATMAT ${valor}`;
   if (campo === "trfRegiao") return `TRF ${valor}ª Região`;
   if (campo === "formaCumprimento") return ROTULO_FORMA[valor] ?? valor;
   return valor;
@@ -246,7 +305,17 @@ export function descreverFiltro(
 ): Array<[string, string]> {
   const linhas: Array<[string, string]> = [];
   if (f.busca) linhas.push(["Busca", f.busca]);
-  if (f.catmat) linhas.push(["CATMAT / registro ANVISA", f.catmat]);
+  if (f.catmat) {
+    const grupo =
+      f.catmatGrupo === "exata"
+        ? " (só a apresentação exata)"
+        : f.catmatGrupo === "nao_identificada"
+          ? " (só a mesma substância, apresentação não identificada)"
+          : "";
+    linhas.push(["CATMAT / registro ANVISA", `${f.catmat}${grupo}`]);
+  }
+  if (f.unidade) linhas.push(["Unidade de fornecimento", f.unidade]);
+  if (f.nupSei) linhas.push(["Processo SEI", f.nupSei]);
   if (f.medicamento) linhas.push(["Medicamento", f.medicamento]);
   for (const c of CAMPOS_DEMANDA) {
     const s = f.campos[c];
@@ -321,8 +390,15 @@ export function termosDaBusca(busca: string): string[] {
 
 export function interpretarBusca(bruta: string): InterpretacaoBusca {
   const busca = bruta.trim();
-  if (/^\d{4,6}$/.test(busca) || /^\d{13}$/.test(busca)) {
-    return { tipo: "codigo", codigo: busca, termos: [busca] };
+  // CATMAT de 4 a 6 dígitos, inclusive como o SISMAT escreve ("BR0410020"),
+  // ou registro ANVISA de 13 dígitos, com ou sem pontuação.
+  const semBr = busca.replace(/^BR/i, "");
+  if (/^0*\d{4,6}$/.test(semBr) && semBr.replace(/^0+/, "").length <= 6) {
+    const codigo = semBr.replace(/^0+/, "");
+    return { tipo: "codigo", codigo, termos: [codigo] };
+  }
+  if (/^[\d.\-/\s]+$/.test(busca) && digitos(busca).length === 13) {
+    return { tipo: "codigo", codigo: digitos(busca), termos: [digitos(busca)] };
   }
   // Só dígitos e separadores, com 8 dígitos ou mais: nº CNJ (20), NUP SEI (15
   // a 17), nº de processo com máscara. Compara os dígitos, que a buscaNorm

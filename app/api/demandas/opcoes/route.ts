@@ -8,6 +8,7 @@ import {
   CAMPOS_MULTIVALOR,
   NAO_INFORMADO,
   SEPARADOR_MULTIVALOR,
+  comboCanonico,
   rotuloValor,
   type CampoDemanda,
 } from "@/lib/demandas-filtro-tipos";
@@ -25,11 +26,74 @@ export interface OpcaoFiltro {
   valor: string;
   rotulo: string;
   contagem: number;
+  /** Sub-status: os itens do Ponto de Controle da combinação (a tela filtra pelo Status escolhido). */
+  itens?: string[];
 }
 
 export type OpcoesDemandas = Record<CampoDemanda, OpcaoFiltro[]>;
 
+/**
+ * Sub-status: as combinações do Ponto de Controle sem a ordem dos itens. O
+ * rótulo é a grafia mais frequente; a contagem soma as grafias.
+ */
+async function opcoesSubStatus(): Promise<OpcaoFiltro[]> {
+  const linhas = await db.$queryRaw<Array<{ valor: string | null; n: bigint }>>`
+    SELECT "pontoControle" AS valor, COUNT(*) AS n
+    FROM "Demanda" WHERE "deletedAt" IS NULL
+    GROUP BY "pontoControle"`;
+  const combos = new Map<string, { contagem: number; grafias: Array<[string, number]> }>();
+  let nulos = 0;
+  for (const l of linhas) {
+    const n = Number(l.n);
+    if (l.valor === null) {
+      nulos += n;
+      continue;
+    }
+    const k = comboCanonico(l.valor);
+    const c = combos.get(k) ?? { contagem: 0, grafias: [] };
+    c.contagem += n;
+    c.grafias.push([l.valor, n]);
+    combos.set(k, c);
+  }
+  const opcoes: OpcaoFiltro[] = Array.from(combos.entries())
+    .map(([valor, c]) => ({
+      valor,
+      rotulo: c.grafias.sort((a, b) => b[1] - a[1])[0][0],
+      contagem: c.contagem,
+      itens: valor.split(SEPARADOR_MULTIVALOR),
+    }))
+    .sort((a, b) => b.contagem - a.contagem || a.rotulo.localeCompare(b.rotulo, "pt-BR"));
+  if (nulos) opcoes.push({ valor: NAO_INFORMADO, rotulo: rotuloValor("subStatus", NAO_INFORMADO), contagem: nulos, itens: [] });
+  return opcoes;
+}
+
+/** Apresentação: os CATMATs derivados pelo enriquecimento (A5), com a descrição do catálogo. */
+async function opcoesApresentacao(): Promise<OpcaoFiltro[]> {
+  const [linhas, [vazias]] = await Promise.all([
+    db.$queryRaw<Array<{ valor: string; descricao: string | null; n: bigint }>>`
+      SELECT t.c AS valor, MAX(ci."descricaoItem") AS descricao, COUNT(*) AS n
+      FROM (SELECT unnest("catmatsDerivados") AS c FROM "Demanda" WHERE "deletedAt" IS NULL) t
+      LEFT JOIN "CatmatItem" ci ON ci."codigoItem" = t.c
+      GROUP BY t.c`,
+    db.$queryRaw<Array<{ n: bigint }>>`
+      SELECT COUNT(*) AS n FROM "Demanda" WHERE "deletedAt" IS NULL AND cardinality("catmatsDerivados") = 0`,
+  ]);
+  const opcoes: OpcaoFiltro[] = linhas
+    .map((l) => ({
+      valor: l.valor,
+      rotulo: `${l.valor} — ${(l.descricao ?? "CATMAT fora do catálogo local").slice(0, 80)}`,
+      contagem: Number(l.n),
+    }))
+    .sort((a, b) => b.contagem - a.contagem);
+  if (Number(vazias.n)) {
+    opcoes.push({ valor: NAO_INFORMADO, rotulo: rotuloValor("apresentacao", NAO_INFORMADO), contagem: Number(vazias.n) });
+  }
+  return opcoes;
+}
+
 async function opcoesDoCampo(campo: CampoDemanda): Promise<OpcaoFiltro[]> {
+  if (campo === "subStatus") return opcoesSubStatus();
+  if (campo === "apresentacao") return opcoesApresentacao();
   const col = Prisma.raw(`"${campo}"`);
   const linhas = CAMPOS_MULTIVALOR.has(campo)
     ? await db.$queryRaw<Array<{ valor: string | null; n: bigint }>>`

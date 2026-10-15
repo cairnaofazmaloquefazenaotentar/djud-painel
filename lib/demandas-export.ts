@@ -8,7 +8,7 @@ import {
   type Agrupamento,
   type ColunaExport,
 } from "@/lib/demandas-colunas";
-import { ROTULO_NAO_INFORMADO, rotuloValor } from "@/lib/demandas-filtro-tipos";
+import { ROTULO_NAO_INFORMADO, ROTULO_SEM_APRESENTACAO, comboCanonico, rotuloValor } from "@/lib/demandas-filtro-tipos";
 import { AZUL, esc, fmtDateLong } from "@/lib/relatorio-pesquisa-preco";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +31,8 @@ const SELECAO = {
   titulo: true,
   principioAtivo: true,
   medicamento: true,
+  medicamentoOrigem: true,
+  apresentacoes: true,
   status: true,
   pontoControle: true,
   prioridade: true,
@@ -84,6 +86,16 @@ function medicamentoDe(l: LinhaBanco): string | null {
   return l.medicamento ?? normalizarPrincipioAtivo(l.principioAtivo);
 }
 
+type ApresentacaoGravada = { catmat: string; descricao: string | null; origem: string; unidades?: string[] };
+
+/** "CATMAT 410020 — ELTROMBOPAG… (SISMAT)"; vazio quando não identificada. */
+function apresentacaoDe(l: LinhaBanco): string {
+  const lista = (Array.isArray(l.apresentacoes) ? l.apresentacoes : []) as ApresentacaoGravada[];
+  return lista
+    .map((a) => `CATMAT ${a.catmat}${a.descricao ? ` — ${a.descricao}` : ""}${a.unidades?.length ? ` [${a.unidades.join(", ")}]` : ""} (${a.origem})`)
+    .join("; ");
+}
+
 /** Texto da célula (CSV e HTML). */
 function texto(l: LinhaBanco, c: ColunaExport): string {
   switch (c) {
@@ -101,6 +113,8 @@ function texto(l: LinhaBanco, c: ColunaExport): string {
       return l.responsavel?.name ?? "";
     case "medicamento":
       return medicamentoDe(l) ?? "";
+    case "apresentacao":
+      return apresentacaoDe(l) || ROTULO_SEM_APRESENTACAO;
     default:
       return String(l[c] ?? "");
   }
@@ -128,6 +142,13 @@ export function chaveDoGrupo(l: LinhaBanco, agrupar: Agrupamento): string {
       return l.trfRegiao ? rotuloValor("trfRegiao", String(l.trfRegiao)) : ROTULO_NAO_INFORMADO;
     case "medicamento":
       return medicamentoDe(l) ?? "(medicamento não identificado)";
+    case "apresentacao": {
+      const lista = (Array.isArray(l.apresentacoes) ? l.apresentacoes : []) as ApresentacaoGravada[];
+      return lista.length ? lista.map((a) => `CATMAT ${a.catmat}`).join(" + ") : `(${ROTULO_SEM_APRESENTACAO})`;
+    }
+    case "pontoControle":
+      // A mesma combinação em ordens diferentes ("A | B", "B | A") é um grupo só.
+      return l.pontoControle ? comboCanonico(l.pontoControle) : ROTULO_NAO_INFORMADO;
     default:
       return l[agrupar] ?? ROTULO_NAO_INFORMADO;
   }
@@ -153,6 +174,8 @@ function agrupar(linhas: LinhaBanco[], por: Agrupamento | null): Grupo[] {
     lista.push(l);
     mapa.set(k, lista);
   }
+  // "Apresentação não identificada" é sempre um grupo, mesmo vazio (A5).
+  if (por === "apresentacao" && !mapa.has(`(${ROTULO_SEM_APRESENTACAO})`)) mapa.set(`(${ROTULO_SEM_APRESENTACAO})`, []);
   const fim = (k: string) => k.startsWith("(");
   return Array.from(mapa.entries())
     .sort(([a], [b]) => (fim(a) !== fim(b) ? (fim(a) ? 1 : -1) : a.localeCompare(b, "pt-BR", { numeric: true })))

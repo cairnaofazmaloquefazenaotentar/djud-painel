@@ -8,6 +8,9 @@ import { hasPermission } from "@/lib/permissions";
 import { montarBuscaNorm } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
 
+/** A demanda sem a coluna de busca (só índice, não vai para a tela). */
+const semBuscaNorm = <T extends { buscaNorm?: unknown }>({ buscaNorm: _b, ...resto }: T) => resto;
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -36,7 +39,8 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(demanda);
+    // A busca normalizada é só índice: não trafega para a tela.
+    return NextResponse.json(semBuscaNorm(demanda));
   } catch (error) {
     return NextResponse.json(
       { error: "Erro ao obter demanda" },

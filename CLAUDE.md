@@ -105,6 +105,7 @@ python scripts/create_dadosabertos_tables.py --dry-run|--confirm   # DadosAberto
 python scripts/alter_cesta_dlog.py --dry-run|--confirm             # colunas de D1/D2/P11–P13/P18 na cesta
 python scripts/import_ipca.py --dry-run|--confirm                  # IndiceIpca (SIDRA 1737); mensal, UPSERT
 python scripts/alter_demanda_busca.py --dry-run|--confirm [--redmine base.xlsx]  # Demanda: buscaNorm (pg_trgm), nupSei, colunas da A5
+python scripts/enriquecer_demandas.py --dry-run|--confirm [--relatorio cob.csv]   # A5, depois de cada carga do Redmine
 
 # Autotestes e conferências (sem banco, exceto o mapa gerado)
 npx tsx scripts/autoteste-pesquisa-preco.ts       # período, IPCA, duplicidade, escolha gravada (roda no CI)
@@ -353,9 +354,19 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   `criadoDe`, `criadoAte`, `medicamento`. Datas `AAAA-MM-DD`, inclusive nas duas pontas.
 - Opções dos filtros = valores do banco com contagem (`GET /api/demandas/opcoes`, P2); seletor
   `components/backoffice/filter-multi-select.tsx` (tri-estado, busca, "Selecionar todos",
-  atalhos). Atalhos de status (P3, a confirmar): "Em análise (todos)", "Encerrados"
-  (`STATUS_RESOLVIDOS`), "Ativos" (= excluir os encerrados). **"Cessar Atos" não é status**: é
-  item do Ponto de Controle (diagnóstico 3.1).
+  atalhos).
+- **"Status" na aba Demandas = Ponto de Controle** (coluna BZ do Redmine), em dois níveis (pedido
+  da DLOG): **Status** (`pontoControle`, cada item em qualquer posição — "Cessar Atos" casa
+  "Arquivado | Cessar Atos") e **Sub-status** (`subStatus`, a combinação exata, sem a ordem:
+  `comboCanonico`; o servidor expande a chave para as grafias do banco em `aplicarFiltro`). O
+  status do fluxo do Redmine virou **"Situação no Redmine"** (`status`, em "Mais filtros", com os
+  atalhos de P3 — "Em análise (todos)", "Encerrados", "Ativos"; a confirmar).
+- Filtros principais da lista: CATMAT/Registro e Descrição (o `MaterialSearch` da Pesquisa de
+  Preços, com sugestões; `components/demandas/filtro-material.tsx`), Unidade de fornecimento (as do
+  item), Status, Sub-status e Processo SEI (`nupSei`: NUP completo casa exato; trecho, pelo texto
+  ou pelos dígitos). O resto fica em "Mais filtros".
+- Paginação da lista é do servidor: `DataTable paginacaoInterna={false}` + `Paginacao` acima da
+  tabela (itens por página, primeira/última). A interna contava só a página carregada.
 - Visões salvas (P4): `GET/POST/DELETE /api/demandas/visoes` sobre `UserView`, com a
   querystring canônica.
 - Exportação (A2): `GET /api/demandas/export?formato=csv|xlsx|html&colunas=…&agrupar=…` +
@@ -373,6 +384,21 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   o `PUT /api/demandas/[id]` e `scripts/alter_demanda_busca.py` (carga inicial e recálculo)
   gravam a coluna. Campo novo na busca → `montarBuscaNorm` + espelho Python + rodar
   `alter_demanda_busca.py --confirm --somente-busca`.
+- **Apresentação (A5)** — `scripts/enriquecer_demandas.py` (depois de cada carga): `medicamento` +
+  `medicamentoOrigem` (REDMINE → TITULO → DESCRICAO → SISMAT; dicionário = CatmatItem classe 6505
+  + CmedRegistro.substancia, pelo radical, com `PALAVRAS_GENERICAS` de fora),
+  `apresentacoes`/`catmatsDerivados` (1º SISMAT pelo NUP — `materialCodigo` "BR0410020" → 410020;
+  2º concentração no texto igual à do CATMAT; senão não identificada) e `unidadesDerivadas` (CMED).
+  Filtro por código = **apresentação exata** (`catmatsDerivados` tem o CATMAT; a unidade refina)
+  **ou mesma substância com apresentação não identificada**; outra apresentação da mesma
+  substância fica de fora (410020 × 410019 diferem). `catmatGrupo` restringe a um dos dois; a
+  lista devolve as duas contagens (`contarGruposCatmat`).
+- **Medicamento do Redmine = colunas CC + CB unidas** ("Princípio_Ativo" e "Princípio
+  Ativo_JEF/TRF4", `principio_ativo_redmine` no importador). `alter_demanda_busca.py --redmine`
+  só ACRESCENTA os itens de CB à base já carregada (a planilha pode ser mais antiga que a carga).
+- A6: Nº SEI na lista, no detalhe (copiar; link só com `NEXT_PUBLIC_URL_SEI`/`_PROCESSO`/`_REDMINE`
+  — modelo com `{valor}`, `lib/links-externos.ts`, P7), nas exportações e no PDF da demanda;
+  "Entregas no SISMAT" no detalhe (`/api/demandas/[id]/sismat`, pelo NUP do destinatário).
 - Dashboard (B3): campo "Medicamento" (sugestões por substância canônica com contagem,
   `/api/demandas/principios-ativos`; aplica ao escolher, com Enter ou após 450 ms), "Resumo do
   recorte" e "Processos do recorte" (a mesma rota da lista, 20 por página, botão "Abrir na

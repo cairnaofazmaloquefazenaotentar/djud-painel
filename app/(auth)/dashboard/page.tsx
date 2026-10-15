@@ -257,7 +257,8 @@ export default function DashboardPage() {
 
   const [startDate,        setStartDate]        = useState("");
   const [endDate,          setEndDate]          = useState("");
-  // Status e prioridade com o seletor múltiplo da lista (A1/B3).
+  // Status (Ponto de Controle), situação no Redmine e prioridade com o seletor múltiplo da lista (A1/B3).
+  const [selPonto,         setSelPonto]         = useState<SelecaoCampo>({ incluir: [], excluir: [] });
   const [selStatus,        setSelStatus]        = useState<SelecaoCampo>({ incluir: [], excluir: [] });
   const [selPrioridade,    setSelPrioridade]    = useState<SelecaoCampo>({ incluir: [], excluir: [] });
   // Medicamento digitado (B3): aplicado pelo próprio campo (pausa, Enter ou sugestão).
@@ -278,6 +279,7 @@ export default function DashboardPage() {
   const { data: opcoes, isLoading: opcoesLoading } = useOpcoesDemandas();
   const hasActiveFilters = !!(
     startDate || endDate || medicamento || catmatInput ||
+    selPonto.incluir.length || selPonto.excluir.length ||
     selStatus.incluir.length || selStatus.excluir.length ||
     selPrioridade.incluir.length || selPrioridade.excluir.length
   );
@@ -292,11 +294,12 @@ export default function DashboardPage() {
       medicamento: medicamento || null,
       catmat: catmat || null,
       campos: {
+        ...(selPonto.incluir.length || selPonto.excluir.length ? { pontoControle: selPonto } : {}),
         ...(selStatus.incluir.length || selStatus.excluir.length ? { status: selStatus } : {}),
         ...(selPrioridade.incluir.length || selPrioridade.excluir.length ? { prioridade: selPrioridade } : {}),
       },
     }),
-    [startDate, endDate, medicamento, catmat, selStatus, selPrioridade]
+    [startDate, endDate, medicamento, catmat, selPonto, selStatus, selPrioridade]
   );
 
   const { data: metrics, isLoading, error, isPlaceholderData: metricsDoFiltroAnterior } = useMetrics(filtro, eixoDataValor);
@@ -308,6 +311,7 @@ export default function DashboardPage() {
 
   const handleReset = () => {
     setStartDate(""); setEndDate("");
+    setSelPonto({ incluir: [], excluir: [] });
     setSelStatus({ incluir: [], excluir: [] });
     setSelPrioridade({ incluir: [], excluir: [] });
     setMedicamento("");
@@ -456,7 +460,15 @@ export default function DashboardPage() {
                   <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-36" />
                 </div>
                 <FilterMultiSelect
-                  label="Status"
+                  label="Status (Ponto de Controle)"
+                  className="w-56"
+                  opcoes={opcoes?.pontoControle ?? []}
+                  carregando={opcoesLoading}
+                  valor={selPonto}
+                  onChange={setSelPonto}
+                />
+                <FilterMultiSelect
+                  label="Situação no Redmine"
                   className="w-56"
                   opcoes={opcoes?.status ?? []}
                   carregando={opcoesLoading}

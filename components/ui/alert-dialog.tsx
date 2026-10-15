@@ -29,7 +29,10 @@ const AlertDialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Content>
 >(({ className, ...props }, ref) => (
   <AlertDialogPortal>
-    <AlertDialogOverlay />
+    {/* Clique fora = Cancelar: a confirmação também fecha ao clicar no fundo. */}
+    <AlertDialogPrimitive.Cancel asChild>
+      <AlertDialogOverlay />
+    </AlertDialogPrimitive.Cancel>
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(

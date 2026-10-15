@@ -15,6 +15,7 @@ import {
   ATALHOS_STATUS,
   FILTRO_VAZIO,
   comSelecao,
+  comboCanonico,
   descreverFiltro,
   filtroAtivo,
   filtroParaQuery,
@@ -47,9 +48,9 @@ confere("?status=X antigo = incluir um valor", lerFiltroDemandas(sp("status=Conc
 });
 const multi = lerFiltroDemandas(sp("status=A&status=B&status_excluir=C&pontoControle=Cessar+Atos&trfRegiao=__null__"));
 confere("parâmetros repetidos e exclusão", multi.campos, {
+  pontoControle: { incluir: ["Cessar Atos"], excluir: [] },
   status: { incluir: ["A", "B"], excluir: ["C"] },
   trfRegiao: { incluir: ["__null__"], excluir: [] },
-  pontoControle: { incluir: ["Cessar Atos"], excluir: [] },
 });
 confere("ida e volta pela URL", lerFiltroDemandas(filtroParaQuery(multi)), multi);
 confere(
@@ -65,6 +66,21 @@ confere("nomes antigos do Dashboard", [antigos.criadoDe, antigos.criadoAte, anti
 ]);
 confere("data inválida é ignorada", lerFiltroDemandas(sp("dataEntradaDe=2026-02-30")).dataEntradaDe, null);
 confere("filtro vazio", [filtroAtivo(FILTRO_VAZIO), quantidadeDeFiltros(FILTRO_VAZIO)], [false, 0]);
+const material = lerFiltroDemandas(sp("catmat=410020&unidade=COMPRIMIDO&catmatGrupo=exata&nupSei=25000.123456%2F2021-11"));
+confere("material, unidade, grupo e NUP", [material.catmat, material.unidade, material.catmatGrupo, material.nupSei], [
+  "410020",
+  "COMPRIMIDO",
+  "exata",
+  "25000.123456/2021-11",
+]);
+confere("material: ida e volta", lerFiltroDemandas(filtroParaQuery(material)), material);
+confere("grupo inválido é ignorado", lerFiltroDemandas(sp("catmatGrupo=outro")).catmatGrupo, null);
+
+// ── Sub-status: a combinação do Ponto de Controle sem a ordem ────────────────
+
+confere("sub-status sem ordem", comboCanonico("Cessar Atos | Arquivado"), comboCanonico("Arquivado | Cessar Atos"));
+confere("sub-status ordenado", comboCanonico("Óbito | Cessar Atos | Arquivado"), "Arquivado | Cessar Atos | Óbito");
+confere("sub-status: espaços e repetição", comboCanonico("Cessar  Atos |Cessar Atos"), "Cessar Atos");
 confere("seleção vazia remove o campo", comSelecao(multi, "status", { incluir: [], excluir: [] }).campos.status, undefined);
 
 // ── Atalhos de status (P3) ───────────────────────────────────────────────────
@@ -83,6 +99,8 @@ confere(
 // ── Busca (A4) ───────────────────────────────────────────────────────────────
 
 confere("CATMAT de 6 dígitos", interpretarBusca("410020"), { tipo: "codigo", codigo: "410020", termos: ["410020"] });
+confere("CATMAT como o SISMAT escreve", interpretarBusca("BR0410020"), { tipo: "codigo", codigo: "410020", termos: ["410020"] });
+confere("registro ANVISA com pontuação", interpretarBusca("1.0068.1132.003-5").tipo, "codigo");
 confere("registro ANVISA de 13 dígitos", interpretarBusca("1006811320035").tipo, "codigo");
 confere("nº CNJ com máscara compara os dígitos", interpretarBusca("5000904-02.2021.4.03.6006"), {
   tipo: "numero",
@@ -107,7 +125,7 @@ confere(
   }),
   [
     ["Medicamento", "eltrombopag"],
-    ["Status", "Concluída · exceto Tramitado"],
+    ["Situação no Redmine", "Concluída · exceto Tramitado"],
     ["TRF", "TRF 3ª Região"],
     ["Entrada no DJUD", "a partir de 01/01/2025"],
   ]

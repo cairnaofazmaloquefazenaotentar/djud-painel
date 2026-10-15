@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createDemandaSchema, listDemandaSchema } from "@/lib/schemas";
 import { createAuditLog } from "@/lib/audit";
-import { aplicarFiltro, whereDemandas } from "@/lib/demandas-filtro";
+import { aplicarFiltro, contarGruposCatmat, whereDemandas } from "@/lib/demandas-filtro";
 import { lerFiltroDemandas, montarBuscaNorm } from "@/lib/demandas-filtro-tipos";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
     // Desempate estável: sem ele, a mesma página pode trazer linhas diferentes.
     orderBy.push({ id: "asc" });
 
-    const [demandas, total] = await Promise.all([
+    const [demandas, total, gruposCatmat] = await Promise.all([
       db.demanda.findMany({
         where,
         skip,
@@ -80,6 +80,9 @@ export async function GET(request: NextRequest) {
         },
       }),
       db.demanda.count({ where }),
+      // Com código CATMAT: quantas são da apresentação exata e quantas da mesma
+      // substância sem apresentação identificada (A5) — a tela mostra os dois.
+      contarGruposCatmat({ ...aplicado, filtro: { ...aplicado.filtro, catmatGrupo: null } }),
     ]);
 
     // A busca normalizada é só índice: não trafega para a tela.
@@ -97,6 +100,7 @@ export async function GET(request: NextRequest) {
         totalPages: Math.ceil(total / params.pageSize),
       },
       ...resumoFiltro,
+      gruposCatmat,
     });
   } catch (error) {
     // Erro inesperado: mensagem amigável na tela e o detalhe no log (A4).
