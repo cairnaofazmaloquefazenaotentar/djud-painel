@@ -1,5 +1,6 @@
 "use client";
 
+import type { AliquotaTeto } from "@/lib/pesquisa-preco-metodo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CestaItemDTO, CestaResumo } from "@/lib/cesta";
 import type { ExclusaoRegistro, OrcamentoFornecedor } from "@/lib/pesquisa-preco-curadoria";
@@ -52,6 +53,8 @@ export interface AdicionarItemArgs {
   justificativaPeriodo?: string | null;
   corrigirIpca?: boolean;
   duplicidadesRevertidas?: string[];
+  /** Alíquota de ICMS do teto escolhida no filtro da pesquisa. */
+  aliquotaTeto?: AliquotaTeto | null;
 }
 
 export function useAdicionarItemCesta() {

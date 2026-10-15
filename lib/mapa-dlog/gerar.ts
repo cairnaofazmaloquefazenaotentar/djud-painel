@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { rotuloPmvg } from "@/lib/cmed-aliquotas";
 import {
   ABA,
   ALTURA,
@@ -505,10 +506,9 @@ function abaDoItem(wb: ExcelJS.Workbook, item: MapaItem, plano: PlanoCmed | unde
   );
   ws.getCell("C12").value = "Teto CMED (unid.):";
   if (item.teto && plano?.linhaTeto) {
-    const fTeto =
-      item.regraTeto === "pmvg_referencia"
-        ? `${ref(ABA.cmed, `O${plano.linhaTeto}`)}`
-        : `${ref(ABA.cmed, `K${plano.linhaTeto}`)}/${ref(ABA.cmed, `N${plano.linhaTeto}`)}`;
+    // As duas regras usam a alíquota do item (decisão do usuário: filtro, padrão 17%):
+    // O = M ÷ N, com M = PMVG nessa alíquota (o de 0% para o isento de ICMS).
+    const fTeto = ref(ABA.cmed, `O${plano.linhaTeto}`);
     formula(ws.getCell("D12"), fTeto, item.teto.valorUnitario, FORMATO.precoUnitario);
   } else {
     valor(ws.getCell("D12"), "sem PMVG vigente");
@@ -710,9 +710,9 @@ function abaCmed(wb: ExcelJS.Workbook, itens: MapaItem[], meta: MetaMapa, plano:
     const cab = p.inicio + 1;
     const cabecalhos = [
       ...CABECALHO_CMED,
-      `PMVG ${item.aliquota} %`,
+      rotuloPmvg(item.aliquota),
       "Unidades por embalagem (Qt_Embal)",
-      `PMVG ${item.aliquota}% por unidade`,
+      `${rotuloPmvg(item.aliquota)} por unidade`,
       "Marcação",
     ];
     cabecalhos.forEach((h, i) => {

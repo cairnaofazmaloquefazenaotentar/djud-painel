@@ -1,4 +1,5 @@
 import { PassThrough, Readable } from "node:stream";
+import { linkExterno } from "@/lib/links-externos";
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
@@ -232,6 +233,13 @@ export function* csvDemandas(linhas: LinhaBanco[], ctx: ContextoExportDemandas):
 const th = (s: string) => `<th style="border:1px solid #ccc;padding:3px 5px;background:#eef2f7;text-align:left;">${esc(s)}</th>`;
 const td = (s: string) => `<td style="border:1px solid #ddd;padding:3px 5px;vertical-align:top;">${esc(s)}</td>`;
 
+/** Célula do HTML; o Nº SEI vira link para o processo no SEI. */
+function tdDaColuna(l: LinhaBanco, c: ColunaExport): string {
+  const url = c === "nupSei" ? linkExterno("sei", l.nupSei) : null;
+  if (!url) return td(texto(l, c));
+  return `<td style="border:1px solid #ddd;padding:3px 5px;vertical-align:top;"><a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(texto(l, c))}</a></td>`;
+}
+
 export function* htmlDemandas(linhas: LinhaBanco[], ctx: ContextoExportDemandas): Generator<string> {
   const comValor = ctx.colunas.includes("valorEstimado");
   const grupos = agrupar(linhas, ctx.agrupar);
@@ -265,7 +273,7 @@ export function* htmlDemandas(linhas: LinhaBanco[], ctx: ContextoExportDemandas)
     yield `<table>${cabecalho}`;
     let bloco: string[] = [];
     for (const l of g.linhas) {
-      bloco.push(`<tr>${ctx.colunas.map((c) => td(texto(l, c))).join("")}</tr>`);
+      bloco.push(`<tr>${ctx.colunas.map((c) => tdDaColuna(l, c)).join("")}</tr>`);
       if (bloco.length >= 500) {
         yield bloco.join("");
         bloco = [];
@@ -326,6 +334,9 @@ export async function xlsxDemandas(linhas: LinhaBanco[], ctx: ContextoExportDema
           const cell = r.getCell(i + 1);
           if (c === "dataEntradaDJUD" || c === "criadoEm") cell.numFmt = "dd/mm/yyyy";
           if (c === "valorEstimado") cell.numFmt = "#,##0.00";
+          // Nº SEI com link para o processo no SEI.
+          const url = c === "nupSei" ? linkExterno("sei", l.nupSei) : null;
+          if (url && l.nupSei) cell.value = { text: l.nupSei, hyperlink: url };
         });
         r.commit();
       }

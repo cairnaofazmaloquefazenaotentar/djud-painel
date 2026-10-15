@@ -60,11 +60,15 @@ import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { CamposEscolhaPreco } from "@/components/pesquisa-preco/escolha-preco";
 import {
+  ALIQUOTAS_TETO,
+  ALIQUOTA_PADRAO,
   ESCOLHA_PADRAO_MAPA,
   escolhaGravada,
   normalizarEscolha,
+  type AliquotaTeto,
   type EscolhaPreco,
 } from "@/lib/pesquisa-preco-metodo";
+import { rotuloAliquota } from "@/lib/cmed-aliquotas";
 import {
   JUSTIFICATIVA_PERIODO_MIN,
   OPCOES_MESES,
@@ -483,9 +487,18 @@ interface AjusteItem {
   justificativa: string;
 }
 
-/** O que o item já tem gravado vira o ajuste inicial na modal. */
+/** Alíquota de ICMS do teto do item: a gravada da pesquisa; sem ela, o padrão (17%). */
+function aliquotaDoItem(item: CestaItemDTO): AliquotaTeto {
+  return ALIQUOTAS_TETO.includes(item.aliquotaTeto as AliquotaTeto) ? (item.aliquotaTeto as AliquotaTeto) : ALIQUOTA_PADRAO;
+}
+
+/**
+ * O que o item já tem gravado vira o ajuste inicial na modal. Só método e
+ * regra do teto fazem um ajuste próprio: a alíquota todo item tem (a da
+ * pesquisa), e sozinha não deve desligar a escolha geral.
+ */
 function ajusteGravado(item: CestaItemDTO): AjusteItem | null {
-  const gravada = escolhaGravada(item);
+  const gravada = item.metodoPreco || item.regraTeto ? escolhaGravada(item) : null;
   if (!gravada && !item.justificativa) return null;
   return {
     escolha: gravada ? normalizarEscolha(gravada, ESCOLHA_PADRAO_MAPA) : null,
@@ -517,6 +530,9 @@ function AjusteDoItem({
       >
         <span className="min-w-0 truncate font-medium">{item.descricao}</span>
         <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          <Badge variant="outline" className="h-4 text-[10px] font-normal">
+            ICMS {rotuloAliquota(atual.escolha?.aliquota ?? aliquotaDoItem(item))}
+          </Badge>
           {personalizado && <Badge variant="secondary" className="h-4 text-[10px]">ajustado</Badge>}
           {aberto ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
         </span>
@@ -524,7 +540,7 @@ function AjusteDoItem({
       {aberto && (
         <div className="space-y-2">
           <CamposEscolhaPreco
-            valor={atual.escolha ?? escolhaGeral}
+            valor={atual.escolha ?? { ...escolhaGeral, aliquota: aliquotaDoItem(item) }}
             onChange={(e) => onChange({ ...atual, escolha: e })}
             idPrefixo={`cesta-${item.id}`}
           />
@@ -603,7 +619,9 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
       escolhas: Object.fromEntries(
         itens.map((i) => {
           const a = ajustes[i.id];
-          return [i.id, { ...(a?.escolha ?? escolhaGeral), justificativa: a?.justificativa.trim() || null }];
+          // Sem ajuste próprio, a escolha geral com a alíquota do próprio item.
+          const escolhaItem = a?.escolha ?? { ...escolhaGeral, aliquota: aliquotaDoItem(i) };
+          return [i.id, { ...escolhaItem, justificativa: a?.justificativa.trim() || null }];
         })
       ),
     }),
@@ -859,10 +877,11 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
             </div>
             <div className="space-y-2 border-t pt-3">
               <p className="text-xs font-medium">Preço adotado — todos os itens</p>
-              <CamposEscolhaPreco valor={escolhaGeral} onChange={setEscolhaGeral} idPrefixo="cesta-geral" />
+              <CamposEscolhaPreco valor={escolhaGeral} onChange={setEscolhaGeral} idPrefixo="cesta-geral" semAliquota />
               <p className="text-[11px] text-muted-foreground">
-                Para mudar o método, o teto ou escrever a justificativa de um item, abra-o abaixo. Sem
-                justificativa escrita, o painel gera o texto com os números da emissão.
+                A alíquota de ICMS do teto é a de cada item — a escolhida na pesquisa (padrão 17%). Para
+                mudar o método, o teto, a alíquota ou escrever a justificativa de um item, abra-o abaixo.
+                Sem justificativa escrita, o painel gera o texto com os números da emissão.
               </p>
               <div className="space-y-1.5">
                 {itens.map((i) => (

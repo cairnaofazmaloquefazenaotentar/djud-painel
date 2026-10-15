@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { rotuloCompetencia } from "@/lib/cmed-aliquotas";
+import { ALIQUOTAS_ICMS, rotuloCompetencia } from "@/lib/cmed-aliquotas";
 import { chaveApresentacaoCmed, competenciaVigenteEm, valorNaAliquota, type ListaCmedUsada } from "@/lib/cmed-competencia";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ export function escolherLista(
     rotuloVigente: rotuloCompetencia(vigente),
     capPercentual: usada.capPercentual,
     semImpostosPublicado: usada.aliquotas.includes("SEM_IMPOSTOS"),
+    aliquotas: usada.aliquotas,
   };
 }
 
@@ -97,6 +98,13 @@ export interface LinhaCmed {
   pmvg18: number | null;
   pf0: number | null;
   cap: boolean;
+  /** PMVG da embalagem em cada alíquota, alinhado a ALIQUOTAS_ICMS (null = não publicado). */
+  pmvgAliquotas: (number | null)[];
+  /**
+   * Isento de ICMS (Convênio CONFAZ 87/02, ICMS 0%, ou a lista só publica o
+   * preço sem ICMS): numa alíquota sem preço, vale o PMVG a 0% (P4 do prompt CMED).
+   */
+  isentoIcms: boolean;
 }
 
 /**
@@ -141,6 +149,8 @@ export async function linhasDaCompetencia(registros: string[], competencia: stri
       pmvg18: valorNaAliquota(v.pmvg, "18"),
       pf0: valorNaAliquota(v.pf, "0"),
       cap: v.cap === true,
+      pmvgAliquotas: ALIQUOTAS_ICMS.map((c) => valorNaAliquota(v.pmvg, c)),
+      isentoIcms: v.confaz87 === true || v.icms0 === true || soSemIcms(v.pmvg),
     });
   }
   return linhas.sort(
@@ -149,6 +159,12 @@ export async function linhasDaCompetencia(registros: string[], competencia: stri
       a.produto.localeCompare(b.produto, "pt-BR") ||
       a.apresentacao.localeCompare(b.apresentacao, "pt-BR")
   );
+}
+
+/** A lista só publica o preço sem ICMS (0% ou "sem impostos"): produto isento. */
+function soSemIcms(pmvg: unknown): boolean {
+  const publicadas = ALIQUOTAS_ICMS.filter((c) => valorNaAliquota(pmvg, c) != null);
+  return publicadas.length > 0 && publicadas.every((c) => c === "0" || c === "SEM_IMPOSTOS");
 }
 
 /** Registros ANVISA com preço na lista — a contagem "CMED" das unidades de fornecimento. */

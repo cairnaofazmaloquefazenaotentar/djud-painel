@@ -1,5 +1,6 @@
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
 import { descreverListaCmed, rotuloCap } from "@/lib/cmed-competencia";
+import { rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
 import {
   NOME_FONTE_CURADA,
   ORDEM_TIPOS_INFORMADOS,
@@ -225,7 +226,7 @@ export function conteudoMetodo(
         <li><strong>Atas de registro de preços</strong> (inciso II): itens de atas com vigência iniciada nos últimos 12 meses, por código CATMAT, coletados da API de dados abertos, com o link da ata no PNCP.</li>
         <li><strong>Preços informados pelo responsável</strong> (art. 5º, II a V) — contratação similar fora das bases, mídia especializada ou sítio eletrônico, cotação com fornecedor e nota fiscal eletrônica, quando juntados ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
-      <p style="font-size:11px;margin-top:6px;">Cada fonte é consultada no período do art. 5º — bases e contratações similares, 12 meses antes da data de referência, salvo ampliação justificada; mídia e cotação, 6 meses — e, por padrão, os preços dos incisos I e II são atualizados pelo IPCA. A data de referência, o período e a atualização aplicados constam da seção própria.</p>
+      <p style="font-size:11px;margin-top:6px;">Cada fonte é consultada no período do art. 5º — bases e contratações similares, 12 meses antes da data de referência, salvo ampliação justificada; mídia e cotação, 6 meses — e, por padrão, o valor de cada registro de compra dos incisos I e II é atualizado pelo IPCA, da data da compra até o último índice publicado; o PMVG da CMED (teto) não é atualizado. A data de referência, o período e a atualização aplicados constam da seção própria.</p>
       <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. ${
         metodoUnico
           ? `O preço de referência adotado é o seguinte: <strong>${esc(ROTULO_METODO[metodoUnico].longo.toLowerCase())}</strong>${
@@ -400,24 +401,26 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
           : ""
       }</p>
       <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        ${estatBox("PMVG unitário mínimo (sem impostos)", fmtBRL(cmed.pmvgUnitMin), resultado.recomendacao.escolha.regraTeto === "menor_pmvg_sem_impostos")}
+        ${estatBox(`Menor ${rotuloPmvg(cmed.aliquota)} unitário`, fmtBRL(cmed.pmvgUnitMin), resultado.recomendacao.escolha.regraTeto === "menor_pmvg_sem_impostos")}
         ${estatBox(
-          `PMVG ${resultado.recomendacao.escolha.aliquota}% do medicamento de referência (unit.)`,
+          `${rotuloPmvg(resultado.recomendacao.escolha.aliquota)} do medicamento de referência (unit.)`,
           fmtBRL(resultado.recomendacao.tetos.referencia?.valorUnitario ?? null),
           resultado.recomendacao.escolha.regraTeto === "pmvg_referencia"
         )}
-        ${estatBox("PMVG unitário máximo (sem impostos)", fmtBRL(cmed.pmvgUnitMax))}
+        ${estatBox(`Maior ${rotuloPmvg(cmed.aliquota)} unitário`, fmtBRL(cmed.pmvgUnitMax))}
         ${capAplica ? estatBox("Desconto CAP obrigatório", `${rotuloCap(cmed.lista?.capPercentual)} sobre PF`, true) : ""}
       </div>
       <p style="font-size:10px;color:#444;margin-bottom:8px;">Teto adotado neste item: <strong>${esc(
         rotuloRegraTeto(resultado.recomendacao.escolha.regraTeto, resultado.recomendacao.escolha.aliquota)
-      )}</strong>${descricaoTeto(resultado.recomendacao.teto)}. O outro teto aparece acima para comparação (destaque = regra adotada).</p>
+      )}</strong>${descricaoTeto(resultado.recomendacao.teto)}. O outro teto aparece acima para comparação (destaque = regra adotada). Alíquota de ICMS do teto: <strong>${esc(rotuloAliquota(cmed.aliquota))}</strong>${
+        cmed.isentosAZero > 0 ? `; ${cmed.isentosAZero} registro(s) isento(s) de ICMS entram com o PMVG a 0%` : ""
+      }.</p>
       ${tabela(considerados.slice(0, 10), [
         { label: "Registro", fn: (r) => esc(r.registro) },
         { label: "Produto / Apresentação", fn: (r) => `${esc(r.produto || "—")} / ${esc(r.apresentacao || "—")}` },
         { label: "Laboratório", fn: (r) => esc((r.laboratorio || "—").substring(0, 30)) },
         { label: "Qt/emb.", fn: (r) => (r.qtEmbalagem ? String(r.qtEmbalagem) : "—"), right: true },
-        { label: "PMVG emb.", fn: (r) => fmtBRL(r.pmvgEmbalagem), right: true },
+        { label: `PMVG emb. (${esc(rotuloAliquota(cmed.aliquota))})`, fn: (r) => `${fmtBRL(r.pmvgAliquotaEmbalagem)}${r.isentoAZero ? " (isento: 0%)" : ""}`, right: true },
         { label: "PMVG unit.", fn: (r) => `<strong>${fmtBRL(r.pmvgUnitario)}</strong>`, right: true },
         { label: "PF 0% unit.", fn: (r) => fmtBRL(r.pfUnitario), right: true },
         { label: "CAP", fn: (r) => (r.cap ? "Sim" : "Não") },
@@ -795,11 +798,11 @@ export function conteudoAtualizacaoMonetaria(resultado: ResultadoPesquisa): stri
     ];
   });
   const fator = (v: number | null) => (v === null ? "—" : v.toFixed(4).replace(".", ","));
-  return `<p style="font-size:11px;margin-bottom:6px;">Os preços das bases de compras públicas, das atas e das contratações similares (art. 5º, incisos I e II) foram atualizados pelo IPCA (IBGE) até <strong>${fmtMes(
+  return `<p style="font-size:11px;margin-bottom:6px;">O valor de cada registro de compra das bases de compras públicas, das atas e das contratações similares (art. 5º, incisos I e II) foi atualizado pelo IPCA (IBGE), da data da compra até <strong>${fmtMes(
     ipca.mesBase
-  )}</strong> — o último número-índice publicado não posterior ao mês anterior à data de referência (${fmtDate(
+  )}</strong> — o último número-índice publicado até a data de referência (${fmtDate(
     resultado.periodo.dataReferencia
-  )}). ${esc(ipca.convencao)} O fator é composto (razão entre números-índices), e não a soma das variações mensais. O preço publicado (nominal) consta ao lado do atualizado em cada registro. Mídia especializada, cotação com fornecedor e nota fiscal (incisos III a V) ficam no valor informado, e o teto CMED não é corrigido.${
+  )}). ${esc(ipca.convencao)} O fator é composto (razão entre números-índices), e não a soma das variações mensais. O preço publicado (nominal) consta ao lado do atualizado em cada registro. Mídia especializada, cotação com fornecedor e nota fiscal (incisos III a V) ficam no valor informado, e o PMVG da CMED (teto) não é atualizado pelo IPCA: vale a lista CMED usada no item.${
     ipca.semIndice
       ? ` <span style="color:#c0392b;">${fmtInt(ipca.semIndice)} registro(s) sem número-índice para o mês do preço ficaram sem correção (fator 1).</span>`
       : ""

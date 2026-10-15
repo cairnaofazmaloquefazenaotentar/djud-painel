@@ -6,9 +6,11 @@ import {
   type FonteMercadoChave,
   type Inciso,
 } from "@/lib/pesquisa-preco-fontes";
+import { rotuloPmvg } from "@/lib/cmed-aliquotas";
 import {
   ROTULO_METODO,
   ehReferencia,
+  isentoAZero,
   pmvgNaAliquota,
   rotuloRegraTeto,
   type AliquotaTeto,
@@ -137,7 +139,7 @@ export interface LinhaCmed {
   qtEmbalagem: number | null;
   /** O = M ÷ N. */
   unitarioAliquota: number | null;
-  /** Unitário sem impostos (K ÷ N) — o teto do painel. */
+  /** Unitário sem impostos (K ÷ N), para referência; o teto é a coluna O (alíquota do item). */
   unitarioSemImpostos: number | null;
   marcacao: string;
   /** Esta linha forma o teto escolhido (D12 da aba do item aponta para ela). */
@@ -326,9 +328,10 @@ function linhasCmed(r: ResultadoPesquisa, aliquota: AliquotaTeto): LinhaCmed[] {
     const qt = c.qtEmbalagem && c.qtEmbalagem > 0 ? c.qtEmbalagem : null;
     const pmvgAliq = pmvgNaAliquota(c, aliquota);
     const marcas: string[] = [];
-    if (tetos.menorSemImpostos?.registroId === c.id) marcas.push("menor teto (PMVG sem impostos)");
+    if (tetos.menor?.registroId === c.id) marcas.push(`menor teto (${rotuloPmvg(aliquota)})`);
     if (ehReferencia(c)) marcas.push("medicamento de referência");
-    if (tetos.referencia?.registroId === c.id && !ehReferencia(c)) marcas.push(`maior PMVG ${aliquota}%`);
+    if (tetos.referencia?.registroId === c.id && !ehReferencia(c)) marcas.push(`maior ${rotuloPmvg(aliquota)}`);
+    if (isentoAZero(c, aliquota)) marcas.push("isento de ICMS — PMVG a 0%");
     if (teto?.registroId === c.id) marcas.push("teto adotado");
     if (c.excluidoPor) marcas.push(`desconsiderado: ${c.excluidoPor}`);
     if (!qt) marcas.push("sem Qt_Embal — fora do teto");

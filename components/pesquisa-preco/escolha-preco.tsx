@@ -22,6 +22,7 @@ import {
   type RegraTeto,
 } from "@/lib/pesquisa-preco-metodo";
 import type { Recomendacao } from "@/lib/pesquisa-preco";
+import { rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Escolha do método do preço adotado e da regra do teto CMED (P11/P12).
@@ -42,15 +43,26 @@ export function CamposEscolhaPreco({
   onChange,
   idPrefixo,
   desabilitado = false,
+  aliquotaDaPesquisa = false,
+  semAliquota = false,
 }: {
   valor: EscolhaPreco;
   onChange: (e: EscolhaPreco) => void;
   /** Prefixo dos ids dos campos (vários itens na mesma modal). */
   idPrefixo: string;
   desabilitado?: boolean;
+  /**
+   * A alíquota vem do filtro da pesquisa ("Mais filtros") e aparece só para
+   * leitura: trocá-la aqui e não na tela faria o documento divergir da tela.
+   */
+  aliquotaDaPesquisa?: boolean;
+  /** Sem o campo de alíquota (na cesta, cada item tem a sua). */
+  semAliquota?: boolean;
 }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1.4fr)_6rem]">
+    <div
+      className={`grid gap-2 ${semAliquota ? "sm:grid-cols-2" : "sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1.4fr)_6rem]"}`}
+    >
       <div className="space-y-1">
         <Label className="text-[11px]" htmlFor={`${idPrefixo}-metodo`}>
           Método do preço adotado
@@ -93,27 +105,39 @@ export function CamposEscolhaPreco({
           </SelectContent>
         </Select>
       </div>
+      {!semAliquota && (
       <div className="space-y-1">
         <Label className="text-[11px]" htmlFor={`${idPrefixo}-aliquota`}>
-          Alíquota
+          ICMS do teto
         </Label>
-        <Select
-          value={valor.aliquota}
-          onValueChange={(v) => onChange({ ...valor, aliquota: v as AliquotaTeto })}
-          disabled={desabilitado || valor.regraTeto !== "pmvg_referencia"}
-        >
-          <SelectTrigger id={`${idPrefixo}-aliquota`} className="h-8 w-full text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ALIQUOTAS_TETO.map((a) => (
-              <SelectItem key={a} value={a} className="text-xs">
-                PMVG {a}%
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {aliquotaDaPesquisa ? (
+          <p
+            id={`${idPrefixo}-aliquota`}
+            className="flex h-8 items-center rounded-md border bg-muted/40 px-2 text-xs"
+            title="Definida no filtro Alíquota ICMS da pesquisa (Mais filtros)"
+          >
+            {rotuloAliquota(valor.aliquota)}
+          </p>
+        ) : (
+          <Select
+            value={valor.aliquota}
+            onValueChange={(v) => onChange({ ...valor, aliquota: v as AliquotaTeto })}
+            disabled={desabilitado}
+          >
+            <SelectTrigger id={`${idPrefixo}-aliquota`} className="h-8 w-full text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ALIQUOTAS_TETO.map((a) => (
+                <SelectItem key={a} value={a} className="text-xs">
+                  {rotuloAliquota(a)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
+      )}
     </div>
   );
 }
@@ -135,10 +159,10 @@ export function PreviaPrecoAdotado({ recomendacao, unidade }: { recomendacao: Re
       </p>
       <div className="grid gap-1 sm:grid-cols-2">
         <p className={escolha.regraTeto === "menor_pmvg_sem_impostos" ? "font-medium" : "text-muted-foreground"}>
-          Menor PMVG sem impostos: {fmt(tetos.menorSemImpostos?.valorUnitario)}
+          Menor {rotuloPmvg(escolha.aliquota)}: {fmt(tetos.menor?.valorUnitario)}
         </p>
         <p className={escolha.regraTeto === "pmvg_referencia" ? "font-medium" : "text-muted-foreground"}>
-          PMVG {escolha.aliquota}% do medicamento de referência: {fmt(tetos.referencia?.valorUnitario)}
+          {rotuloPmvg(escolha.aliquota)} do medicamento de referência: {fmt(tetos.referencia?.valorUnitario)}
           {tetos.referencia ? ` (${tetos.referencia.produto})` : ""}
         </p>
       </div>

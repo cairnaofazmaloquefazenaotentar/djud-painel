@@ -65,13 +65,17 @@ import {
   type LinhaCmed,
 } from "@/lib/cmed";
 import { rotuloCap, type ListaCmedUsada } from "@/lib/cmed-competencia";
+import { ALIQUOTAS_ICMS, rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
 import {
   ESCOLHA_PADRAO,
   ROTULO_METODO,
   camposDoPreco,
+  isentoAZero,
   normalizarEscolha,
+  pmvgNaAliquota,
   rotuloRegraTeto,
   rotuloRegraTetoCurto,
+  type AliquotaTeto,
   type EscolhaPreco,
   type TetoCmed,
   type TetosCmed,
@@ -383,15 +387,23 @@ export interface RegistroCmedPreco {
   regimePreco: string | null;
   unidadeFornecimento: string | null;
   qtEmbalagem: number | null;
-  /** PMVG sem impostos por EMBALAGEM (como consta na tabela CMED). */
+  /** PMVG sem impostos por EMBALAGEM (como consta na tabela CMED; coluna do mapa da DLOG). */
   pmvgEmbalagem: number;
-  /** PMVG da embalagem por alíquota de ICMS (teto pela regra do medicamento de referência). */
+  /** PMVG da embalagem em algumas alíquotas — colunas fixas do mapa da DLOG. */
   pmvg0: number | null;
   pmvg12: number | null;
   pmvg17: number | null;
   pmvg18: number | null;
-  /** PMVG sem impostos por UNIDADE de fornecimento (÷ Qt_Embal). */
+  /** PMVG da embalagem em todas as alíquotas da lista, alinhado a ALIQUOTAS_ICMS. */
+  pmvgAliquotas: (number | null)[];
+  /** Isento de ICMS: numa alíquota sem preço, vale o PMVG a 0% (P4). */
+  isentoIcms: boolean;
+  /** PMVG da embalagem na alíquota do teto (`CmedResultado.aliquota`). */
+  pmvgAliquotaEmbalagem: number | null;
+  /** PMVG por UNIDADE de fornecimento na alíquota do teto (÷ Qt_Embal). */
   pmvgUnitario: number | null;
+  /** Na alíquota do teto, o preço veio do PMVG a 0% por isenção de ICMS. */
+  isentoAZero: boolean;
   pfEmbalagem: number | null;
   pfUnitario: number | null;
   cap: boolean;
@@ -411,6 +423,10 @@ export interface CmedResultado {
   excluidosManualmente: number;
   /** Lista mensal usada no teto; null sem as listas mensais (PrecoCmed). */
   lista: ListaCmedUsada | null;
+  /** Alíquota de ICMS do PMVG do teto (filtro da pesquisa; padrão 17%). Mín./máx. e unitários estão nela. */
+  aliquota: AliquotaTeto;
+  /** Registros isentos de ICMS que entraram com o PMVG a 0%. */
+  isentosAZero: number;
 }
 
 export interface Recomendacao {
@@ -1027,6 +1043,10 @@ function linhaDePrecoCmed(r: PrecoCmed): LinhaCmed {
     pmvg18: r.pmvg18,
     pf0: r.pf0,
     cap: r.cap,
+    pmvgAliquotas: ALIQUOTAS_ICMS.map((c) =>
+      c === "SEM_IMPOSTOS" ? r.pmvgSemImpostos : c === "0" ? r.pmvg0 : c === "12" ? r.pmvg12 : c === "17" ? r.pmvg17 : c === "18" ? r.pmvg18 : null
+    ),
+    isentoIcms: r.confaz87 || r.icms0,
   };
 }
 
@@ -1633,6 +1653,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
           ? meta.qtEmbalagem
           : null;
     const porUnidade = (v: number | null) => (v != null && qt ? v / qt : null);
+    const pmvgs = { pmvgAliquotas: r.pmvgAliquotas, isentoIcms: r.isentoIcms, pmvgEmbalagem: r.pmvgSemImpostos };
     return {
       id: r.id,
       registro: r.registro ?? "",
@@ -1652,7 +1673,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       pmvg12: r.pmvg12,
       pmvg17: r.pmvg17,
       pmvg18: r.pmvg18,
-      pmvgUnitario: porUnidade(r.pmvgSemImpostos),
+      pmvgAliquotas: r.pmvgAliquotas,
+      isentoIcms: r.isentoIcms,
+      pmvgAliquotaEmbalagem: pmvgNaAliquota(pmvgs, escolha.aliquota),
+      pmvgUnitario: porUnidade(pmvgNaAliquota(pmvgs, escolha.aliquota)),
+      isentoAZero: isentoAZero(pmvgs, escolha.aliquota),
       pfEmbalagem: r.pf0,
       pfUnitario: porUnidade(r.pf0),
       cap: r.cap,
@@ -1685,6 +1710,8 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     semQtEmbalagem: cmedConsiderados.filter((r) => r.pmvgUnitario == null).length,
     excluidosManualmente: cmedRegistros.length - cmedConsiderados.length,
     lista: listaCmed,
+    aliquota: escolha.aliquota,
+    isentosAZero: cmedConsiderados.filter((r) => r.isentoAZero).length,
   };
 
   // ── Consolidação (art. 6º — média, mediana e menor valor) ──
@@ -1754,9 +1781,9 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // IPCA (D2).
   if (corrigirIpca && mesBase) {
     observacoes.push(
-      `Preços dos incisos I e II atualizados pelo IPCA até ${mesBase.slice(5, 7)}/${mesBase.slice(0, 4)}. ${CONVENCAO_IPCA}${
+      `O IPCA atualiza o valor de cada registro de compra (bases, atas e contratações similares — incisos I e II), da data da compra até ${mesBase.slice(5, 7)}/${mesBase.slice(0, 4)}, o último índice publicado. ${CONVENCAO_IPCA}${
         semIndice ? ` ${semIndice} registro(s) sem índice para o mês do preço ficaram sem correção.` : ""
-      } O teto CMED não é corrigido.`
+      } O PMVG da CMED (teto) não é atualizado pelo IPCA.`
     );
   } else if (corrigirIpca) {
     observacoes.push("Atualização pelo IPCA pedida, mas a tabela de índices não está carregada (scripts/import_ipca.py): preços em valores nominais.");
@@ -1817,9 +1844,18 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       `Teto consultado na lista CMED de ${listaCmed.rotulo}. O relatório usa a lista de ${listaCmed.rotuloVigente}, a última publicada até a data de referência — o teto impresso pode ser outro.`
     );
   }
-  if (listaCmed && !listaCmed.semImpostosPublicado) {
+  if (listaCmed && escolha.aliquota === "SEM_IMPOSTOS" && !listaCmed.semImpostosPublicado) {
     observacoes.push(
-      `A lista CMED de ${listaCmed.rotulo} não publica o PMVG sem impostos: o teto do painel usa o PMVG a 0%.`
+      `A lista CMED de ${listaCmed.rotulo} não publica o PMVG sem impostos: o teto usa o PMVG a 0%.`
+    );
+  } else if (listaCmed && escolha.aliquota !== "SEM_IMPOSTOS" && !listaCmed.aliquotas.includes(escolha.aliquota)) {
+    observacoes.push(
+      `A lista CMED de ${listaCmed.rotulo} não publica o ${rotuloPmvg(escolha.aliquota)}: só os registros isentos de ICMS (PMVG a 0%) podem formar o teto.`
+    );
+  }
+  if (cmed.isentosAZero > 0) {
+    observacoes.push(
+      `${cmed.isentosAZero} registro(s) CMED isento(s) de ICMS (Convênio CONFAZ 87/02 ou ICMS 0%) considerado(s) com o PMVG a 0%, por não terem preço publicado na alíquota de ${rotuloAliquota(escolha.aliquota)}.`
     );
   }
   if (cmed.semQtEmbalagem > 0) {

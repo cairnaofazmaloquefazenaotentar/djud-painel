@@ -23,6 +23,8 @@ export type ListaCmedUsada = {
   capPercentual: number | null;
   /** A lista publica o PMVG "sem impostos"; senão o teto do painel usa o de 0%. */
   semImpostosPublicado: boolean;
+  /** Códigos de ALIQUOTAS_ICMS com preço publicado na lista — as opções do filtro de alíquota. */
+  aliquotas: string[];
 };
 
 /** Mês (AAAA-MM) da lista que vale para a data de referência; null se nenhuma é anterior a ela. */

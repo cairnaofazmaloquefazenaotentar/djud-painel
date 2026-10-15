@@ -49,28 +49,25 @@ pagamento/entrega indevidos, e onde estão (situação, prioridade, medicamento,
 
 ### 2.3 Lacunas e decisões do usuário
 
-- **R1 — Prazo.** A planilha do Redmine tem `due_date`, `Prazo de Resposta` e `Novo Prazo`;
-  nenhuma é importada. Decidir qual é o prazo a controlar e se `Novo Prazo`, quando preenchido,
-  prevalece. Implementação: o importador grava em `dataVencimento` (a coluna já existe) e o
-  relatório ganha a seção 8 (vencidas e a vencer). **Sem essa decisão, o relatório sai sem prazos**
-  — mostra envelhecimento, não vencimento.
-- **R2 — Tempo na situação.** Sem histórico, a única medida é *hoje − `atualizadoEm`*. Como o
-  `updated_on` do Redmine muda com qualquer edição (comentário, anexo), o número é um **piso**: a
-  demanda está na situação atual há *pelo menos* esse tempo. O relatório diz isso com essas
-  palavras. Para medir de verdade, duas opções (decisão):
-  (a) o importador grava um retrato diário `(demandaId, status, pontoControle, data)` — mede dali
-  em diante; (b) importar o histórico de alterações das issues pela API do Redmine
-  (`include=journals`) — mede o passado, depende de acesso à API.
-- **R3 — Prioridade.** O vocabulário do Redmine é de rito e prazo, não de criticidade: "Alta"
+- **R1 — Prazo. Decidido (out/2026):** o prazo a controlar é o `Novo Prazo` quando preenchido;
+  senão, o `Prazo de Resposta`. A planilha do Redmine tem as duas colunas (e `due_date`), e
+  nenhuma é importada hoje. Implementação: o importador grava em `dataVencimento` (a coluna já
+  existe), e o relatório ganha a seção 8 (vencidas e a vencer).
+- **R2 — Tempo na situação. Decidido (out/2026): sem retrato diário nem histórico**, porque o
+  Redmine é temporário e será substituído por outro sistema. A medida fica *hoje − `atualizadoEm`*.
+  Como o `updated_on` do Redmine muda com qualquer edição (comentário, anexo), o número é um
+  **piso**: a demanda está na situação atual há *pelo menos* esse tempo. O relatório diz isso com
+  essas palavras.
+- **R3 — Prioridade. Decidido (out/2026): sem faixas novas** (mesmo motivo de R2). O relatório
+  usa as prioridades como estão no Redmine, e o indicador "críticas" do Dashboard não muda. Para
+  registro, o diagnóstico: o vocabulário do Redmine é de rito e prazo, não de criticidade: "Alta"
   cobre **56.828 das 58.946** demandas (96,4%); o resto é "Intimação Pessoal (DJUD)" 1.167,
   "(SE)" 281, "(Outro Órgão)" 48, "Ministro(a)" 27, "Administrativas com Prazo" 232, "sem Prazo"
   184, "Urgente (Até 5 dias)" 94, "Urgente Procuradoria da União" 46 e "Imediato (Até 48 Horas)"
-  39. O critério atual de "Demandas críticas" do Dashboard (Alta + Crítica) abrange quase a base
-  inteira. Proposta de faixas para este relatório: **Imediato/Urgente** (48 h e 5 dias, AGU) →
-  **Intimação pessoal** → **Administrativa com prazo** → **Alta** → **Administrativa sem prazo**.
-  Mudar o KPI do Dashboard e do Panorama é decisão à parte (mudaria números já emitidos).
-- **R4 — Cruzamento por NUP.** Abastecimento e modalidade vêm por NUP. A Demanda passa a ter
-  `nupSei` com `scripts/alter_demanda_busca.py --redmine` (ainda **não rodado em produção**). Sem
+  39 — o critério de "Demandas críticas" (Alta + Crítica) abrange quase a base inteira.
+- **R4 — Cruzamento por NUP. Combinado (out/2026):** rodar `scripts/alter_demanda_busca.py
+  --redmine baseRedmine_20260827.xlsx` antes do deploy (`Pendências.md`, seção 5). Abastecimento e
+  modalidade vêm por NUP; a Demanda passa a ter `nupSei` com esse script. Sem
   NUP, a demanda entra como "não cruzada", contada à parte — nunca somada a "Não Informado".
 
 ### 2.4 Conteúdo
@@ -81,7 +78,8 @@ pagamento/entrega indevidos, e onde estão (situação, prioridade, medicamento,
    no Redmine. Sem `dataEntradaDJUD`, usa `criadoEm` e marca a linha ("idade pela criação").
 3. **Sem atualização** (R2): as mesmas faixas sobre *hoje − `atualizadoEm`*, por situação, e as
    50 demandas há mais tempo sem atualização.
-4. **Prioridade × idade**: matriz com as faixas de R3 nas linhas e as de idade nas colunas.
+4. **Prioridade × idade**: matriz com as prioridades do Redmine (R3) nas linhas e as faixas de
+   idade nas colunas.
 5. **Desabastecidas**: passivo ativo com "Desabastecido", por princípio ativo e UF; total de
    "não cruzadas" ao lado.
 6. **Tratamento contínuo**: passivo ativo com modalidade "Contínuo" por princípio ativo e
@@ -167,10 +165,10 @@ isso custa ao preço de referência da Pesquisa de Preços?
 
 | Id | Decisão | Bloqueia |
 |----|---------|----------|
-| R1 | Coluna de prazo (`due_date`, `Prazo de Resposta` ou `Novo Prazo`) e precedência | seção 8 do Risco |
-| R2 | Medir o tempo na situação: retrato diário ou histórico do Redmine | precisão da seção 3 (sem bloquear: sai como piso) |
-| R3 | Faixas de prioridade; se o KPI "críticas" do Dashboard muda | matriz da seção 4 |
-| R4 | Rodar `alter_demanda_busca.py --redmine` em produção (`nupSei`) | seções 5–7 do Risco e 3 do ARP |
+| R1 | ~~Coluna de prazo~~ — **decidido**: `Novo Prazo`, senão `Prazo de Resposta` | — |
+| R2 | ~~Tempo na situação~~ — **decidido**: sem retrato diário; fica o piso | — |
+| R3 | ~~Faixas de prioridade~~ — **decidido**: prioridades do Redmine como estão | — |
+| R4 | Rodar `alter_demanda_busca.py --redmine` em produção (`nupSei`) — combinado | seções 5–7 do Risco e 3 do ARP |
 | A1 | Unidade do SISMAT = unidade de fornecimento? | ARP inteiro |
 | A3 | Abater devoluções | consumo líquido |
 | A4 | Método de projeção | quantidade sugerida |
@@ -183,6 +181,6 @@ isso custa ao preço de referência da Pesquisa de Preços?
 | Etapa | Depende de | Data prevista |
 |-------|------------|---------------|
 | Panorama Executivo | — | entregue |
-| Análise de Risco e Prazos (seções 1–7, 9, 10) | R3, R4 | *a definir pelo usuário* |
-| Seção 8 do Risco (prazos) | R1 | *a definir pelo usuário* |
+| Análise de Risco e Prazos (seções 1–7, 9, 10) | R4 (script) | *a definir pelo usuário* |
+| Seção 8 do Risco (prazos) | importar `Novo Prazo`/`Prazo de Resposta` (R1) | *a definir pelo usuário* |
 | Dimensionamento para ARP | A1, A3, A4, A5, R4 | *a definir pelo usuário* |

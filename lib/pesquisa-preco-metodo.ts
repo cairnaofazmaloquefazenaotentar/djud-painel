@@ -1,4 +1,6 @@
 import type { CmedResultado, Consolidado, RegistroCmedPreco } from "@/lib/pesquisa-preco";
+import { ALIQUOTAS_ICMS, ordenarAliquotas, rotuloPmvg, type CodigoAliquota } from "@/lib/cmed-aliquotas";
+import { valorNaAliquota } from "@/lib/cmed-competencia";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Método do preço adotado e regra do teto CMED (P11 e P12 da avaliação da DLOG).
@@ -16,12 +18,13 @@ import type { CmedResultado, Consolidado, RegistroCmedPreco } from "@/lib/pesqui
 //   • média, mediana ou menor valor do conjunto único.
 //
 // Teto (Lei nº 10.742/2003; Res. CMED): o PMVG por unidade de fornecimento
-// (PMVG da embalagem ÷ Qt_Embal). Duas regras:
-//   • menor PMVG sem impostos entre os registros do item — padrão do painel;
-//   • PMVG da alíquota escolhida (padrão 17%) do medicamento de referência —
-//     o critério da DLOG, que resulta no MAIOR teto da lista. Referência = tipo
-//     de produto "Novo" ou "Biológico" na CMED; havendo mais de um, o de maior
-//     PMVG; não havendo nenhum, o maior PMVG entre todos os registros.
+// (PMVG da embalagem ÷ Qt_Embal), na ALÍQUOTA DE ICMS escolhida — um filtro da
+// pesquisa, padrão 17% (decisão do usuário, out/2026). Duas regras:
+//   • o menor PMVG entre os registros do item — padrão do painel;
+//   • o PMVG do medicamento de referência — o critério da DLOG, que resulta no
+//     MAIOR teto da lista. Referência = tipo de produto "Novo" ou "Biológico" na
+//     CMED; havendo mais de um, o de maior PMVG; nenhum, o maior PMVG de todos.
+// Produto isento de ICMS (só tem preço a 0%) entra com o PMVG a 0% (P4).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type MetodoPreco =
@@ -31,15 +34,21 @@ export type MetodoPreco =
   | "mediana_registros"
   | "menor_registros";
 
+/**
+ * O nome "menor_pmvg_sem_impostos" é de quando a regra usava só o PMVG sem
+ * impostos; ficou porque está gravado em itens da cesta e no AuditLog. Hoje é
+ * o menor PMVG na alíquota escolhida.
+ */
 export type RegraTeto = "menor_pmvg_sem_impostos" | "pmvg_referencia";
 
-/**
- * Alíquotas de ICMS que `PrecoCmed` guarda. A lista mensal completa (todas as
- * alíquotas, por competência) entra com a seção 7 do prompt CMED mensal.
- */
-export type AliquotaTeto = "0" | "12" | "17" | "18";
+/** Alíquota de ICMS do PMVG do teto: qualquer coluna das listas mensais da CMED. */
+export type AliquotaTeto = CodigoAliquota;
 
-export const ALIQUOTAS_TETO: AliquotaTeto[] = ["0", "12", "17", "18"];
+/** Na ordem de exibição: sem impostos, 0%, 12%, 12% ALC, 17%… */
+export const ALIQUOTAS_TETO: AliquotaTeto[] = ordenarAliquotas(ALIQUOTAS_ICMS);
+
+/** Padrão do teto (decisão do usuário): 17%. */
+export const ALIQUOTA_PADRAO: AliquotaTeto = "17";
 
 /**
  * `type` e não `interface`: vai inteiro para o `metadata` (Json) do AuditLog e
@@ -56,7 +65,7 @@ export type EscolhaPreco = {
 export const ESCOLHA_PADRAO: EscolhaPreco = {
   metodo: "mediana_medianas",
   regraTeto: "menor_pmvg_sem_impostos",
-  aliquota: "17",
+  aliquota: ALIQUOTA_PADRAO,
 };
 
 /**
@@ -67,7 +76,7 @@ export const ESCOLHA_PADRAO: EscolhaPreco = {
 export const ESCOLHA_PADRAO_MAPA: EscolhaPreco = {
   metodo: "mediana_medianas",
   regraTeto: "pmvg_referencia",
-  aliquota: "17",
+  aliquota: ALIQUOTA_PADRAO,
 };
 
 export const METODOS: MetodoPreco[] = [
@@ -96,15 +105,15 @@ export const ROTULO_METODO: Record<MetodoPreco, { curto: string; longo: string }
 
 export function rotuloRegraTeto(regra: RegraTeto, aliquota: AliquotaTeto): string {
   return regra === "menor_pmvg_sem_impostos"
-    ? "Menor PMVG sem impostos por unidade (padrão do painel)"
-    : `PMVG ${aliquota}% do medicamento de referência por unidade (critério DLOG)`;
+    ? `Menor ${rotuloPmvg(aliquota)} por unidade (padrão do painel)`
+    : `${rotuloPmvg(aliquota)} do medicamento de referência por unidade (critério DLOG)`;
 }
 
 /** Versão curta, para tabelas e para a justificativa. */
 export function rotuloRegraTetoCurto(regra: RegraTeto, aliquota: AliquotaTeto): string {
   return regra === "menor_pmvg_sem_impostos"
-    ? "menor PMVG sem impostos"
-    : `PMVG ${aliquota}% do medicamento de referência`;
+    ? `menor ${rotuloPmvg(aliquota)}`
+    : `${rotuloPmvg(aliquota)} do medicamento de referência`;
 }
 
 function valorEnum<T extends string>(v: unknown, opcoes: readonly T[], padrao: T): T {
@@ -130,7 +139,8 @@ export function escolhaGravada(c: {
   regraTeto: string | null;
   aliquotaTeto: string | null;
 }): Partial<EscolhaPreco> | null {
-  if (!c.metodoPreco && !c.regraTeto) return null;
+  // Só a alíquota também conta: o item adicionado pela tela grava a do filtro.
+  if (!c.metodoPreco && !c.regraTeto && !c.aliquotaTeto) return null;
   return {
     ...(METODOS.includes(c.metodoPreco as MetodoPreco) ? { metodo: c.metodoPreco as MetodoPreco } : {}),
     ...(REGRAS_TETO.includes(c.regraTeto as RegraTeto) ? { regraTeto: c.regraTeto as RegraTeto } : {}),
@@ -173,12 +183,13 @@ export function componenteCriterioDlog(c: Consolidado): "media" | "mediana" | nu
 
 export interface TetoCmed {
   regra: RegraTeto;
-  /** null = PMVG sem impostos. */
-  aliquota: AliquotaTeto | null;
+  aliquota: AliquotaTeto;
+  /** O registro é isento de ICMS e entrou com o PMVG a 0%. */
+  isentoAZero: boolean;
   valorUnitario: number;
   valorEmbalagem: number;
   qtEmbalagem: number;
-  /** id da linha em PrecoCmed. */
+  /** id do registro CMED (chave da apresentação). */
   registroId: string;
   registro: string;
   produto: string;
@@ -204,17 +215,36 @@ export function ehReferencia(r: Pick<RegistroCmedPreco, "tipoProduto">): boolean
   return TIPOS_REFERENCIA.has(semAcento(r.tipoProduto));
 }
 
-/** PMVG da embalagem na alíquota pedida. */
-export function pmvgNaAliquota(r: RegistroCmedPreco, aliquota: AliquotaTeto): number | null {
-  const v =
-    aliquota === "0" ? r.pmvg0 : aliquota === "12" ? r.pmvg12 : aliquota === "17" ? r.pmvg17 : r.pmvg18;
-  return v != null && v > 0 ? v : null;
+type ComPmvgs = Pick<RegistroCmedPreco, "pmvgAliquotas" | "isentoIcms" | "pmvgEmbalagem">;
+
+const positivo = (v: number | null) => (v != null && v > 0 ? v : null);
+
+/**
+ * PMVG da embalagem na alíquota pedida. Sem preço nela: o "sem impostos" de
+ * uma lista que não o publica é o de 0% (como em `pmvgEmbalagem`), e o produto
+ * isento de ICMS vale pelo PMVG a 0% (P4).
+ */
+export function pmvgNaAliquota(r: ComPmvgs, aliquota: AliquotaTeto): number | null {
+  const v = positivo(valorNaAliquota(r.pmvgAliquotas, aliquota));
+  if (v != null) return v;
+  if (aliquota === "SEM_IMPOSTOS") return positivo(r.pmvgEmbalagem);
+  return r.isentoIcms ? positivo(valorNaAliquota(r.pmvgAliquotas, "0")) : null;
+}
+
+/** O preço na alíquota pedida veio do PMVG a 0% por isenção de ICMS. */
+export function isentoAZero(r: ComPmvgs, aliquota: AliquotaTeto): boolean {
+  return (
+    aliquota !== "SEM_IMPOSTOS" &&
+    aliquota !== "0" &&
+    positivo(valorNaAliquota(r.pmvgAliquotas, aliquota)) == null &&
+    pmvgNaAliquota(r, aliquota) != null
+  );
 }
 
 function montarTeto(
   r: RegistroCmedPreco,
   regra: RegraTeto,
-  aliquota: AliquotaTeto | null,
+  aliquota: AliquotaTeto,
   embalagem: number,
   criterio: string
 ): TetoCmed {
@@ -222,6 +252,7 @@ function montarTeto(
   return {
     regra,
     aliquota,
+    isentoAZero: isentoAZero(r, aliquota),
     valorUnitario: embalagem / qt,
     valorEmbalagem: embalagem,
     qtEmbalagem: qt,
@@ -240,19 +271,25 @@ function candidatosTeto(cmed: CmedResultado): RegistroCmedPreco[] {
   return cmed.registros.filter((r) => r.excluidoPor === null && r.qtEmbalagem != null && r.qtEmbalagem > 0);
 }
 
-export function tetoMenorSemImpostos(cmed: CmedResultado): TetoCmed | null {
+export function tetoMenor(cmed: CmedResultado, aliquota: AliquotaTeto): TetoCmed | null {
+  const unit = (r: RegistroCmedPreco) => {
+    const v = pmvgNaAliquota(r, aliquota);
+    return v == null ? null : v / (r.qtEmbalagem as number);
+  };
   let melhor: RegistroCmedPreco | null = null;
   for (const r of candidatosTeto(cmed)) {
-    if (r.pmvgUnitario == null || r.pmvgUnitario <= 0) continue;
-    if (!melhor || r.pmvgUnitario < (melhor.pmvgUnitario as number)) melhor = r;
+    const u = unit(r);
+    if (u == null) continue;
+    if (!melhor || u < (unit(melhor) as number)) melhor = r;
   }
   if (!melhor) return null;
   return montarTeto(
     melhor,
     "menor_pmvg_sem_impostos",
-    null,
-    melhor.pmvgEmbalagem,
-    "menor PMVG sem impostos por unidade entre os registros do item"
+    aliquota,
+    pmvgNaAliquota(melhor, aliquota) as number,
+    `menor ${rotuloPmvg(aliquota)} por unidade entre os registros do item` +
+      (isentoAZero(melhor, aliquota) ? " (isento de ICMS: PMVG a 0%)" : "")
   );
 }
 
@@ -266,17 +303,18 @@ export function tetoReferencia(cmed: CmedResultado, aliquota: AliquotaTeto): Tet
   const criterio = referencias.length
     ? `medicamento de referência (tipo de produto "${melhor.tipoProduto}")` +
       (referencias.length > 1 ? `, o de maior PMVG entre ${referencias.length} registros de referência` : "")
-    : `sem medicamento de referência (novo ou biológico) entre os registros; adotado o maior PMVG ${aliquota}%`;
+    : `sem medicamento de referência (novo ou biológico) entre os registros; adotado o maior ${rotuloPmvg(aliquota)}`;
   return montarTeto(melhor, "pmvg_referencia", aliquota, pmvgNaAliquota(melhor, aliquota) as number, criterio);
 }
 
 export interface TetosCmed {
-  menorSemImpostos: TetoCmed | null;
+  /** Menor PMVG na alíquota (regra do painel). */
+  menor: TetoCmed | null;
   referencia: TetoCmed | null;
 }
 
 export function calcularTetos(cmed: CmedResultado, aliquota: AliquotaTeto): TetosCmed {
-  return { menorSemImpostos: tetoMenorSemImpostos(cmed), referencia: tetoReferencia(cmed, aliquota) };
+  return { menor: tetoMenor(cmed, aliquota), referencia: tetoReferencia(cmed, aliquota) };
 }
 
 // ── Preço adotado ────────────────────────────────────────────────────────────
@@ -299,7 +337,7 @@ export interface PrecoAdotado {
 export function adotarPreco(c: Consolidado, cmed: CmedResultado, escolha: EscolhaPreco): PrecoAdotado {
   const precoMetodo = precoPeloMetodo(c, escolha.metodo);
   const tetos = calcularTetos(cmed, escolha.aliquota);
-  const teto = escolha.regraTeto === "pmvg_referencia" ? tetos.referencia : tetos.menorSemImpostos;
+  const teto = escolha.regraTeto === "pmvg_referencia" ? tetos.referencia : tetos.menor;
   const tetoAplicado = teto !== null && precoMetodo !== null && precoMetodo > teto.valorUnitario;
   const semPrecoUsaTeto = precoMetodo === null && teto !== null;
   const precoFinal =

@@ -254,10 +254,24 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   (`pesquisarPrecos`, parâmetro `escolha`) e a prévia da tela usam a MESMA função.
 - Métodos: mediana das medianas (padrão), **critério DLOG** (menor entre média e mediana do
   conjunto único), média, mediana ou menor valor do conjunto único.
-- Tetos (os dois aparecem na tela, no HTML e no mapa): menor PMVG sem impostos por unidade
-  (padrão do painel) ou **PMVG da alíquota (padrão 17%) do medicamento de referência**
-  (critério DLOG = maior teto). Referência = `tipoProduto` "Novo" ou "Biológico"; havendo
-  vários, o de maior PMVG; nenhum, o maior PMVG da lista.
+- Tetos (os dois aparecem na tela, no HTML e no mapa), **na alíquota de ICMS escolhida**:
+  - A alíquota vem do filtro "Alíquota ICMS do teto" em "Mais filtros", padrão 17% (decisão do
+    usuário, out/2026). Aceita qualquer coluna das listas mensais (`ALIQUOTAS_TETO` =
+    `ALIQUOTAS_ICMS`).
+  - **Menor PMVG por unidade** — padrão do painel. O id `menor_pmvg_sem_impostos` é legado, de
+    quando a regra era só sem impostos; está gravado em itens da cesta.
+  - **PMVG do medicamento de referência** — critério DLOG, o maior teto. Referência =
+    `tipoProduto` "Novo" ou "Biológico"; havendo vários, o de maior PMVG; nenhum, o maior PMVG da
+    lista.
+  - Isento de ICMS (CONFAZ 87, ICMS 0% ou só 0% publicado) entra com o PMVG a 0% (P4 do prompt
+    CMED; `pmvgNaAliquota`/`isentoAZero`).
+  - Cada registro carrega `pmvgAliquotas` (todas as colunas), então a prévia troca de alíquota
+    sem nova consulta. `pmvgUnitario`/`pmvgUnitMin`/`pmvgUnitMax` ficam na alíquota do teto;
+    `pmvgEmbalagem` continua "sem impostos", porque é coluna fixa do mapa da DLOG.
+  - Onde a alíquota é definida: na modal avulsa, a da pesquisa aparece só para leitura. Na cesta,
+    cada item usa a sua (`aliquotaTeto`, gravada da pesquisa), e a escolha geral define só método
+    e regra.
+  - No mapa, D12 = `CMED!O` (PMVG na alíquota ÷ Qt_Embal) nas duas regras.
 - A modal de emissão pré-seleciona `ESCOLHA_PADRAO_MAPA` (método do painel + teto da DLOG) e
   manda a mesma escolha para o HTML e para o XLSX: os dois documentos trazem o mesmo preço.
   Sem escolha no pedido, o HTML usa `ESCOLHA_PADRAO` (padrão do painel).
@@ -282,8 +296,10 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
 - `lib/ipca.ts` (puro): mês-base = último índice publicado não posterior ao mês anterior à data de
   referência; fator = NI(mês-base) ÷ NI(mês do preço) — composto, começa no mês **seguinte** ao do
   preço (a DLOG inclui o próprio mês: convenção a confirmar, P10). Sem índice → fator 1, sinalizado.
-  Corrige só os incisos I e II (`corrigidoPeloIpca`: bases, atas e contratação similar); mídia,
-  cotação, nota fiscal e o **teto CMED nunca**. `RegistroMercado.precoNominal` guarda o publicado,
+  Atualiza o **valor do registro de compra** dos incisos I e II (`corrigidoPeloIpca`: bases, atas e
+  contratação similar), da data da compra até o último índice publicado. Mídia, cotação, nota
+  fiscal e o **PMVG (teto CMED) nunca** — os textos da tela e dos relatórios dizem isso com essas
+  palavras (pedido do usuário). `RegistroMercado.precoNominal` guarda o publicado,
   `preco` é o corrigido (estatística, IQR, curadoria e consolidados usam o corrigido).
 - Tabela `IndiceIpca` (`scripts/import_ipca.py`, SIDRA 1737: 2266 número-índice, 63 variação, ids
   conferidos pelo nome; autoteste produto × razão). Sem a tabela, a pesquisa sai nominal com aviso.
@@ -359,9 +375,9 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
 - Curadoria da CMED pela chave estável da apresentação, `cmed:<registro>:<GGREM>` (vale em qualquer
   competência); exclusões gravadas com o id de `PrecoCmed` são traduzidas por
   `traduzirExclusoesLegadas`. O CAP impresso é o `capPercentual` da lista (`rotuloCap`).
-- Ainda não feito da seção 7 do prompt CMED: o filtro de **Alíquota ICMS** (o teto do painel segue
-  "sem impostos", ou 0% na lista que não o publica; o da DLOG, a alíquota da escolha), P4 (isento a
-  0%), P7 (liberados listados), P8 (alerta de Qt_Embal) e P9 (regra do catálogo).
+- Da seção 7 do prompt CMED, já feitos: a alíquota ICMS como filtro (padrão 17%, por decisão do
+  usuário, no lugar do P1) e P4. Faltam P7 (liberados listados), P8 (alerta de Qt_Embal) e P9
+  (regra do catálogo) — ver `Pendências.md`.
 - `pf`/`pmvg` = arrays JSON alinhados a `ALIQUOTAS_ICMS` (`lib/cmed-aliquotas.ts`, espelho
   `scripts/cmed_layout.py`). **Append-only**: nunca reordenar; alíquota nova entra no fim dos dois
   arquivos (o hash usa código → valor, então acrescentar não muda versões gravadas; arrays antigos
@@ -440,8 +456,11 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
 - **Medicamento do Redmine = colunas CC + CB unidas** ("Princípio_Ativo" e "Princípio
   Ativo_JEF/TRF4", `principio_ativo_redmine` no importador). `alter_demanda_busca.py --redmine`
   só ACRESCENTA os itens de CB à base já carregada (a planilha pode ser mais antiga que a carga).
-- A6: Nº SEI na lista, no detalhe (copiar; link só com `NEXT_PUBLIC_URL_SEI`/`_PROCESSO`/`_REDMINE`
-  — modelo com `{valor}`, `lib/links-externos.ts`, P7), nas exportações e no PDF da demanda;
+- A6: Nº SEI na lista, no detalhe, nas exportações e no PDF da demanda, com botão de copiar e link
+  (`lib/links-externos.ts`, modelo com `{valor}`). O SEI tem padrão no código, informado pelo
+  usuário: `https://sei.saude.gov.br/sei/#{valor}`; `NEXT_PUBLIC_URL_SEI` troca. A barra do NUP
+  não é codificada. Processo e Redmine só com `NEXT_PUBLIC_URL_PROCESSO`/`_REDMINE` (pendentes,
+  `Pendências.md`). O link do SEI está na lista, no detalhe e nos exports HTML/XLSX;
   "Entregas no SISMAT" no detalhe (`/api/demandas/[id]/sismat`, pelo NUP do destinatário).
 - Dashboard (B3): campo "Medicamento" (sugestões por substância canônica com contagem,
   `/api/demandas/principios-ativos`; aplica ao escolher, com Enter ou após 450 ms), "Resumo do

@@ -93,6 +93,8 @@ export interface ParametrosBusca {
    * de referência, a que o relatório usa sempre.
    */
   competenciaCmed?: string | null;
+  /** Alíquota de ICMS do PMVG do teto (filtro de "Mais filtros"; padrão 17%). */
+  aliquotaIcms?: string;
 }
 
 /** Pesquisa consolidada — dispara apenas quando os parâmetros são submetidos. */
@@ -112,6 +114,7 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       params?.periodo.inicio,
       params?.corrigirIpca,
       params?.competenciaCmed ?? null,
+      params?.aliquotaIcms ?? null,
     ],
     queryFn: async () => {
       if (!params) throw new Error("Parâmetros de pesquisa ausentes");
@@ -126,6 +129,7 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       if (params.periodo.justificativaAmpliacao) sp.set("justificativaPeriodo", params.periodo.justificativaAmpliacao);
       if (!params.corrigirIpca) sp.set("ipca", "0");
       if (params.competenciaCmed) sp.set("competencia", params.competenciaCmed);
+      if (params.aliquotaIcms) sp.set("aliquota", params.aliquotaIcms);
       const res = await fetch(apiPath(`/api/precos/buscar?${sp.toString()}`));
       if (!res.ok) await lerErro(res, "Erro na pesquisa de preços");
       return res.json();
@@ -172,7 +176,14 @@ export function useSugestoesFiltro(p: {
 }
 
 export interface CompetenciasCmed {
-  competencias: Array<{ competencia: string; rotulo: string; registros: number; capPercentual: number | null }>;
+  competencias: Array<{
+    competencia: string;
+    rotulo: string;
+    registros: number;
+    capPercentual: number | null;
+    /** Alíquotas com preço publicado na lista — as opções do filtro de alíquota. */
+    aliquotas: string[];
+  }>;
   /** A última publicada até hoje — a que os relatórios usam. */
   vigente: string | null;
 }

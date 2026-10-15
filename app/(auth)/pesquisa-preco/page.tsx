@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
@@ -45,6 +45,8 @@ import { CamposEscolhaPreco, PreviaPrecoAdotado } from "@/components/pesquisa-pr
 import { DadosAbertosPanel } from "@/components/pesquisa-preco/dados-abertos-panel";
 import { useCompetenciasCmed, useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
 import { competenciaVigenteEm, rotuloCompetencia } from "@/lib/cmed-competencia";
+import { ordenarAliquotas, rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
+import { ALIQUOTA_PADRAO, type AliquotaTeto } from "@/lib/pesquisa-preco-metodo";
 import { useAdicionarItemCesta } from "@/hooks/useCesta";
 // Os filtros opcionais vêm do módulo puro: importar lib/pesquisa-preco aqui
 // arrastaria o Prisma para o bundle do navegador (ver o cabeçalho de lá).
@@ -416,16 +418,18 @@ function CmedPanel({
         <>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-md bg-red-50 dark:bg-red-950/20 p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">PMVG unitário mín. (sem imp.)</p>
+              <p className="text-xs text-muted-foreground mb-1">{rotuloPmvg(data.aliquota)} unitário mín.</p>
               <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgUnitMin)}</p>
             </div>
             <div className="rounded-md bg-red-50 dark:bg-red-950/20 p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">PMVG unitário máx. (sem imp.)</p>
+              <p className="text-xs text-muted-foreground mb-1">{rotuloPmvg(data.aliquota)} unitário máx.</p>
               <p className="text-base font-bold text-red-700 dark:text-red-400">{fmt(data.pmvgUnitMax)}</p>
             </div>
           </div>
           <p className="text-[11px] text-muted-foreground text-center">
-            Preço por {unidade ?? "unidade"} = PMVG da embalagem ÷ quantidade por embalagem (Qt_Embal)
+            Preço por {unidade ?? "unidade"} = {rotuloPmvg(data.aliquota)} da embalagem ÷ quantidade por
+            embalagem (Qt_Embal)
+            {data.isentosAZero > 0 ? ` · ${data.isentosAZero} isento(s) de ICMS com o PMVG a 0%` : ""}
             {data.semQtEmbalagem > 0 ? ` · ${data.semQtEmbalagem} registro(s) sem Qt_Embal` : ""}
           </p>
 
@@ -448,6 +452,9 @@ function CmedPanel({
                     <span className="text-muted-foreground">{r.apresentacao}</span>
                     {r.generico && <Badge variant="secondary" className="text-[10px] h-4">Genérico</Badge>}
                     {r.cap && <Badge variant="destructive" className="text-[10px] h-4">CAP</Badge>}
+                    {r.isentoAZero && (
+                      <Badge variant="outline" className="text-[10px] h-4">Isento de ICMS — PMVG a 0%</Badge>
+                    )}
                   </div>
                   <p className="text-muted-foreground">
                     {r.substancia}
@@ -455,7 +462,7 @@ function CmedPanel({
                   </p>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                     <span>
-                      Embalagem: <strong>{fmt(r.pmvgEmbalagem)}</strong>
+                      Embalagem ({rotuloAliquota(data.aliquota)}): <strong>{fmt(r.pmvgAliquotaEmbalagem)}</strong>
                       {r.qtEmbalagem ? ` (${r.qtEmbalagem} × ${r.unidadeFornecimento ?? unidade ?? "un."})` : ""}
                     </span>
                     <span>
@@ -521,11 +528,13 @@ function RecomendacaoPanel({
           <p className={`text-2xl font-bold ${hasPriceConflict ? "text-red-600" : "text-muted-foreground"}`}>
             {fmt(rec.limitePmvg)}
           </p>
-          <p className="text-[10px] text-muted-foreground mt-1">CMED sem impostos ÷ Qt_Embal</p>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Menor {rotuloPmvg(rec.escolha.aliquota)} da CMED ÷ Qt_Embal
+          </p>
           {/* P12: o teto pela regra da DLOG, ao lado, para comparação. */}
           {rec.tetos.referencia && (
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              PMVG {rec.escolha.aliquota}% do medicamento de referência: {fmt(rec.tetos.referencia.valorUnitario)}
+              {rotuloPmvg(rec.escolha.aliquota)} do medicamento de referência: {fmt(rec.tetos.referencia.valorUnitario)}
             </p>
           )}
         </div>
@@ -687,6 +696,8 @@ export default function PesquisaPrecoPage() {
   const [fornecedor, setFornecedor] = useState("");
   const [fabricante, setFabricante] = useState("");
   const [cnpjComprador, setCnpjComprador] = useState("");
+  // Alíquota de ICMS do PMVG do teto (decisão do usuário): filtro adicional, padrão 17%.
+  const [aliquotaIcms, setAliquotaIcms] = useState<AliquotaTeto>(ALIQUOTA_PADRAO);
 
   const [modalOpen, setModalOpen] = useState(false);
   // Curadoria da pesquisa em tela: exclusões justificadas e orçamentos
@@ -767,7 +778,10 @@ export default function PesquisaPrecoPage() {
   }, [params]);
 
   // Prévia da escolha: a mesma função pura que o servidor usa na emissão.
-  const resultadoEscolhido = result ? resultadoComEscolha(result, escolha) : null;
+  // A alíquota do teto é a do filtro da pesquisa (a da tela); o resto, a escolha da modal.
+  const aliquotaDaPesquisa = (params?.aliquotaIcms ?? ALIQUOTA_PADRAO) as AliquotaTeto;
+  const escolhaEmissao = useMemo<EscolhaPreco>(() => ({ ...escolha, aliquota: aliquotaDaPesquisa }), [escolha, aliquotaDaPesquisa]);
+  const resultadoEscolhido = result ? resultadoComEscolha(result, escolhaEmissao) : null;
   // Enquanto o responsável não edita, o texto acompanha a escolha e os números.
   const textoJustificativa = justificativaEditada
     ? justificativa
@@ -798,7 +812,12 @@ export default function PesquisaPrecoPage() {
   const fabricanteCurto = fabricante.trim().length === 1;
   const cnpjCurto = digitosCnpj.length > 0 && digitosCnpj.length < 8;
   const filtrosInvalidos = fornecedorCurto || fabricanteCurto || cnpjCurto;
-  const qtdFiltros = [fornecedor.trim(), fabricante.trim(), digitosCnpj].filter(Boolean).length;
+  const qtdFiltros =
+    [fornecedor.trim(), fabricante.trim(), digitosCnpj].filter(Boolean).length +
+    (aliquotaIcms !== ALIQUOTA_PADRAO ? 1 : 0);
+  // Alíquotas publicadas na lista CMED em uso (a consultada ou a vigente na data de referência).
+  const listaEmUso = competenciasCmed.find((c) => c.competencia === (competenciaCmed || cmedVigenteNaReferencia));
+  const opcoesAliquota = ordenarAliquotas(listaEmUso?.aliquotas ?? ["SEM_IMPOSTOS", "0", "12", "17", "18"]);
 
   // Ampliar o período exige justificativa (D1): o Buscar fica bloqueado com o motivo à vista.
   // Intervalo de datas mais longo que 12 meses também é ampliação; mais curto, não.
@@ -815,6 +834,8 @@ export default function PesquisaPrecoPage() {
     setFornecedor("");
     setFabricante("");
     setCnpjComprador("");
+    setAliquotaIcms(ALIQUOTA_PADRAO);
+    setParams((p) => (p ? { ...p, aliquotaIcms: ALIQUOTA_PADRAO } : p));
   }, []);
 
   const handleSearch = useCallback(() => {
@@ -834,8 +855,15 @@ export default function PesquisaPrecoPage() {
       },
       corrigirIpca,
       competenciaCmed: competenciaCmed || null,
+      aliquotaIcms,
     });
-  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca, inicioEscolhido, competenciaCmed]);
+  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca, inicioEscolhido, competenciaCmed, aliquotaIcms]);
+
+  /** Troca a alíquota do teto; com uma pesquisa na tela, refaz a consulta (os preços de mercado não mudam). */
+  const escolherAliquota = useCallback((v: AliquotaTeto) => {
+    setAliquotaIcms(v);
+    setParams((p) => (p ? { ...p, aliquotaIcms: v } : p));
+  }, []);
 
   /** Troca a lista CMED; com uma pesquisa na tela, já refaz a consulta. */
   const escolherListaCmed = useCallback((v: string) => {
@@ -861,6 +889,8 @@ export default function PesquisaPrecoPage() {
         justificativaPeriodo: params.periodo.justificativaAmpliacao,
         corrigirIpca: params.corrigirIpca,
         duplicidadesRevertidas,
+        // A alíquota do teto viaja com o item; a lista CMED não (o relatório usa sempre a vigente).
+        aliquotaTeto: (params.aliquotaIcms ?? ALIQUOTA_PADRAO) as AliquotaTeto,
       },
       {
         onSuccess: (r) =>
@@ -886,9 +916,9 @@ export default function PesquisaPrecoPage() {
       quantidade: Math.max(1, Math.trunc(Number(quantidade)) || 1),
       // Texto não editado vai como null: o servidor gera o mesmo texto com os
       // números da emissão.
-      escolha: { ...escolha, justificativa: justificativaEditada ? textoJustificativa : null },
+      escolha: { ...escolhaEmissao, justificativa: justificativaEditada ? textoJustificativa : null },
     }),
-    [params, relMeta, exclusoes, orcamentos, duplicidadesRevertidas, quantidade, escolha, textoJustificativa, justificativaEditada]
+    [params, relMeta, exclusoes, orcamentos, duplicidadesRevertidas, quantidade, escolhaEmissao, textoJustificativa, justificativaEditada]
   );
 
   const handleGerarXlsx = useCallback(async () => {
@@ -1142,7 +1172,7 @@ export default function PesquisaPrecoPage() {
               />
               {/* Até a pesquisa, o mês anterior à data de referência; depois, o mês-base
                   que o servidor de fato usou (o último índice publicado até lá). */}
-              Atualizar pelo IPCA até{" "}
+              Atualizar os valores das compras pelo IPCA até{" "}
               {(() => {
                 const mes =
                   result?.ipca.mesBase && result.periodo.dataReferencia === dataReferencia
@@ -1174,10 +1204,10 @@ export default function PesquisaPrecoPage() {
           )}
           <p className="text-[11px] text-muted-foreground">
             Art. 5º da IN 65/2021: bases e contratações similares de até 1 ano; mídia especializada e
-            cotação com fornecedor de até 6 meses; nota fiscal de até 1 ano. O IPCA corrige só os
-            incisos I e II, a partir do mês seguinte ao do preço; o teto CMED não é corrigido. Outra
-            lista CMED serve para consulta na tela: o relatório usa sempre a última publicada até a
-            data de referência.
+            cotação com fornecedor de até 6 meses; nota fiscal de até 1 ano. O IPCA atualiza o valor
+            de cada registro de compra (incisos I e II), da data da compra até o último índice
+            publicado — nunca o PMVG da CMED (teto). Outra lista CMED serve para consulta na tela: o
+            relatório usa sempre a última publicada até a data de referência.
           </p>
         </div>
 
@@ -1263,6 +1293,27 @@ export default function PesquisaPrecoPage() {
                   {cnpjCurto
                     ? "Informe ao menos a raiz do CNPJ (8 dígitos)."
                     : "Órgão que comprou — completo ou só a raiz; digite o nome para procurar o CNPJ (BPS). O Compras.gov.br identifica o comprador pela UASG."}
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs" htmlFor="filtro-aliquota">Alíquota ICMS do teto</Label>
+                <Select value={aliquotaIcms} onValueChange={(v) => escolherAliquota(v as AliquotaTeto)}>
+                  <SelectTrigger id="filtro-aliquota" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(opcoesAliquota.includes(aliquotaIcms) ? opcoesAliquota : [aliquotaIcms, ...opcoesAliquota]).map((a) => (
+                      <SelectItem key={a} value={a}>
+                        {rotuloAliquota(a)}
+                        {a === ALIQUOTA_PADRAO ? " (padrão)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Coluna de PMVG da CMED usada no teto, nas duas regras (menor PMVG e medicamento de
+                  referência). Produto isento de ICMS só tem preço a 0% e entra com ele. Vai para o
+                  relatório e para a cesta.
                 </p>
               </div>
             </div>
@@ -1642,7 +1693,7 @@ export default function PesquisaPrecoPage() {
 
             <div className="space-y-2 border-t pt-3">
               <p className="text-xs font-medium">Preço adotado</p>
-              <CamposEscolhaPreco valor={escolha} onChange={setEscolha} idPrefixo="avulsa" />
+              <CamposEscolhaPreco valor={escolhaEmissao} onChange={setEscolha} idPrefixo="avulsa" aliquotaDaPesquisa />
               {resultadoEscolhido && (
                 <PreviaPrecoAdotado recomendacao={resultadoEscolhido.recomendacao} unidade={resultadoEscolhido.unidade} />
               )}

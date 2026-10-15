@@ -20,7 +20,7 @@
 export type IndicesIpca = Map<string, number>;
 
 export const CONVENCAO_IPCA =
-  "Fator = número-índice do mês-base ÷ número-índice do mês do preço (IBGE/SIDRA, tabela 1737): a correção começa no mês seguinte ao do preço.";
+  "Fator = número-índice do mês-base ÷ número-índice do mês da compra (IBGE/SIDRA, tabela 1737), aplicado ao valor do registro de compra: a variação conta a partir do mês seguinte ao da compra.";
 
 export interface FatorIpca {
   fator: number;

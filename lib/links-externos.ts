@@ -1,20 +1,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Links externos da demanda (P7): por padrão só há o botão de copiar. O link
-// aparece apenas quando a URL-base está configurada no ambiente — o painel não
-// inventa endereço do SEI, da consulta processual nem do Redmine.
+// Links externos da demanda (P7): ao lado do botão de copiar, o link aparece
+// quando há o modelo de URL — o painel não inventa endereço.
 //
-//   NEXT_PUBLIC_URL_SEI       ex.: https://sei.exemplo.gov.br/…?nup={valor}
+//   SEI       padrão do Ministério da Saúde, informado pelo usuário (out/2026):
+//             https://sei.saude.gov.br/sei/#{valor}  (NEXT_PUBLIC_URL_SEI troca)
 //   NEXT_PUBLIC_URL_PROCESSO  ex.: https://consulta.exemplo.jus.br/…?numero={valor}
 //   NEXT_PUBLIC_URL_REDMINE   ex.: https://redmine.exemplo.gov.br/issues/{valor}
 //
-// "{valor}" é trocado pelo número (codificado). Só https:// é aceito. Módulo
-// puro; as variáveis NEXT_PUBLIC_* entram no bundle no build.
+// "{valor}" é trocado pelo número, codificado — menos a barra do NUP
+// ("25000.155049/2026-77"), que o SEI lê como está depois do "#". Só https://
+// é aceito. Módulo puro; as variáveis NEXT_PUBLIC_* entram no bundle no build.
 // ─────────────────────────────────────────────────────────────────────────────
+
+const SEI_MINISTERIO_SAUDE = "https://sei.saude.gov.br/sei/#{valor}";
 
 export type TipoLink = "sei" | "processo" | "redmine";
 
 const MODELOS: Record<TipoLink, string | undefined> = {
-  sei: process.env.NEXT_PUBLIC_URL_SEI,
+  sei: process.env.NEXT_PUBLIC_URL_SEI || SEI_MINISTERIO_SAUDE,
   processo: process.env.NEXT_PUBLIC_URL_PROCESSO,
   redmine: process.env.NEXT_PUBLIC_URL_REDMINE,
 };
@@ -23,5 +26,5 @@ export function linkExterno(tipo: TipoLink, valor: string | null | undefined): s
   const modelo = MODELOS[tipo]?.trim();
   const v = String(valor ?? "").trim();
   if (!modelo || !v || !/^https:\/\//i.test(modelo) || !modelo.includes("{valor}")) return null;
-  return modelo.replace("{valor}", encodeURIComponent(v));
+  return modelo.replace("{valor}", encodeURIComponent(v).replace(/%2F/gi, "/"));
 }

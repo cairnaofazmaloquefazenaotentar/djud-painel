@@ -1,5 +1,6 @@
 "use client";
 
+import { linkExterno } from "@/lib/links-externos";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -393,7 +394,20 @@ export default function DemandasPage() {
       cell: ({ row }) =>
         row.original.nupSei ? (
           <span className="group inline-flex items-center gap-1 font-mono text-xs text-muted-foreground whitespace-nowrap">
-            {row.original.nupSei}
+            {linkExterno("sei", row.original.nupSei) ? (
+              <a
+                href={linkExterno("sei", row.original.nupSei) as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-primary hover:underline"
+                title="Abrir o processo no SEI"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {row.original.nupSei}
+              </a>
+            ) : (
+              row.original.nupSei
+            )}
             <Copiar texto={row.original.nupSei} rotulo="Nº SEI" />
           </span>
         ) : traco,

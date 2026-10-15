@@ -21,7 +21,8 @@ import {
 import { fatorIpca, mesAnterior, mesBaseIpca, type IndicesIpca } from "../lib/ipca";
 import { marcarDuplicidades, type RegistroParaDuplicidade } from "../lib/pesquisa-preco-duplicidade";
 import { corrigidoPeloIpca, ORDEM_FONTES } from "../lib/pesquisa-preco-fontes";
-import { escolhaGravada } from "../lib/pesquisa-preco-metodo";
+import { calcularTetos, escolhaGravada, isentoAZero, pmvgNaAliquota } from "../lib/pesquisa-preco-metodo";
+import type { CmedResultado, RegistroCmedPreco } from "../lib/pesquisa-preco";
 import {
   chaveApresentacaoCmed,
   competenciaVigenteEm,
@@ -298,6 +299,40 @@ confere(
   descreverListaCmed({ ...usada, competencia: "2026-03", rotulo: "mar/2026" }),
   "lista CMED de mar/2026 (consulta; o relatório usa a de ago/2026, a última publicada até a data de referência)"
 );
+
+// ── Alíquota ICMS do teto (decisão do usuário: filtro, padrão 17%) ──────────
+
+const pmvgs = (v: Record<string, number>) => ALIQUOTAS_ICMS.map((c) => v[c] ?? null);
+const regCmed = (id: string, p: Partial<RegistroCmedPreco>): RegistroCmedPreco => ({
+  id, registro: id, substancia: "X", produto: id, apresentacao: "", laboratorio: null, cnpj: null, ean: null,
+  classeTerapeutica: null, tipoProduto: "Genérico", regimePreco: null, unidadeFornecimento: null, qtEmbalagem: 10,
+  pmvgEmbalagem: 0, pmvg0: null, pmvg12: null, pmvg17: null, pmvg18: null, pmvgAliquotas: [], isentoIcms: false,
+  pmvgAliquotaEmbalagem: null, pmvgUnitario: null, isentoAZero: false, pfEmbalagem: null, pfUnitario: null,
+  cap: false, generico: null, excluidoPor: null, ...p,
+});
+const comum = regCmed("A", { pmvgEmbalagem: 80, pmvgAliquotas: pmvgs({ SEM_IMPOSTOS: 80, "0": 90, "17": 110 }) });
+const isento = regCmed("B", { pmvgEmbalagem: 70, isentoIcms: true, pmvgAliquotas: pmvgs({ SEM_IMPOSTOS: 70, "0": 75 }) });
+const novo = regCmed("C", { tipoProduto: "Novo", pmvgEmbalagem: 150, pmvgAliquotas: pmvgs({ SEM_IMPOSTOS: 150, "0": 160, "17": 195 }) });
+confere("PMVG na alíquota publicada", pmvgNaAliquota(comum, "17"), 110);
+confere("alíquota não publicada, produto não isento: sem preço", pmvgNaAliquota(comum, "18"), null);
+confere("isento de ICMS: vale o PMVG a 0%", pmvgNaAliquota(isento, "17"), 75);
+confere("isento: sinalizado", isentoAZero(isento, "17"), true);
+confere("não isento: não sinalizado", isentoAZero(comum, "17"), false);
+confere(
+  "lista sem a coluna 'sem impostos': usa o PMVG da embalagem (0%)",
+  pmvgNaAliquota(regCmed("D", { pmvgEmbalagem: 90, pmvgAliquotas: pmvgs({ "0": 90 }) }), "SEM_IMPOSTOS"),
+  90
+);
+const cmedTeste = (registros: RegistroCmedPreco[]): CmedResultado => ({
+  total: registros.length, registros, pmvgUnitMin: null, pmvgUnitMax: null, semQtEmbalagem: 0,
+  excluidosManualmente: 0, lista: null, aliquota: "17", isentosAZero: 0,
+});
+const t17 = calcularTetos(cmedTeste([comum, isento, novo]), "17");
+confere("teto menor a 17%: o isento (7,50 a 0%) é o menor", [t17.menor?.registroId, t17.menor?.valorUnitario, t17.menor?.isentoAZero], ["B", 7.5, true]);
+confere("teto do medicamento de referência a 17%", [t17.referencia?.registroId, t17.referencia?.valorUnitario], ["C", 19.5]);
+const tSem = calcularTetos(cmedTeste([comum, isento, novo]), "SEM_IMPOSTOS");
+confere("teto menor sem impostos", [tSem.menor?.registroId, tSem.menor?.valorUnitario], ["B", 7]);
+confere("escolha gravada só com a alíquota", escolhaGravada({ metodoPreco: null, regraTeto: null, aliquotaTeto: "12" }), { aliquota: "12" });
 
 console.log(`${casos - falhas}/${casos} caso(s) conferido(s).`);
 if (falhas) {
