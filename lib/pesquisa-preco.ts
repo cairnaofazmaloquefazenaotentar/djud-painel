@@ -13,7 +13,6 @@ import {
 } from "@/lib/pesquisa-preco-filtros";
 import {
   ESTATISTICAS_VAZIAS,
-  METODO_ADOTADO,
   NOME_FONTE_CURADA,
   calcularEstatisticas,
   limitesIqr,
@@ -27,8 +26,23 @@ import {
   type RegistroDescartado,
 } from "@/lib/pesquisa-preco-curadoria";
 
+import type { ContratacaoRef, DuplicidadeRef } from "@/lib/pesquisa-preco-fontes";
+import {
+  ESCOLHA_PADRAO,
+  ROTULO_METODO,
+  camposDoPreco,
+  normalizarEscolha,
+  rotuloRegraTeto,
+  rotuloRegraTetoCurto,
+  type EscolhaPreco,
+  type TetoCmed,
+  type TetosCmed,
+} from "@/lib/pesquisa-preco-metodo";
+
 export * from "@/lib/pesquisa-preco-filtros";
 export * from "@/lib/pesquisa-preco-curadoria";
+export * from "@/lib/pesquisa-preco-metodo";
+export * from "@/lib/pesquisa-preco-fontes";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preços — lógica compartilhada pela rota de busca
@@ -55,8 +69,10 @@ export * from "@/lib/pesquisa-preco-curadoria";
 //
 // Metodologia (IN SEGES/ME nº 65/2021): por fonte, remoção de outliers (IQR) e
 // apuração dos três métodos do art. 6º — média, mediana e menor valor. O preço
-// de referência adotado é a mediana das medianas (BPS, SIASG, PNCP e orçamentos
-// diretos); o menor PMVG unitário sem impostos (CMED) é aplicado como teto.
+// adotado e a regra do teto saem de lib/pesquisa-preco-metodo.ts (P11/P12):
+// no padrão do painel, a mediana das medianas por fonte limitada ao menor PMVG
+// unitário sem impostos (CMED); no mapa da DLOG, o teto padrão é o PMVG 17% do
+// medicamento de referência.
 //
 // Além dos números por fonte, a pesquisa devolve dois consolidados (art. 6º,
 // "inclusive de forma consolidada"), que respondem a perguntas diferentes:
@@ -244,6 +260,20 @@ export interface RegistroMercado {
   outlierIqr: boolean;
   /** Justificativa do descarte manual; null quando o registro foi considerado. */
   excluidoPor: string | null;
+  /** Contratação de origem (nº da compra, UASG, item, link PNCP); D3. */
+  contratacao?: ContratacaoRef | null;
+  /** Data/hora da coleta na API ou do acesso à fonte (ISO). */
+  coletadoEm?: string | null;
+  /** Preço como publicado; `preco` é o corrigido quando o IPCA está ligado (D2). */
+  precoNominal?: number;
+  /** Fator do IPCA aplicado (1 = sem correção); null/ausente = IPCA desligado. */
+  fatorIpca?: number | null;
+  /** Mês do preço na tabela de índices ("2026-03"). */
+  mesIndice?: string | null;
+  /** Registro ANVISA do produto comprado (BPS pela API). */
+  registroAnvisa?: string | null;
+  /** Cópia do mesmo registro numa fonte que prevalece (P18). */
+  duplicadoDe?: DuplicidadeRef | null;
 }
 
 export interface FonteMercadoResultado {
@@ -282,10 +312,22 @@ export interface RegistroCmedPreco {
   produto: string;
   apresentacao: string;
   laboratorio: string | null;
+  cnpj: string | null;
+  /** EAN 1 da lista mensal (CmedPrecoVersao); só no modo `registrosCompletos`. */
+  ean: string | null;
+  classeTerapeutica: string | null;
+  /** "Novo", "Genérico", "Similar", "Biológico"… — define o medicamento de referência. */
+  tipoProduto: string | null;
+  regimePreco: string | null;
   unidadeFornecimento: string | null;
   qtEmbalagem: number | null;
   /** PMVG sem impostos por EMBALAGEM (como consta na tabela CMED). */
   pmvgEmbalagem: number;
+  /** PMVG da embalagem por alíquota de ICMS (teto pela regra do medicamento de referência). */
+  pmvg0: number | null;
+  pmvg12: number | null;
+  pmvg17: number | null;
+  pmvg18: number | null;
   /** PMVG sem impostos por UNIDADE de fornecimento (÷ Qt_Embal). */
   pmvgUnitario: number | null;
   pfEmbalagem: number | null;
@@ -308,13 +350,27 @@ export interface CmedResultado {
 }
 
 export interface Recomendacao {
-  /** Mediana das medianas por fonte — o método adotado (art. 6º, caput). */
+  /** Método e regra do teto que formaram o preço (P11/P12). */
+  escolha: EscolhaPreco;
+  /**
+   * Preço pelo método escolhido, antes do teto. No padrão do painel é a
+   * mediana das medianas por fonte (art. 6º, caput).
+   */
   precoReferencia: number | null;
-  /** Os outros dois métodos do art. 6º, para conferência no relatório. */
+  /** Os outros dois métodos do art. 6º sobre as medianas, para conferência no relatório. */
   mediaConsolidada: number | null;
   menorConsolidado: number | null;
+  /** Teto pela regra escolhida (PMVG por unidade). */
   limitePmvg: number | null;
+  /** Registro CMED que forma o teto escolhido. */
+  teto: TetoCmed | null;
+  /** Os dois tetos (menor PMVG sem impostos e PMVG do medicamento de referência). */
+  tetos: TetosCmed;
+  /** O preço do método superou o teto e o teto prevaleceu. */
+  tetoAplicado: boolean;
   precoFinal: number | null;
+  /** "Mediana das medianas", "Teto CMED — … acima do teto" — coluna Método do mapa. */
+  descricaoMetodo: string;
   metodologia: string;
   fontes: string[];
   observacoes: string[];
@@ -328,11 +384,19 @@ export interface ResultadoPesquisa {
   filtros: FiltrosOpcionais;
   resultados: {
     cmed: CmedResultado;
+    /** Compras.gov.br (Painel de Preços) — preenchida quando há coleta da API. */
+    comprasgov?: FonteMercadoResultado | null;
     bps: FonteMercadoResultado;
     siasg: FonteMercadoResultado;
     pncp: FonteMercadoResultado;
+    /** Itens de atas de registro de preços — preenchida quando há coleta da API. */
+    arp?: FonteMercadoResultado | null;
+    /** Preços informados pelo responsável (P13), um tipo por fonte; null quando não há. */
+    similar?: FonteMercadoResultado | null;
+    midia?: FonteMercadoResultado | null;
     /** Cotações diretas informadas pelo usuário; null quando não há nenhuma. */
     orcamentos: FonteMercadoResultado | null;
+    notaFiscal?: FonteMercadoResultado | null;
   };
   consolidado: Consolidado;
   /** Orçamentos diretos como foram informados (inclusive os fora do cálculo). */
@@ -351,6 +415,14 @@ export interface ParametrosPesquisa {
   exclusoes?: ExclusaoRegistro[] | unknown;
   /** Orçamentos diretos de fornecedor (art. 5º, IV). */
   orcamentos?: OrcamentoFornecedor[] | unknown;
+  /** Método do preço e regra do teto (P11/P12); o que faltar segue ESCOLHA_PADRAO. */
+  escolha?: Partial<EscolhaPreco> | null;
+  /**
+   * Devolve TODOS os registros da amostra de cada fonte, e não só os
+   * REGISTROS_ANALISE mais recentes, além do EAN da CMED. É o modo do mapa
+   * XLSX: a planilha lista a amostra inteira que entrou no cálculo.
+   */
+  registrosCompletos?: boolean;
 }
 
 /** Comparação tolerante a acento/caixa, usada nos filtros feitos em memória. */
@@ -366,6 +438,8 @@ function contemTexto(valor: string | null | undefined, termo: string): boolean {
 
 interface OpcoesConsolidacao {
   fonte: FonteCurada;
+  /** Lista a amostra inteira (mapa XLSX), sem o recorte de REGISTROS_ANALISE. */
+  completos?: boolean;
   filtrosNaoSuportados?: CampoFiltro[];
   /** Exclusões manuais desta fonte: id do registro → justificativa. */
   excluidos?: Map<string, string>;
@@ -431,7 +505,7 @@ function consolidar(
 
   // A curadoria precisa ver todos os destoantes, mesmo os que caíram fora dos
   // REGISTROS_ANALISE mais recentes — são exatamente os candidatos a exclusão.
-  const recentes = comOutlier.slice(0, REGISTROS_ANALISE);
+  const recentes = opcoes.completos ? comOutlier : comOutlier.slice(0, REGISTROS_ANALISE);
   const jaListados = new Set(recentes.map((r) => r.id));
   const destoantes = comOutlier.filter((r) => r.outlierIqr && !jaListados.has(r.id));
 
@@ -768,12 +842,42 @@ interface LinhaPncp {
 
 const toISO = (d: Date) => d.toISOString();
 
+/**
+ * EAN 1 de cada apresentação (código GGREM), da versão mais recente na lista
+ * mensal da CMED. A busca vai pelo registro (indexado) e o GGREM separa as
+ * apresentações. Sem a tabela (ambiente sem a carga mensal), segue sem EAN.
+ */
+async function eansPorApresentacao(
+  linhas: Array<{ registro: string | null; codigoGgrem: string | null }>
+): Promise<Map<string, string>> {
+  const registros = Array.from(new Set(linhas.map((l) => l.registro).filter((r): r is string => !!r)));
+  const ggrems = new Set(linhas.map((l) => l.codigoGgrem).filter((g): g is string => !!g));
+  const mapa = new Map<string, string>();
+  if (!registros.length || !ggrems.size) return mapa;
+  try {
+    const versoes = await db.cmedPrecoVersao.findMany({
+      where: { registro: { in: registros } },
+      orderBy: { id: "desc" },
+      select: { codigoGgrem: true, ean: true },
+    });
+    for (const v of versoes) {
+      if (!v.codigoGgrem || !ggrems.has(v.codigoGgrem) || mapa.has(v.codigoGgrem)) continue;
+      if (v.ean.length) mapa.set(v.codigoGgrem, v.ean[0]);
+    }
+  } catch (error) {
+    console.warn("[pesquisa-preco] EAN indisponível:", (error as Error).message);
+  }
+  return mapa;
+}
+
 export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoPesquisa | null> {
   const item = await resolverItem(p.codigo);
   if (!item) return null;
 
   const unidade = normalizarUnidade(p.unidade) || UNIDADE_EMBALAGEM;
   const uf = p.uf ? p.uf.toUpperCase() : null;
+  const escolha = normalizarEscolha(p.escolha, ESCOLHA_PADRAO);
+  const completos = p.registrosCompletos === true;
   const { brutas } = await mapearUnidades(item);
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
 
@@ -965,7 +1069,12 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       fabricante: r.fabricante,
     })),
     bpsRows.length,
-    { fonte: "bps", filtrosNaoSuportados: semCampo("bps"), excluidos: excluidosPorFonte.get("bps") }
+    {
+      fonte: "bps",
+      completos,
+      filtrosNaoSuportados: semCampo("bps"),
+      excluidos: excluidosPorFonte.get("bps"),
+    }
   );
   const analiseSiasg = consolidar(
     totalSiasg,
@@ -988,6 +1097,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     siasgRows.length,
     {
       fonte: "siasg",
+      completos,
       filtrosNaoSuportados: semCampo("siasg"),
       excluidos: excluidosPorFonte.get("siasg"),
     }
@@ -1012,6 +1122,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     pncpRows.length,
     {
       fonte: "pncp",
+      completos,
       filtrosNaoSuportados: semCampo("pncp"),
       excluidos: excluidosPorFonte.get("pncp"),
     }
@@ -1046,13 +1157,17 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
           fabricante: o.fabricante,
         })),
         orcamentos.length,
-        { fonte: "orcamentos", semIqr: true, excluidos: foraDoCalculo }
+        { fonte: "orcamentos", completos, semIqr: true, excluidos: foraDoCalculo }
       )
     : null;
 
   const bps = analiseBps.resultado;
   const siasg = analiseSiasg.resultado;
   const pncp = analisePncp.resultado;
+
+  // EAN só no modo do mapa: vem da lista mensal (CmedPrecoVersao), uma consulta
+  // a mais que a tela não precisa.
+  const eans = completos ? await eansPorApresentacao(cmedRows) : new Map<string, string>();
 
   // CMED: preço por embalagem → por unidade de fornecimento (÷ Qt_Embal).
   const cmedTodos: RegistroCmedPreco[] = cmedRows.map((r) => {
@@ -1071,9 +1186,18 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       produto: r.produto,
       apresentacao: r.apresentacao,
       laboratorio: r.laboratorio,
+      cnpj: r.cnpj,
+      ean: (r.codigoGgrem ? eans.get(r.codigoGgrem) : undefined) ?? null,
+      classeTerapeutica: r.classeTerap,
+      tipoProduto: r.tipoProduto,
+      regimePreco: r.regimePreco,
       unidadeFornecimento: meta?.unidadeFornecimento ?? null,
       qtEmbalagem: qt,
       pmvgEmbalagem: r.pmvgSemImpostos,
+      pmvg0: r.pmvg0,
+      pmvg12: r.pmvg12,
+      pmvg17: r.pmvg17,
+      pmvg18: r.pmvg18,
       pmvgUnitario: porUnidade(r.pmvgSemImpostos),
       pfEmbalagem: r.pf0,
       pfUnitario: porUnidade(r.pf0),
@@ -1150,11 +1274,11 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
 
   // ── Recomendação (IN 65/2021) ──
-  const precoReferencia = consolidado.porFonte.mediana;
-  const limitePmvg = cmed.pmvgUnitMin;
-  const pmvgAplicado =
-    limitePmvg !== null && precoReferencia !== null && precoReferencia > limitePmvg;
-  const precoFinal = pmvgAplicado ? limitePmvg : (precoReferencia ?? limitePmvg);
+  // Método e teto saem de lib/pesquisa-preco-metodo.ts, o mesmo código que a
+  // tela usa para mostrar o efeito de cada escolha antes da emissão.
+  const preco = camposDoPreco(consolidado, cmed, escolha);
+  const { precoReferencia, limitePmvg, precoFinal } = preco;
+  const pmvgAplicado = preco.tetoAplicado;
   const capAplica = cmedRegistros.some((r) => r.cap);
 
   const observacoes: string[] = [];
@@ -1186,7 +1310,12 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   if (pmvgAplicado && precoReferencia !== null && limitePmvg !== null) {
     observacoes.push(
-      `Preço de referência (R$ ${precoReferencia.toFixed(4)}) supera o menor PMVG unitário sem impostos (R$ ${limitePmvg.toFixed(4)}). PMVG aplicado como teto.`
+      `Preço apurado pelo método (${ROTULO_METODO[escolha.metodo].curto.toLowerCase()}, R$ ${precoReferencia.toFixed(4)}) supera o teto CMED (${rotuloRegraTetoCurto(escolha.regraTeto, escolha.aliquota)}, R$ ${limitePmvg.toFixed(4)} por unidade). Teto aplicado.`
+    );
+  }
+  if (escolha.regraTeto === "pmvg_referencia" && preco.teto) {
+    observacoes.push(
+      `Teto pela regra do medicamento de referência: ${preco.teto.produto} (reg. ${preco.teto.registro}) — ${preco.teto.criterio}.`
     );
   }
   if (capAplica) {
@@ -1237,12 +1366,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     orcamentos,
     descartes,
     recomendacao: {
-      precoReferencia,
+      ...preco,
       mediaConsolidada: consolidado.porFonte.media,
       menorConsolidado: consolidado.porFonte.menor,
-      limitePmvg,
-      precoFinal,
-      metodologia: METODO_ADOTADO,
+      metodologia: `${ROTULO_METODO[escolha.metodo].longo} (art. 6º da IN SEGES/ME nº 65/2021); teto = ${rotuloRegraTeto(escolha.regraTeto, escolha.aliquota)} (CMED ÷ Qt_Embal)`,
       fontes,
       observacoes,
     },

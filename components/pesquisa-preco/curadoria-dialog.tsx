@@ -29,6 +29,7 @@ import {
   type OrcamentoFornecedor,
 } from "@/lib/pesquisa-preco-curadoria";
 import { formatarCnpj } from "@/lib/pesquisa-preco-filtros";
+import { fontesDoResultado, type FonteMercadoChave } from "@/lib/pesquisa-preco-fontes";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { apiPath } from "@/lib/url";
 
@@ -62,8 +63,21 @@ const fmtData = (d: string | null) => (d ? new Date(d).toLocaleDateString("pt-BR
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 
-/** Fontes com registros individuais a curar — orçamentos têm aba própria. */
-const FONTES_REGISTROS: Exclude<FonteCurada, "orcamentos">[] = ["bps", "siasg", "pncp", "cmed"];
+/** Fonte com registros individuais a curar nesta aba. */
+type FonteRegistros = FonteMercadoChave | "cmed";
+
+/**
+ * Fontes consultadas em base que vieram na pesquisa, mais a CMED. Os preços
+ * informados pelo responsável (orçamentos e afins) têm aba própria.
+ */
+function fontesRegistros(base: ResultadoPesquisa): FonteRegistros[] {
+  return [
+    ...fontesDoResultado(base)
+      .filter((f) => !f.info.informado)
+      .map((f) => f.fonte),
+    "cmed",
+  ];
+}
 
 /** Linha exibida na curadoria, no formato comum às quatro fontes. */
 interface LinhaCuradoria {
@@ -78,10 +92,7 @@ interface LinhaCuradoria {
   desvio: number | null;
 }
 
-function linhasDaFonte(
-  base: ResultadoPesquisa,
-  fonte: Exclude<FonteCurada, "orcamentos">
-): LinhaCuradoria[] {
+function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCuradoria[] {
   const relativo = (preco: number, mediana: number | null) =>
     mediana && mediana > 0 ? ((preco - mediana) / mediana) * 100 : null;
 
@@ -105,6 +116,7 @@ function linhasDaFonte(
   }
 
   const dados = base.resultados[fonte];
+  if (!dados) return [];
   const mediana = dados.estatisticas.mediana;
   return dados.registros.map((r) => ({
     id: r.id,
@@ -232,7 +244,7 @@ function AbaRegistros({
 
   const porFonte = useMemo(
     () =>
-      FONTES_REGISTROS.map((fonte) => ({
+      fontesRegistros(base).map((fonte) => ({
         fonte,
         // Maior desvio primeiro: é o que a IN manda examinar, e evita rolar
         // uma lista de 150 linhas atrás do valor que destoa.

@@ -97,15 +97,34 @@ export function limitesIqr(valores: number[]): { lo: number; hi: number } | null
 
 // ── 2. Exclusão justificada de registros ─────────────────────────────────────
 
-/** Fontes cujos registros individuais podem ser desconsiderados. */
-export type FonteCurada = "bps" | "siasg" | "pncp" | "cmed" | "orcamentos";
+/**
+ * Fontes cujos registros individuais podem ser desconsiderados. As de mercado
+ * seguem a ordem dos incisos do art. 5º (ver lib/pesquisa-preco-fontes.ts);
+ * a CMED é o teto regulatório, tratada à parte.
+ */
+export type FonteCurada =
+  | "comprasgov"
+  | "bps"
+  | "siasg"
+  | "pncp"
+  | "arp"
+  | "similar"
+  | "midia"
+  | "orcamentos"
+  | "notaFiscal"
+  | "cmed";
 
 export const NOME_FONTE_CURADA: Record<FonteCurada, string> = {
+  comprasgov: "Compras.gov.br (Painel de Preços)",
   bps: "BPS",
   siasg: "SIASG (judicial)",
   pncp: "PNCP",
-  cmed: "CMED/ANVISA",
+  arp: "Ata de registro de preços",
+  similar: "Contratação similar informada",
+  midia: "Mídia especializada / sítio eletrônico",
   orcamentos: "Orçamento direto de fornecedor",
+  notaFiscal: "Nota fiscal eletrônica",
+  cmed: "CMED/ANVISA",
 };
 
 const FONTES_CURADAS = Object.keys(NOME_FONTE_CURADA) as FonteCurada[];

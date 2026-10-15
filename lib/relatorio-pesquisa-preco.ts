@@ -1,5 +1,11 @@
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
 import { NOME_FONTE_CURADA } from "@/lib/pesquisa-preco-curadoria";
+import {
+  ROTULO_METODO,
+  rotuloRegraTeto,
+  rotuloRegraTetoCurto,
+  type TetoCmed,
+} from "@/lib/pesquisa-preco-metodo";
 import type {
   Estatisticas,
   FonteMercadoResultado,
@@ -174,7 +180,15 @@ export function conteudoEspecificacao(resultado: ResultadoPesquisa, especificaca
       </table>`;
 }
 
-export function conteudoMetodo(): string {
+/**
+ * `metodoUnico`/`tetoUnico`: o método e a regra do teto quando valem para o
+ * documento inteiro (relatório de um item, ou cesta com a mesma escolha em
+ * todos os itens); ausentes, o texto remete ao detalhamento de cada item.
+ */
+export function conteudoMetodo(
+  metodoUnico?: keyof typeof ROTULO_METODO | null,
+  tetoUnico?: string | null
+): string {
   return `<p style="font-size:11px;margin-bottom:6px;">A pesquisa foi realizada em conformidade com o art. 5º da IN SEGES/ME nº 65/2021, a partir do código CATMAT e da unidade de fornecimento do item, consultando as seguintes bases de dados oficiais:</p>
       <ul style="padding-left:18px;font-size:11px;line-height:1.8;">
         <li><strong>CMED/ANVISA</strong> — Câmara de Regulação do Mercado de Medicamentos: preço máximo de venda ao governo (PMVG) como teto regulatório obrigatório, convertido da embalagem para a unidade de fornecimento pela quantidade por embalagem (Qt_Embal) do registro ANVISA.</li>
@@ -183,7 +197,17 @@ export function conteudoMetodo(): string {
         <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT).</li>
         <li><strong>Orçamento direto de fornecedor</strong> (art. 5º, IV) — propostas apresentadas diretamente ao órgão, quando juntadas ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
-      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. O preço de referência adotado é a mediana das medianas apuradas por fonte, critério que impede que a base com mais registros determine sozinha o resultado. Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º).</p>`;
+      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. ${
+        metodoUnico
+          ? `O preço de referência adotado é o seguinte: <strong>${esc(ROTULO_METODO[metodoUnico].longo.toLowerCase())}</strong>${
+              metodoUnico === "mediana_medianas"
+                ? ", critério que impede que a base com mais registros determine sozinha o resultado"
+                : ""
+            }.`
+          : "O método de cada item consta do respectivo detalhamento."
+      } Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º)${
+        tetoUnico ? `, pela regra do <strong>${esc(tetoUnico)}</strong>` : ""
+      }.</p>`;
 }
 
 /** "EMS — Genérico" / "—" quando a base não registra marca nem fabricante. */
@@ -289,10 +313,18 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
           : ""
       }</p>
       <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        ${estatBox("PMVG unitário mínimo (sem impostos)", fmtBRL(cmed.pmvgUnitMin), true)}
+        ${estatBox("PMVG unitário mínimo (sem impostos)", fmtBRL(cmed.pmvgUnitMin), resultado.recomendacao.escolha.regraTeto === "menor_pmvg_sem_impostos")}
+        ${estatBox(
+          `PMVG ${resultado.recomendacao.escolha.aliquota}% do medicamento de referência (unit.)`,
+          fmtBRL(resultado.recomendacao.tetos.referencia?.valorUnitario ?? null),
+          resultado.recomendacao.escolha.regraTeto === "pmvg_referencia"
+        )}
         ${estatBox("PMVG unitário máximo (sem impostos)", fmtBRL(cmed.pmvgUnitMax))}
         ${capAplica ? estatBox("Desconto CAP obrigatório", "21,53% sobre PF", true) : ""}
       </div>
+      <p style="font-size:10px;color:#444;margin-bottom:8px;">Teto adotado neste item: <strong>${esc(
+        rotuloRegraTeto(resultado.recomendacao.escolha.regraTeto, resultado.recomendacao.escolha.aliquota)
+      )}</strong>${descricaoTeto(resultado.recomendacao.teto)}. O outro teto aparece acima para comparação (destaque = regra adotada).</p>
       ${tabela(considerados.slice(0, 10), [
         { label: "Registro", fn: (r) => esc(r.registro) },
         { label: "Produto / Apresentação", fn: (r) => `${esc(r.produto || "—")} / ${esc(r.apresentacao || "—")}` },
@@ -338,6 +370,15 @@ export function conteudoPncp(resultado: ResultadoPesquisa): string {
   );
 }
 
+/** ": REVOLADE (reg. 1006811320035), Novartis — R$ 4.094,06 ÷ 14". */
+export function descricaoTeto(t: TetoCmed | null): string {
+  if (!t) return " (não há PMVG vigente para formar o teto)";
+  return ` — ${esc(t.produto)} (reg. ${esc(t.registro)})${t.laboratorio ? `, ${esc(t.laboratorio)}` : ""}: ${fmtBRL(
+    t.valorEmbalagem,
+    2
+  )} ÷ ${t.qtEmbalagem} = ${fmtBRL(t.valorUnitario)} por unidade`;
+}
+
 /** true quando o preço de mercado ficou acima do teto PMVG e o teto prevaleceu. */
 export function pmvgFoiAplicado(resultado: ResultadoPesquisa): boolean {
   const { limitePmvg, precoReferencia } = resultado.recomendacao;
@@ -360,6 +401,8 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
   const linhas = consolidado.fontes;
   const pmvgAplicado = pmvgFoiAplicado(resultado);
   const { porFonte, porRegistro } = consolidado;
+  const metodo = recomendacao.escolha.metodo;
+  const porFonteAdotado = metodo === "mediana_medianas";
 
   const linhaConsolidada = (
     rotulo: string,
@@ -419,24 +462,28 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           "CONSOLIDADO POR FONTE",
           `cada fonte pesa igual — cálculo sobre as ${porFonte.n} mediana(s) apurada(s) acima`,
           porFonte,
-          true
+          porFonteAdotado
         )}
         ${linhaConsolidada(
           "CONSOLIDADO POR REGISTRO",
           "cada compra pesa igual — todos os registros depurados reunidos num conjunto único",
           porRegistro,
-          false
+          !porFonteAdotado
         )}
       </tbody>
     </table>
     <p style="font-size:10px;color:#444;margin-bottom:12px;">
-      <strong>Como ler os consolidados.</strong> O <strong>consolidado por fonte</strong> trata cada base como um voto: as estatísticas incidem sobre as medianas apuradas em cada fonte, de modo que uma base com milhares de registros não sobrepuja outra com poucos. É dele que sai o preço adotado — a <strong>mediana das medianas, ${fmtBRL(recomendacao.precoReferencia)}</strong>. O <strong>consolidado por registro</strong> reúne todos os registros depurados num conjunto único, em que cada compra pesa igual; serve de contraprova da ordem de grandeza, e não como preço de referência, porque a base mais numerosa domina o resultado. Os três métodos do art. 6º estão apresentados em ambos.
+      <strong>Como ler os consolidados.</strong> O <strong>consolidado por fonte</strong> trata cada base como um voto: as estatísticas incidem sobre as medianas apuradas em cada fonte, de modo que uma base com milhares de registros não sobrepuja outra com poucos. O <strong>consolidado por registro</strong> reúne todos os registros depurados num conjunto único, em que cada compra pesa igual; nele, a base mais numerosa domina o resultado. ${
+        porFonteAdotado
+          ? `O preço adotado sai do consolidado por fonte — a <strong>mediana das medianas, ${fmtBRL(recomendacao.precoReferencia)}</strong> —, e o consolidado por registro serve de contraprova da ordem de grandeza.`
+          : `Neste item, o preço adotado sai do consolidado por registro — <strong>${esc(ROTULO_METODO[metodo].longo.toLowerCase())}, ${fmtBRL(recomendacao.precoReferencia)}</strong> —, e o consolidado por fonte serve de contraprova.`
+      } Os três métodos do art. 6º estão apresentados em ambos.
     </p>
     <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
       <tbody>
         <tr style="background:#eef2f7;">
           ${td(
-            `<strong>Preço de referência adotado</strong> — mediana das medianas por fonte (art. 6º, caput)`
+            `<strong>Preço de referência adotado</strong> — ${esc(ROTULO_METODO[metodo].longo.toLowerCase())} (art. 6º)`
           )}
           ${td(
             `<strong style="color:${AZUL};font-size:13px;">${fmtBRL(recomendacao.precoReferencia)}</strong>`,
@@ -448,7 +495,9 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
             ? `
         <tr style="background:#fef3cd;">
           ${td(
-            "⚠ Preço de mercado superior ao PMVG unitário — aplicado PMVG sem impostos ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)"
+            `⚠ Preço de mercado superior ao teto CMED — aplicado o ${esc(
+              rotuloRegraTetoCurto(recomendacao.escolha.regraTeto, recomendacao.escolha.aliquota)
+            )} ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)`
           )}
           ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
@@ -458,7 +507,11 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           recomendacao.precoReferencia === null && recomendacao.limitePmvg !== null
             ? `
         <tr style="background:#fef3cd;">
-          ${td("Sem preço apurado nas fontes consultadas — adotado o menor PMVG unitário sem impostos (CMED)")}
+          ${td(
+            `Sem preço apurado nas fontes consultadas — adotado o teto CMED (${esc(
+              rotuloRegraTetoCurto(recomendacao.escolha.regraTeto, recomendacao.escolha.aliquota)
+            )} por unidade)`
+          )}
           ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
             : ""

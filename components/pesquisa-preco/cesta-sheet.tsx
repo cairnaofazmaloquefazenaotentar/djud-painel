@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  FileSpreadsheet,
   FileText,
   ListChecks,
   Loader2,
@@ -15,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -47,6 +51,8 @@ import {
 } from "@/hooks/useCesta";
 import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
+import { CamposEscolhaPreco } from "@/components/pesquisa-preco/escolha-preco";
+import { ESCOLHA_PADRAO_MAPA, type EscolhaPreco } from "@/lib/pesquisa-preco-metodo";
 import type { CestaItemDTO } from "@/lib/cesta";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { apiPath } from "@/lib/url";
@@ -273,6 +279,70 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
   );
 }
 
+// ── Escolha por item na emissão ──────────────────────────────────────────────
+
+/** Ajuste de um item na modal: escolha própria e/ou justificativa editada. */
+interface AjusteItem {
+  escolha: EscolhaPreco | null;
+  justificativa: string;
+}
+
+function AjusteDoItem({
+  item,
+  escolhaGeral,
+  ajuste,
+  onChange,
+}: {
+  item: CestaItemDTO;
+  escolhaGeral: EscolhaPreco;
+  ajuste: AjusteItem | undefined;
+  onChange: (a: AjusteItem) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const atual: AjusteItem = ajuste ?? { escolha: null, justificativa: "" };
+  const personalizado = atual.escolha !== null || atual.justificativa.trim() !== "";
+  return (
+    <div className="rounded-md border p-2 space-y-2">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 text-left text-xs"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+      >
+        <span className="min-w-0 truncate font-medium">{item.descricao}</span>
+        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          {personalizado && <Badge variant="secondary" className="h-4 text-[10px]">ajustado</Badge>}
+          {aberto ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {aberto && (
+        <div className="space-y-2">
+          <CamposEscolhaPreco
+            valor={atual.escolha ?? escolhaGeral}
+            onChange={(e) => onChange({ ...atual, escolha: e })}
+            idPrefixo={`cesta-${item.id}`}
+          />
+          <Textarea
+            className="min-h-16 text-xs"
+            placeholder="Justificativa do preço adotado — em branco, o painel gera o texto com os números da emissão."
+            value={atual.justificativa}
+            onChange={(e) => onChange({ ...atual, justificativa: e.target.value })}
+          />
+          {atual.escolha && (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => onChange({ ...atual, escolha: null })}
+            >
+              usar a escolha geral
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Painel ────────────────────────────────────────────────────────────────────
 
 export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean }) {
@@ -288,12 +358,59 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
     processo: "",
     limparCesta: true,
   });
+  // Método e teto (P11/P12): uma escolha geral e ajustes por item. O HTML e o
+  // mapa XLSX emitidos por esta modal mandam a mesma escolha.
+  const [escolhaGeral, setEscolhaGeral] = useState<EscolhaPreco>(ESCOLHA_PADRAO_MAPA);
+  const [ajustes, setAjustes] = useState<Record<string, AjusteItem>>({});
+  const [gerandoXlsx, setGerandoXlsx] = useState(false);
 
   const { data: cesta, isLoading, error } = useCesta();
   const esvaziar = useEsvaziarCesta();
 
-  const itens = cesta?.itens ?? [];
+  const itens = useMemo(() => cesta?.itens ?? [], [cesta?.itens]);
   const total = cesta?.total ?? 0;
+
+  const corpoEmissao = useCallback(
+    () => ({
+      ...meta,
+      escolhas: Object.fromEntries(
+        itens.map((i) => {
+          const a = ajustes[i.id];
+          return [i.id, { ...(a?.escolha ?? escolhaGeral), justificativa: a?.justificativa.trim() || null }];
+        })
+      ),
+    }),
+    [ajustes, escolhaGeral, itens, meta]
+  );
+
+  const gerarXlsx = useCallback(async () => {
+    setGerandoXlsx(true);
+    setErroRelatorio(null);
+    try {
+      const res = await fetch(apiPath("/api/relatorios/cesta/xlsx"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoEmissao()),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Erro ao gerar o mapa comparativo da cesta");
+      }
+      const nome =
+        /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ??
+        `Mapa_comparativo_de_Precos_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = nome;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErroRelatorio(e instanceof Error ? e.message : "Erro ao gerar o mapa comparativo");
+    } finally {
+      setGerandoXlsx(false);
+    }
+  }, [corpoEmissao]);
 
   const gerarRelatorio = useCallback(async () => {
     // Abre a janela antes do await para o bloqueador de pop-up não interferir.
@@ -304,7 +421,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
       const res = await fetch(apiPath("/api/relatorios/cesta"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(meta),
+        body: JSON.stringify(corpoEmissao()),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -324,7 +441,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
     } finally {
       setGerando(false);
     }
-  }, [meta]);
+  }, [corpoEmissao, meta.limparCesta]);
 
   return (
     <>
@@ -468,7 +585,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
 
       {/* Metadados do relatório consolidado */}
       <Dialog open={modalRelatorio} onOpenChange={setModalRelatorio}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Relatório consolidado da cesta</DialogTitle>
           </DialogHeader>
@@ -513,6 +630,25 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                 onChange={(e) => setMeta((m) => ({ ...m, processo: e.target.value }))}
               />
             </div>
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs font-medium">Preço adotado — todos os itens</p>
+              <CamposEscolhaPreco valor={escolhaGeral} onChange={setEscolhaGeral} idPrefixo="cesta-geral" />
+              <p className="text-[11px] text-muted-foreground">
+                Para mudar o método, o teto ou escrever a justificativa de um item, abra-o abaixo. Sem
+                justificativa escrita, o painel gera o texto com os números da emissão.
+              </p>
+              <div className="space-y-1.5">
+                {itens.map((i) => (
+                  <AjusteDoItem
+                    key={i.id}
+                    item={i}
+                    escolhaGeral={escolhaGeral}
+                    ajuste={ajustes[i.id]}
+                    onChange={(a) => setAjustes((atual) => ({ ...atual, [i.id]: a }))}
+                  />
+                ))}
+              </div>
+            </div>
             <label className="flex items-start gap-2 rounded-md border bg-muted/30 p-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -521,9 +657,10 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                 onChange={(e) => setMeta((m) => ({ ...m, limparCesta: e.target.checked }))}
               />
               <span className="text-xs">
-                <span className="font-medium">Esvaziar a cesta depois de gerar</span>
+                <span className="font-medium">Esvaziar a cesta depois de gerar o PDF</span>
                 <span className="block text-muted-foreground">
-                  Desmarque para manter os itens e gerar o relatório outra vez mais tarde.
+                  Desmarque para manter os itens e gerar o relatório outra vez mais tarde. O mapa
+                  comparativo (XLSX) nunca esvazia a cesta: gere-o antes do PDF.
                 </span>
               </span>
             </label>
@@ -536,11 +673,24 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
             </p>
           )}
 
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={() => setModalRelatorio(false)} disabled={gerando}>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => setModalRelatorio(false)} disabled={gerando || gerandoXlsx}>
               Cancelar
             </Button>
-            <Button onClick={gerarRelatorio} disabled={gerando || total === 0}>
+            <Button variant="outline" onClick={gerarXlsx} disabled={gerando || gerandoXlsx || total === 0}>
+              {gerandoXlsx ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Gerando…
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Mapa comparativo (XLSX)
+                </>
+              )}
+            </Button>
+            <Button onClick={gerarRelatorio} disabled={gerando || gerandoXlsx || total === 0}>
               {gerando ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

@@ -149,7 +149,7 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   (`Estatisticas` em `lib/pesquisa-preco-curadoria.ts`). Painel e relatório exibem os três.
 - Dois **consolidados**, porque respondem a perguntas diferentes e o relatório explica isso:
   - `porFonte` — cada base pesa igual; estatísticas sobre o vetor das medianas das fontes.
-    É daqui que sai o preço adotado (**mediana das medianas**, `METODO_ADOTADO`).
+    É daqui que sai o preço adotado no padrão do painel (**mediana das medianas**).
   - `porRegistro` — cada compra pesa igual; todos os registros depurados num conjunto único.
     Contraprova da ordem de grandeza, nunca preço adotado: a base mais numerosa domina.
 - **Exclusão justificada** de registros antes da emissão (art. 6º, §§ 1º e 2º): a
@@ -168,6 +168,44 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   pesquisa avulsa (estado efêmero, enviado junto com o relatório) quanto por item da cesta
   (gravado). A prévia do impacto é recalculada **no servidor** (`POST /api/precos/buscar`),
   nunca no navegador: o número exibido tem de ser o mesmo que sai impresso.
+
+### Método do preço adotado e teto CMED (P11/P12 da avaliação da DLOG)
+
+- `lib/pesquisa-preco-metodo.ts` (módulo puro): `adotarPreco`/`camposDoPreco` montam a
+  recomendação a partir do consolidado que a pesquisa já apurou — o servidor
+  (`pesquisarPrecos`, parâmetro `escolha`) e a prévia da tela usam a MESMA função.
+- Métodos: mediana das medianas (padrão), **critério DLOG** (menor entre média e mediana do
+  conjunto único), média, mediana ou menor valor do conjunto único.
+- Tetos (os dois aparecem na tela, no HTML e no mapa): menor PMVG sem impostos por unidade
+  (padrão do painel) ou **PMVG da alíquota (padrão 17%) do medicamento de referência**
+  (critério DLOG = maior teto). Referência = `tipoProduto` "Novo" ou "Biológico"; havendo
+  vários, o de maior PMVG; nenhum, o maior PMVG da lista.
+- A modal de emissão pré-seleciona `ESCOLHA_PADRAO_MAPA` (método do painel + teto da DLOG) e
+  manda a mesma escolha para o HTML e para o XLSX: os dois documentos trazem o mesmo preço.
+  Sem escolha no pedido, o HTML usa `ESCOLHA_PADRAO` (padrão do painel).
+- Justificativa do preço (`lib/mapa-dlog/justificativa.ts`, pura) gerada dos números; editável
+  na modal (o `AuditLog` registra a edição).
+
+### Mapa comparativo no modelo da DLOG (XLSX)
+
+- Rotas `POST /api/relatorios/pesquisa-preco/xlsx` (avulsa, + `quantidade`) e
+  `POST /api/relatorios/cesta/xlsx` (cesta; **não** esvazia a cesta). Gravam `AuditLog`
+  (com o SHA-256 do arquivo) e `RelatorioGerado` (`lib/relatorio-registro.ts`), como as
+  rotas HTML agora também gravam.
+- `lib/mapa-dlog/`: `layout.ts` (abas, os 24 cabeçalhos A–X com o texto da DLOG, larguras,
+  formatos e a **paleta da DLOG — única exceção aos tokens**, o XLSX não lê CSS), `dados.ts`
+  (puro: ResultadoPesquisa → linhas A–Y), `gerar.ts` (servidor, `exceljs`), `meta.ts`.
+  `exceljs` nunca em módulo importado por página client.
+- **Um cálculo só**: o gerador lê o `ResultadoPesquisa` (modo `registrosCompletos`, a amostra
+  inteira) e nunca recalcula preço. As fórmulas (sobre a coluna auxiliar AA = X quando
+  "Compõe = Sim") reproduzem o cálculo para auditoria e são gravadas com o resultado.
+  `scripts/conferir_mapa_dlog.py --gerado X.xlsx [--modelo DLOG.xlsx] [--painel r.json]` confere
+  estrutura, fórmulas e números (sai com 1 se houver erro).
+- Abas: Consolidação · MEMÓRIA DE CÁLCULO · Item n · Índices IPCA · CMED · Parâmetros. O que o
+  painel acrescenta fica à direita (Y em diante) ou abaixo; colunas auxiliares agrupadas e
+  recolhidas.
+- `processarItens` (concorrência 4) fica em `lib/pesquisa-preco-processar.ts`: o HTML e o
+  XLSX da cesta fazem uma apuração só por emissão.
 
 ### Cesta de itens (carrinho)
 

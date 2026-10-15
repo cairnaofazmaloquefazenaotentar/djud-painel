@@ -6,7 +6,18 @@ import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
 import { listarCesta, type CestaItemDTO } from "@/lib/cesta";
 import { relatorioCestaSchema } from "@/lib/cesta-schemas";
-import { pesquisarPrecos, type ResultadoPesquisa } from "@/lib/pesquisa-preco";
+import {
+  ESCOLHA_PADRAO,
+  ROTULO_METODO,
+  normalizarEscolha,
+  rotuloRegraTeto,
+  type EscolhaPreco,
+  type ResultadoPesquisa,
+} from "@/lib/pesquisa-preco";
+import { processarItens } from "@/lib/pesquisa-preco-processar";
+import { escolhaExplicita, type EscolhaItemInput } from "@/lib/relatorio-schemas";
+import { gerarJustificativa } from "@/lib/mapa-dlog/justificativa";
+import { registrarRelatorio } from "@/lib/relatorio-registro";
 import {
   AZUL,
   blocoAssinaturas,
@@ -41,59 +52,56 @@ import { NextRequest, NextResponse } from "next/server";
 // único documento, com quadro-resumo, valor global e o detalhamento por fonte
 // de cada item.
 //
-// A pesquisa de CADA item é refeita na emissão: o preço que instrui o processo
-// é o da data do relatório, não o snapshot guardado quando o item entrou na
-// cesta. Por isso o limite de itens (MAX_ITENS_CESTA) e a execução com
-// concorrência limitada.
+// A pesquisa de CADA item é refeita na emissão (lib/pesquisa-preco-processar):
+// o preço que instrui o processo é o da data do relatório, não o snapshot
+// guardado quando o item entrou na cesta. Por isso o limite de itens
+// (MAX_ITENS_CESTA) e a execução com concorrência limitada.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const CONCORRENCIA = 4;
 
 interface ItemProcessado {
   cesta: CestaItemDTO;
   resultado: ResultadoPesquisa | null;
   /** precoFinal recalculado × quantidade; null quando não há preço. */
   valorTotal: number | null;
+  /** Justificativa do preço adotado — a editada na emissão ou a gerada. */
+  justificativa: string;
 }
 
-async function processarItens(itens: CestaItemDTO[]): Promise<ItemProcessado[]> {
-  const saida: ItemProcessado[] = new Array(itens.length);
-  let cursor = 0;
+async function apurarCesta(
+  itens: CestaItemDTO[],
+  escolhas: Record<string, EscolhaItemInput>
+): Promise<ItemProcessado[]> {
+  const apurados = await processarItens(itens, (cesta) => ({
+    codigo: cesta.codigo,
+    unidade: cesta.unidade,
+    uf: cesta.uf,
+    // A pesquisa é refeita, mas a curadoria do item é reaplicada: as
+    // exclusões justificadas e os orçamentos juntados são decisão do
+    // responsável, não resultado de consulta, e não caducam com ela.
+    exclusoes: cesta.exclusoes,
+    orcamentos: cesta.orcamentos,
+    escolha: normalizarEscolha(escolhas[cesta.id], ESCOLHA_PADRAO),
+  }));
+  return apurados.map(({ item: cesta, resultado }) => {
+    const precoFinal = resultado?.recomendacao.precoFinal ?? null;
+    const editada = escolhas[cesta.id]?.justificativa?.trim();
+    return {
+      cesta,
+      resultado,
+      valorTotal: precoFinal === null ? null : precoFinal * cesta.quantidade,
+      justificativa: editada || (resultado ? gerarJustificativa(resultado) : ""),
+    };
+  });
+}
 
-  async function worker() {
-    for (;;) {
-      const i = cursor;
-      cursor += 1;
-      if (i >= itens.length) return;
-      const cesta = itens[i];
-      let resultado: ResultadoPesquisa | null = null;
-      try {
-        resultado = await pesquisarPrecos({
-          codigo: cesta.codigo,
-          unidade: cesta.unidade,
-          uf: cesta.uf,
-          // A pesquisa é refeita, mas a curadoria do item é reaplicada: as
-          // exclusões justificadas e os orçamentos juntados são decisão do
-          // responsável, não resultado de consulta, e não caducam com ela.
-          exclusoes: cesta.exclusoes,
-          orcamentos: cesta.orcamentos,
-        });
-      } catch (error) {
-        console.error("[relatorios/cesta] falha ao pesquisar", cesta.codigo, error);
-      }
-      const precoFinal = resultado?.recomendacao.precoFinal ?? null;
-      saida[i] = {
-        cesta,
-        resultado,
-        valorTotal: precoFinal === null ? null : precoFinal * cesta.quantidade,
-      };
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(CONCORRENCIA, itens.length) }, () => worker())
-  );
-  return saida;
+/** Método e teto comuns a todos os itens, para o texto da seção de método. */
+function escolhaComum(processados: ItemProcessado[]): EscolhaPreco | null {
+  const escolhas = processados
+    .map((p) => p.resultado?.recomendacao.escolha)
+    .filter((e): e is EscolhaPreco => !!e);
+  if (!escolhas.length) return null;
+  const chave = (e: EscolhaPreco) => `${e.metodo}|${e.regraTeto}|${e.aliquota}`;
+  return escolhas.every((e) => chave(e) === chave(escolhas[0])) ? escolhas[0] : null;
 }
 
 // ── Blocos próprios do relatório de cesta ────────────────────────────────────
@@ -107,7 +115,7 @@ function globaisPorMetodo(processados: ItemProcessado[]) {
     }, 0);
   return {
     media: somar((p) => p.resultado?.consolidado.porFonte.media),
-    mediana: somar((p) => p.resultado?.recomendacao.precoFinal),
+    adotado: somar((p) => p.resultado?.recomendacao.precoFinal),
     menor: somar((p) => p.resultado?.consolidado.porFonte.menor),
   };
 }
@@ -131,8 +139,11 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
     { label: "Qtd.", fn: (p) => p.cesta.quantidade.toLocaleString("pt-BR"), right: true },
     { label: "Média unit.", fn: (p) => preco(p, (r) => r.consolidado.porFonte.media), right: true },
     {
-      label: "Mediana unit. (adotada)",
-      fn: (p) => `<strong>${preco(p, (r) => r.recomendacao.precoFinal)}</strong>`,
+      label: "Preço adotado unit.",
+      fn: (p) =>
+        `<strong>${preco(p, (r) => r.recomendacao.precoFinal)}</strong>${
+          p.resultado ? `<br/><span style="color:#666;font-size:9px;">${esc(p.resultado.recomendacao.descricaoMetodo)}</span>` : ""
+        }`,
       right: true,
     },
     { label: "Menor unit.", fn: (p) => preco(p, (r) => r.consolidado.porFonte.menor), right: true },
@@ -146,7 +157,7 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
   const globais = globaisPorMetodo(processados);
 
   return `
-    <p style="font-size:11px;margin-bottom:8px;">A cesta reúne <strong>${processados.length}</strong> item(ns). Os preços unitários de cada linha são os apurados na data de emissão deste relatório, conforme a metodologia da seção anterior, nos três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor, todos consolidados por fonte. O <strong>valor total</strong> de cada item usa o método adotado pelo painel (mediana) multiplicado pela quantidade demandada; o teto PMVG da CMED prevalece quando o preço de mercado o supera.</p>
+    <p style="font-size:11px;margin-bottom:8px;">A cesta reúne <strong>${processados.length}</strong> item(ns). Os preços unitários de cada linha são os apurados na data de emissão deste relatório, conforme a metodologia da seção anterior: a média e o menor valor consolidados por fonte, para comparação, e o <strong>preço adotado</strong> pelo método escolhido para o item (indicado abaixo do valor). O <strong>valor total</strong> de cada item é o preço adotado multiplicado pela quantidade demandada; o teto PMVG da CMED prevalece quando o preço de mercado o supera.</p>
     ${linhas}
     <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;">
       <tr>
@@ -154,7 +165,7 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
         <td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">${fmtBRL(globais.media, 2)}</td>
       </tr>
       <tr style="background:#eef2f7;">
-        <td style="border:1px solid ${AZUL};padding:8px 10px;font-weight:bold;color:${AZUL};">VALOR GLOBAL ESTIMADO DA CESTA — método adotado (<strong>mediana</strong>)</td>
+        <td style="border:1px solid ${AZUL};padding:8px 10px;font-weight:bold;color:${AZUL};">VALOR GLOBAL ESTIMADO DA CESTA — <strong>preço adotado</strong> de cada item</td>
         <td style="border:1px solid ${AZUL};padding:8px 10px;text-align:right;font-weight:bold;font-size:16px;color:${AZUL};">${fmtBRL(valorGlobal, 2)}</td>
       </tr>
       <tr>
@@ -162,7 +173,7 @@ function quadroResumo(processados: ItemProcessado[], valorGlobal: number, semPre
         <td style="border:1px solid #ccc;padding:6px 10px;text-align:right;">${fmtBRL(globais.menor, 2)}</td>
       </tr>
     </table>
-    <p style="font-size:10px;color:#444;margin-top:6px;">Os três valores globais acima decorrem das mesmas bases e dos mesmos parâmetros de pesquisa; diferem apenas no método de estimativa aplicado sobre os preços coletados. São apresentados para permitir a comparação exigida pelo art. 6º — a adoção de método diverso da mediana depende de justificativa nos autos.</p>
+    <p style="font-size:10px;color:#444;margin-top:6px;">Os três valores globais acima decorrem das mesmas bases e dos mesmos parâmetros de pesquisa; diferem apenas no método de estimativa aplicado sobre os preços coletados. São apresentados para permitir a comparação exigida pelo art. 6º; o método adotado em cada item consta, com a justificativa, do respectivo detalhamento.</p>
     ${
       semPreco > 0
         ? `<p style="font-size:10px;color:#c0392b;margin-top:6px;"><strong>Atenção:</strong> ${semPreco} item(ns) sem preço apurado nas bases consultadas não compõem os valores globais. Recomenda-se juntar orçamento direto de fornecedor (art. 5º, IV) para esses itens.</p>`
@@ -205,6 +216,8 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     </table>
     ${pmvgAplicado ? `<p style="font-size:10px;color:#c0392b;margin-bottom:4px;">* Teto PMVG aplicado — preço de mercado acima do limite regulatório ANVISA/CMED.</p>` : ""}
     ${capAplica ? `<p style="font-size:10px;color:#c0392b;margin-bottom:4px;">* Produto sujeito a desconto CAP de 21,53% sobre o PF nas aquisições não judiciais.</p>` : ""}
+    <p style="font-size:10px;margin-bottom:4px;"><strong>Método:</strong> ${esc(ROTULO_METODO[r.recomendacao.escolha.metodo].longo)} · <strong>Teto:</strong> ${esc(rotuloRegraTeto(r.recomendacao.escolha.regraTeto, r.recomendacao.escolha.aliquota))}</p>
+    <p style="font-size:10px;margin-bottom:6px;"><strong>Justificativa do preço adotado:</strong> ${esc(p.justificativa)}</p>
     ${p.cesta.observacao ? `<p style="font-size:10px;margin-bottom:6px;"><strong>Observação do solicitante:</strong> ${esc(p.cesta.observacao)}</p>` : ""}`;
 
   const detalhe = `
@@ -295,7 +308,16 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
       "Identificação do Objeto",
       `<p style="font-size:11px;">O presente relatório tem por objeto a pesquisa de preços para aquisição de <strong>${processados.length} item(ns)</strong> relacionados no quadro-resumo da seção 3, conforme demanda constante no processo identificado acima. Cada item foi pesquisado individualmente pelo respectivo código (CATMAT ou registro ANVISA) e unidade de fornecimento.</p>`
     ),
-    secao(2, "Método de Pesquisa de Preços", conteudoMetodo()),
+    secao(
+      2,
+      "Método de Pesquisa de Preços",
+      (() => {
+        const comum = escolhaComum(processados);
+        return comum
+          ? conteudoMetodo(comum.metodo, rotuloRegraTeto(comum.regraTeto, comum.aliquota))
+          : conteudoMetodo();
+      })()
+    ),
     secao(3, "Quadro-Resumo dos Itens e Valor Global", quadroResumo(processados, valorGlobal, semPreco)),
     secao(4, "Detalhamento por Item", processados.map(detalhamentoItem).join("\n")),
     secao(5, "Conclusão, Recomendação, Validade e Responsável", conclusao),
@@ -331,7 +353,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { responsavel, cargo, orgao, processo, limparCesta } = parsed.data;
+    const { responsavel, cargo, orgao, processo, limparCesta, escolhas } = parsed.data;
 
     const cesta = await listarCesta(userId);
     if (cesta.itens.length === 0) {
@@ -342,7 +364,7 @@ export async function POST(request: NextRequest) {
     }
 
     const geradoEm = new Date();
-    const processados = await processarItens(cesta.itens);
+    const processados = await apurarCesta(cesta.itens, escolhas);
     const html = gerarHTML(processados, { responsavel, cargo, orgao, processo, geradoEm });
 
     const valorGlobal = processados.reduce((s, p) => s + (p.valorTotal ?? 0), 0);
@@ -385,6 +407,9 @@ export async function POST(request: NextRequest) {
             uf: p.cesta.uf,
             quantidade: p.cesta.quantidade,
             precoFinal: p.resultado?.recomendacao.precoFinal ?? null,
+            escolha: p.resultado?.recomendacao.escolha ?? null,
+            escolhaExplicita: escolhaExplicita(escolhas[p.cesta.id]),
+            justificativaEditada: !!escolhas[p.cesta.id]?.justificativa?.trim(),
             mediaConsolidada: p.resultado?.recomendacao.mediaConsolidada ?? null,
             menorConsolidado: p.resultado?.recomendacao.menorConsolidado ?? null,
             // Rastreabilidade fora do documento: quem descartou o quê e por quê.
@@ -405,6 +430,19 @@ export async function POST(request: NextRequest) {
     });
 
     const nomeArquivo = `pesquisa_preco_cesta_${processados.length}_itens_${geradoEm.toISOString().slice(0, 10)}.html`;
+    await registrarRelatorio({
+      tipo: "PESQUISA_PRECO",
+      parametros: {
+        formato: "html",
+        cesta: true,
+        itens: processados.length,
+        valorGlobal,
+        processo,
+      },
+      nomeArquivo,
+      tamanhoBytes: Buffer.byteLength(html, "utf8"),
+      geradoPorId: userId,
+    });
     return new NextResponse(html, {
       headers: {
         "Content-Type": "text/html; charset=utf-8",

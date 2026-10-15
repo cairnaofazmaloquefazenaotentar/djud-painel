@@ -6,6 +6,7 @@ import {
   MOTIVO_MAX,
   MOTIVO_MIN,
 } from "@/lib/pesquisa-preco-curadoria";
+import { escolhaItemSchema } from "@/lib/relatorio-schemas";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta de itens da Pesquisa de Preços — validação das rotas /api/precos/cesta
@@ -33,7 +34,18 @@ const ufSchema = z
  * fundamentada, é só um número a menos na conta.
  */
 export const exclusaoRegistroSchema = z.object({
-  fonte: z.enum(["bps", "siasg", "pncp", "cmed", "orcamentos"]),
+  fonte: z.enum([
+    "comprasgov",
+    "bps",
+    "siasg",
+    "pncp",
+    "arp",
+    "similar",
+    "midia",
+    "orcamentos",
+    "notaFiscal",
+    "cmed",
+  ]),
   id: z.string().trim().min(1, "Registro inválido"),
   motivo: z
     .string()
@@ -101,6 +113,12 @@ export const relatorioCestaSchema = z.object({
   processo: z.string().trim().max(200).default(""),
   /** Esvaziar a cesta depois de gerar o relatório (opção da tela). */
   limparCesta: z.boolean().default(false),
+  /**
+   * Método, teto e justificativa por item (id do CestaItem → escolha), feitos
+   * na modal de emissão. O HTML e o mapa XLSX emitidos pela mesma modal usam
+   * a mesma escolha, para os dois documentos trazerem o mesmo preço.
+   */
+  escolhas: z.record(z.string(), escolhaItemSchema).optional().default({}),
 });
 
 export type AdicionarItemCestaInput = z.infer<typeof adicionarItemCestaSchema>;

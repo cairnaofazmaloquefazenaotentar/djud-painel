@@ -70,6 +70,32 @@ const FONTES = {
     tabela: Prisma.sql`sismat."SiafiPagamento"`,
     colunas: ["criadoEm"],
   },
+  // Bases da Pesquisa de Preços. As de mercado não têm carimbo de carga: a
+  // versão delas sai da contagem e do xmin (toda recarga move o máximo).
+  precoCmed: {
+    tabela: Prisma.sql`public."PrecoCmed"`,
+    colunas: ["vigencia"],
+  },
+  precoBps: {
+    tabela: Prisma.sql`public."PrecoBps"`,
+    colunas: [],
+  },
+  precoSiasg: {
+    tabela: Prisma.sql`public."PrecoSiasg"`,
+    colunas: [],
+  },
+  precoPncp: {
+    tabela: Prisma.sql`public."PrecoPncp"`,
+    colunas: [],
+  },
+  catmatItem: {
+    tabela: Prisma.sql`public."CatmatItem"`,
+    colunas: ["criadoEm"],
+  },
+  cmedRegistro: {
+    tabela: Prisma.sql`public."CmedRegistro"`,
+    colunas: ["criadoEm"],
+  },
 } as const satisfies Record<string, Fonte>;
 
 export type FonteDados = keyof typeof FONTES;
@@ -94,7 +120,8 @@ export async function getDataVersion(fontes: readonly FonteDados[]): Promise<str
     const { tabela, colunas } = FONTES[nome];
     const maxes = colunas.map((c) => `max(${colunaSegura(c)})`).join(", ");
     // GREATEST ignora NULLs; só devolve NULL se todos forem NULL (tabela vazia).
-    const carimbo = Prisma.raw(`COALESCE(GREATEST(${maxes})::text, '-')`);
+    // Tabela sem coluna de carimbo fica só com contagem e xmin.
+    const carimbo = Prisma.raw(colunas.length ? `COALESCE(GREATEST(${maxes})::text, '-')` : `'-'`);
     // xid não tem max(); passa por text para comparar como número.
     const escrita = Prisma.raw(`COALESCE(max(xmin::text::bigint)::text, '-')`);
     // ::text explícito — sem ele o Postgres não consegue inferir o tipo do

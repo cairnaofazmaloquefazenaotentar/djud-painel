@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  FileSpreadsheet,
   FileText,
   Info,
   Loader2,
@@ -34,9 +35,11 @@ import {
 } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { MaterialSearch, type MaterialSelecionado } from "@/components/pesquisa-preco/material-search";
 import { CestaSheet } from "@/components/pesquisa-preco/cesta-sheet";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
+import { CamposEscolhaPreco, PreviaPrecoAdotado } from "@/components/pesquisa-preco/escolha-preco";
 import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
 import { useAdicionarItemCesta } from "@/hooks/useCesta";
 // Os filtros opcionais vêm do módulo puro: importar lib/pesquisa-preco aqui
@@ -51,6 +54,12 @@ import type {
   ExclusaoRegistro,
   OrcamentoFornecedor,
 } from "@/lib/pesquisa-preco-curadoria";
+import {
+  ESCOLHA_PADRAO_MAPA,
+  resultadoComEscolha,
+  type EscolhaPreco,
+} from "@/lib/pesquisa-preco-metodo";
+import { gerarJustificativa } from "@/lib/mapa-dlog/justificativa";
 import type {
   CmedResultado,
   Consolidado,
@@ -408,6 +417,12 @@ function RecomendacaoPanel({
             {fmt(rec.limitePmvg)}
           </p>
           <p className="text-[10px] text-muted-foreground mt-1">CMED sem impostos ÷ Qt_Embal</p>
+          {/* P12: o teto pela regra da DLOG, ao lado, para comparação. */}
+          {rec.tetos.referencia && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              PMVG {rec.escolha.aliquota}% do medicamento de referência: {fmt(rec.tetos.referencia.valorUnitario)}
+            </p>
+          )}
         </div>
         <div className="text-center">
           <p className="text-xs text-muted-foreground mb-1">Preço Final Sugerido</p>
@@ -564,6 +579,13 @@ export default function PesquisaPrecoPage() {
   const [relMeta, setRelMeta] = useState({
     responsavel: "", cargo: "", orgao: "", processo: "", especificacao: "",
   });
+  // Emissão (HTML e mapa XLSX): método e teto do item (P11/P12), quantidade e
+  // justificativa. A mesma escolha vale para os dois documentos.
+  const [escolha, setEscolha] = useState<EscolhaPreco>(ESCOLHA_PADRAO_MAPA);
+  const [quantidade, setQuantidade] = useState("1");
+  const [justificativa, setJustificativa] = useState("");
+  const [justificativaEditada, setJustificativaEditada] = useState(false);
+  const [gerandoXlsx, setGerandoXlsx] = useState(false);
 
   const canSearch = hasPermission(session as any, "precos:pesquisar");
   const canReport = hasPermission(session as any, "relatorios:gerar");
@@ -591,7 +613,17 @@ export default function PesquisaPrecoPage() {
     setAvisoCesta(null);
     setExclusoes([]);
     setOrcamentos([]);
+    setJustificativaEditada(false);
   }, [params]);
+
+  // Prévia da escolha: a mesma função pura que o servidor usa na emissão.
+  const resultadoEscolhido = result ? resultadoComEscolha(result, escolha) : null;
+  // Enquanto o responsável não edita, o texto acompanha a escolha e os números.
+  const textoJustificativa = justificativaEditada
+    ? justificativa
+    : resultadoEscolhido
+      ? gerarJustificativa(resultadoEscolhido)
+      : "";
 
   // Unidade: única opção → pré-seleciona; opção que sumiu → limpa.
   useEffect(() => {
@@ -663,6 +695,50 @@ export default function PesquisaPrecoPage() {
     );
   }, [adicionarCesta, exclusoes, orcamentos, params]);
 
+  /** Corpo comum ao HTML e ao mapa XLSX — a mesma escolha nos dois documentos. */
+  const corpoEmissao = useCallback(
+    () => ({
+      ...params,
+      ...relMeta,
+      exclusoes,
+      orcamentos,
+      quantidade: Math.max(1, Math.trunc(Number(quantidade)) || 1),
+      // Texto não editado vai como null: o servidor gera o mesmo texto com os
+      // números da emissão.
+      escolha: { ...escolha, justificativa: justificativaEditada ? textoJustificativa : null },
+    }),
+    [params, relMeta, exclusoes, orcamentos, quantidade, escolha, textoJustificativa, justificativaEditada]
+  );
+
+  const handleGerarXlsx = useCallback(async () => {
+    if (!result || !params) return;
+    setGerandoXlsx(true);
+    try {
+      const res = await fetch(apiPath("/api/relatorios/pesquisa-preco/xlsx"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoEmissao()),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Erro ao gerar o mapa comparativo");
+      }
+      const nome =
+        /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ??
+        `Mapa_comparativo_de_Precos_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = nome;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erro ao gerar o mapa comparativo");
+    } finally {
+      setGerandoXlsx(false);
+    }
+  }, [result, params, corpoEmissao]);
+
   const handleGerarRelatorio = useCallback(async () => {
     if (!result || !params) return;
     // Abre a janela antes do await para o bloqueador de pop-up não interferir.
@@ -672,7 +748,7 @@ export default function PesquisaPrecoPage() {
       const res = await fetch(apiPath("/api/relatorios/pesquisa-preco"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...params, ...relMeta, exclusoes, orcamentos }),
+        body: JSON.stringify(corpoEmissao()),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -691,7 +767,7 @@ export default function PesquisaPrecoPage() {
       setGerandoPdf(false);
       setModalOpen(false);
     }
-  }, [result, params, relMeta, exclusoes, orcamentos]);
+  }, [result, params, corpoEmissao]);
 
   if (!canSearch) {
     return (
@@ -1145,7 +1221,7 @@ export default function PesquisaPrecoPage() {
 
       {/* Modal — metadados do relatório */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Gerar Relatório de Pesquisa de Preços</DialogTitle>
           </DialogHeader>
@@ -1210,12 +1286,65 @@ export default function PesquisaPrecoPage() {
                 onChange={(e) => setRelMeta((m) => ({ ...m, especificacao: e.target.value }))}
               />
             </div>
+
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs font-medium">Preço adotado</p>
+              <CamposEscolhaPreco valor={escolha} onChange={setEscolha} idPrefixo="avulsa" />
+              {resultadoEscolhido && (
+                <PreviaPrecoAdotado recomendacao={resultadoEscolhido.recomendacao} unidade={resultadoEscolhido.unidade} />
+              )}
+              <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3 items-start">
+                <div className="space-y-1">
+                  <Label className="text-xs" htmlFor="emissao-quantidade">Quantidade</Label>
+                  <Input
+                    id="emissao-quantidade"
+                    inputMode="numeric"
+                    value={quantidade}
+                    onChange={(e) => setQuantidade(e.target.value.replace(/\D/g, ""))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <Label className="text-xs" htmlFor="emissao-justificativa">Justificativa do preço adotado</Label>
+                    {justificativaEditada && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        onClick={() => setJustificativaEditada(false)}
+                      >
+                        restaurar texto gerado
+                      </button>
+                    )}
+                  </div>
+                  <Textarea
+                    id="emissao-justificativa"
+                    className="min-h-24 text-xs"
+                    value={textoJustificativa}
+                    onChange={(e) => {
+                      setJustificativa(e.target.value);
+                      setJustificativaEditada(true);
+                    }}
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                O relatório e o mapa comparativo (modelo da DLOG) usam esta mesma escolha. A edição da
+                justificativa fica registrada no log de auditoria.
+              </p>
+            </div>
           </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setModalOpen(false)} disabled={gerandoPdf}>
+          <div className="flex flex-wrap justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setModalOpen(false)} disabled={gerandoPdf || gerandoXlsx}>
               Cancelar
             </Button>
-            <Button onClick={handleGerarRelatorio} disabled={gerandoPdf}>
+            <Button variant="outline" onClick={handleGerarXlsx} disabled={gerandoPdf || gerandoXlsx}>
+              {gerandoXlsx ? (
+                <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Gerando…</>
+              ) : (
+                <><FileSpreadsheet className="h-4 w-4 mr-2" />Mapa comparativo (XLSX)</>
+              )}
+            </Button>
+            <Button onClick={handleGerarRelatorio} disabled={gerandoPdf || gerandoXlsx}>
               {gerandoPdf ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Gerando…</>
               ) : (
