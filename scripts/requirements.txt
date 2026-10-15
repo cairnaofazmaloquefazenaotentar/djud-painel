@@ -1,0 +1,12 @@
+# Dependências dos scripts Python (scripts/*.py). Instalar num ambiente virtual — no macOS o
+# comando `python` não existe fora dele, e o Python do sistema não tem o psycopg:
+#
+#   python3 -m venv ~/.venvs/djud-painel
+#   source ~/.venvs/djud-painel/bin/activate      # dentro dele, `python` e `pip` funcionam
+#   pip install -r scripts/requirements.txt
+#
+# requests traz os próprios certificados (certifi): o import_ipca.py baixa do IBGE mesmo com o
+# Python do python.org sem o "Install Certificates" — nunca desligar a verificação de TLS.
+psycopg[binary]>=3.1
+openpyxl>=3.1
+requests>=2.31

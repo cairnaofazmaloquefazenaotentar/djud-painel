@@ -88,6 +88,8 @@ npm run db:push          # Sync Prisma schema → banco
 npm run build            # Build production
 npm run lint             # ESLint check
 
+# Scripts Python: ambiente virtual com `pip install -r scripts/requirements.txt` (no macOS só existe
+# `python3` fora do venv — ver docs/ATUALIZACAO_DE_DADOS.md). DATABASE_URL: ambiente → .env.local → .env
 # Pesquisa de Preços — bases de apoio (Python: openpyxl + psycopg; lê DATABASE_URL de .env.local)
 python scripts/import_catmat_classes.py --file "Catmats - 16 Classes - DD.MM.AAAA.xlsx" --dry-run|--confirm
 python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....xlsx" --dry-run|--confirm

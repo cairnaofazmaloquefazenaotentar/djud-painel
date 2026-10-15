@@ -28,6 +28,22 @@ O upload nao publica dados diretamente no painel. O importador deve validar colu
 
 Enquanto o importador automatizado nao estiver instalado, a equipe responsavel deve avisar que a carga foi enviada para que a validacao e a importacao controlada sejam executadas.
 
+## Ambiente Python dos scripts (uma vez por maquina)
+
+Os scripts de `scripts/*.py` precisam de um ambiente virtual. No macOS o comando `python` nao
+existe fora dele (so `python3`), e o Python do sistema nao tem o driver `psycopg`:
+
+```bash
+cd ~/Desktop/djud-painel                      # sempre da raiz do repositorio
+python3 -m venv ~/.venvs/djud-painel          # uma vez
+source ~/.venvs/djud-painel/bin/activate      # a cada terminal novo
+pip install -r scripts/requirements.txt       # uma vez (ou quando o arquivo mudar)
+```
+
+Com o ambiente ativo, `python scripts/...` funciona como nos exemplos abaixo. Os scripts leem a
+`DATABASE_URL` do ambiente e, sem ela, do `.env.local` e depois do `.env` da raiz — confira para
+qual banco ela aponta antes de qualquer `--confirm`.
+
 ## Colunas novas de Demanda (avaliacao da DLOG)
 
 Uma vez por ambiente, **antes** de publicar a versao que le as colunas e **antes** da proxima carga do Redmine (o importador agora grava `nupSei` e `buscaNorm` e aborta no preflight se elas nao existirem):
