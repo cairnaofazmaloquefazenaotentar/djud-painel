@@ -4,6 +4,7 @@ import {
   rotuloRegraTetoCurto,
 } from "@/lib/pesquisa-preco-metodo";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
+import { subtrairMeses } from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Justificativa do preço adotado, no padrão da DLOG (seção 8.4 da avaliação).
@@ -61,7 +62,18 @@ function comArtigo(metodo: keyof typeof ROTULO_METODO, componente: "media" | "me
   }
 }
 
-export function gerarJustificativa(r: ResultadoPesquisa, ctx: ContextoJustificativa = {}): string {
+export function gerarJustificativa(r: ResultadoPesquisa, contexto: ContextoJustificativa = {}): string {
+  // Período, IPCA e duplicatas saem do próprio resultado: o mesmo texto na tela,
+  // no HTML e no mapa, seja quem for o chamador.
+  const ctx: ContextoJustificativa = {
+    periodo:
+      r.periodo && r.periodo.mesesMercado !== null
+        ? { inicio: subtrairMeses(r.periodo.dataReferencia, r.periodo.mesesMercado), fim: r.periodo.dataReferencia }
+        : null,
+    ipcaMesBase: r.ipca?.ligado ? r.ipca.mesBase : null,
+    duplicados: r.duplicidades ?? 0,
+    ...contexto,
+  };
   const rec = r.recomendacao;
   const { metodo, regraTeto, aliquota } = rec.escolha;
   const { porRegistro, porFonte, fontes } = r.consolidado;
@@ -118,12 +130,10 @@ export function gerarJustificativa(r: ResultadoPesquisa, ctx: ContextoJustificat
     amostra += ".";
     partes.push(amostra);
   }
-  const outliers = fontes.length
-    ? Object.values(r.resultados).reduce(
-        (s, f) => s + (f && "outliersRemovidos" in f ? f.outliersRemovidos : 0),
-        0
-      )
-    : 0;
+  const outliers = Object.values(r.resultados).reduce(
+    (s, f) => s + (f && "outliersRemovidos" in f ? f.outliersRemovidos : 0),
+    0
+  );
   const descartes = r.descartes.length;
   const duplicados = ctx.duplicados ?? 0;
   if (descartes || outliers || duplicados) {

@@ -9,10 +9,11 @@
 //   • Fator composto (razão dos números-índices), nunca a soma das variações
 //     mensais — a soma era o erro 1 da seção 8.5.
 //   • Sem índice para o mês do preço: fator 1, com sinalização.
-//   • Só corrige os incisos I e II (sistemas oficiais e contratações
-//     similares), os que o art. 5º manda observar "o índice de atualização de
-//     preços correspondente". Preços informados (III, IV e V) são recentes e
-//     ficam como estão; o teto CMED nunca é corrigido.
+//   • Só corrige os incisos I e II (sistemas oficiais, atas e contratações
+//     similares, inclusive a informada pelo responsável), os que o art. 5º
+//     manda observar "o índice de atualização de preços correspondente".
+//     Mídia, cotação e nota fiscal (III, IV e V) ficam no valor informado; o
+//     teto CMED nunca é corrigido (corrigidoPeloIpca em pesquisa-preco-fontes).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** "AAAA-MM" → número-índice (dez/1993 = 100). */

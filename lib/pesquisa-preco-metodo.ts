@@ -121,6 +121,23 @@ export function normalizarEscolha(bruto: unknown, padrao: EscolhaPreco = ESCOLHA
   };
 }
 
+/**
+ * A escolha gravada num item da cesta (P11/P12); null quando o item não tem
+ * escolha própria. O que faltar segue o padrão de quem emite.
+ */
+export function escolhaGravada(c: {
+  metodoPreco: string | null;
+  regraTeto: string | null;
+  aliquotaTeto: string | null;
+}): Partial<EscolhaPreco> | null {
+  if (!c.metodoPreco && !c.regraTeto) return null;
+  return {
+    ...(METODOS.includes(c.metodoPreco as MetodoPreco) ? { metodo: c.metodoPreco as MetodoPreco } : {}),
+    ...(REGRAS_TETO.includes(c.regraTeto as RegraTeto) ? { regraTeto: c.regraTeto as RegraTeto } : {}),
+    ...(ALIQUOTAS_TETO.includes(c.aliquotaTeto as AliquotaTeto) ? { aliquota: c.aliquotaTeto as AliquotaTeto } : {}),
+  };
+}
+
 // ── Preço pelo método ────────────────────────────────────────────────────────
 
 /** Preço do método escolhido, antes do teto; null quando não há preço apurado. */

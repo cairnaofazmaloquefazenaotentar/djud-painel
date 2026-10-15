@@ -1,0 +1,222 @@
+/**
+ * Autoteste dos módulos puros da Pesquisa de Preços que a avaliação da DLOG
+ * (out/2026) acrescentou: período do art. 5º (D1), IPCA (D2), duplicidade
+ * entre bases (P18) e a escolha gravada na cesta (P11/P12).
+ *
+ * Uso:
+ *   npx tsx scripts/autoteste-pesquisa-preco.ts
+ *
+ * Sai com código 1 se algum caso falhar. Não toca no banco.
+ */
+import {
+  janelaDaFonte,
+  normalizarPeriodo,
+  subtrairMeses,
+  validarPeriodo,
+} from "../lib/pesquisa-preco-periodo";
+import { fatorIpca, mesAnterior, mesBaseIpca, type IndicesIpca } from "../lib/ipca";
+import { marcarDuplicidades, type RegistroParaDuplicidade } from "../lib/pesquisa-preco-duplicidade";
+import { corrigidoPeloIpca, ORDEM_FONTES } from "../lib/pesquisa-preco-fontes";
+import { escolhaGravada } from "../lib/pesquisa-preco-metodo";
+
+let falhas = 0;
+let casos = 0;
+function confere(nome: string, obtido: unknown, esperado: unknown) {
+  casos += 1;
+  const a = JSON.stringify(obtido);
+  const b = JSON.stringify(esperado);
+  if (a !== b) {
+    falhas += 1;
+    console.log(`  FALHOU  ${nome}\n          obtido:   ${a}\n          esperado: ${b}`);
+  }
+}
+const perto = (a: number, b: number, tol = 1e-12) => Math.abs(a - b) <= tol;
+
+// ── Período (D1) ─────────────────────────────────────────────────────────────
+
+confere("12 meses antes, mesmo dia", subtrairMeses("2026-10-15", 12), "2025-10-15");
+confere("dia inexistente vira o último do mês", subtrairMeses("2026-03-31", 1), "2026-02-28");
+confere("29/02 menos 12 meses", subtrairMeses("2024-02-29", 12), "2023-02-28");
+confere("virada de ano", subtrairMeses("2026-01-10", 6), "2025-07-10");
+
+const hoje = "2026-10-15";
+confere("data futura vira hoje", normalizarPeriodo({ dataReferencia: "2027-01-01" }, hoje).dataReferencia, hoje);
+confere("data inválida vira hoje", normalizarPeriodo({ dataReferencia: "2026-02-30" }, hoje).dataReferencia, hoje);
+confere("data passada é mantida", normalizarPeriodo({ dataReferencia: "2026-03-10" }, hoje).dataReferencia, "2026-03-10");
+confere("meses '24' (texto)", normalizarPeriodo({ mesesMercado: "24" }, hoje).mesesMercado, 24);
+confere("meses null = todo o período", normalizarPeriodo({ mesesMercado: null }, hoje).mesesMercado, null);
+confere("meses fora da lista = 12", normalizarPeriodo({ mesesMercado: 18 }, hoje).mesesMercado, 12);
+confere("ausente = 12", normalizarPeriodo(undefined, hoje).mesesMercado, 12);
+
+confere("12 meses não pede justificativa", validarPeriodo(normalizarPeriodo({}, hoje)), null);
+confere(
+  "24 meses sem justificativa é recusado",
+  validarPeriodo(normalizarPeriodo({ mesesMercado: 24, justificativaAmpliacao: "curta" }, hoje)) !== null,
+  true
+);
+confere(
+  "24 meses com 20 caracteres passa",
+  validarPeriodo(normalizarPeriodo({ mesesMercado: 24, justificativaAmpliacao: "x".repeat(20) }, hoje)),
+  null
+);
+confere(
+  "todo o período sem justificativa é recusado",
+  validarPeriodo(normalizarPeriodo({ mesesMercado: null }, hoje)) !== null,
+  true
+);
+
+const p12 = normalizarPeriodo({ dataReferencia: hoje }, hoje);
+const p36 = normalizarPeriodo({ dataReferencia: hoje, mesesMercado: 36, justificativaAmpliacao: "x".repeat(20) }, hoje);
+const pTodo = normalizarPeriodo({ dataReferencia: hoje, mesesMercado: null, justificativaAmpliacao: "x".repeat(20) }, hoje);
+confere("Compras.gov.br em 12 meses", janelaDaFonte("comprasgov", p12), { inicio: "2025-10-15", fim: hoje, meses: 12, inciso: "I" });
+confere("ata segue o período ampliado", janelaDaFonte("arp", p36).inicio, "2023-10-15");
+confere("todo o período: sem início", janelaDaFonte("bps", pTodo).inicio, null);
+// Preço informado fica na janela do seu inciso, mesmo com as bases ampliadas.
+confere("mídia (III): 6 meses", janelaDaFonte("midia", p36), { inicio: "2026-04-15", fim: hoje, meses: 6, inciso: "III" });
+confere("cotação (IV): 6 meses", janelaDaFonte("orcamentos", pTodo).meses, 6);
+confere("nota fiscal (V): 12 meses", janelaDaFonte("notaFiscal", p36).meses, 12);
+confere("contratação similar (II): 12 meses", janelaDaFonte("similar", p36).meses, 12);
+
+// ── IPCA (D2) ────────────────────────────────────────────────────────────────
+
+// Tabela sintética a partir de variações mensais: o número-índice é o produto.
+const variacoes: Record<string, number> = {
+  "2026-01": 0.5,
+  "2026-02": 0.8,
+  "2026-03": 0.3,
+  "2026-04": -0.1,
+  "2026-05": 0.4,
+  "2026-06": 0.2,
+  "2026-07": 0.6,
+  "2026-08": 0.1,
+  "2026-09": 0.4,
+};
+const indices: IndicesIpca = new Map([["2025-12", 7000]]);
+let ni = 7000;
+for (const [mes, v] of Object.entries(variacoes)) {
+  ni *= 1 + v / 100;
+  indices.set(mes, ni);
+}
+
+confere("mês anterior (virada de ano)", mesAnterior("2026-01-10"), "2025-12");
+confere("mês-base = mês anterior à referência", mesBaseIpca("2026-10-15", indices), "2026-09");
+confere("mês-base nunca é o próprio mês", mesBaseIpca("2026-09-30", indices), "2026-08");
+confere(
+  "mês-base = último publicado",
+  mesBaseIpca("2026-12-01", new Map(Array.from(indices).filter(([m]) => m <= "2026-08"))),
+  "2026-08"
+);
+confere("sem índice anterior = sem mês-base", mesBaseIpca("2025-12-15", indices), null);
+
+const f = fatorIpca("2026-03", "2026-09", indices);
+// Correção a partir do mês SEGUINTE ao do preço: abril a setembro.
+const produto = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].reduce(
+  (acc, m) => acc * (1 + variacoes[m] / 100),
+  1
+);
+const soma = ["2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"].reduce((acc, m) => acc + variacoes[m] / 100, 0);
+confere("fator = produto das variações seguintes", perto(f.fator, produto, 1e-12), true);
+confere("fator ≠ soma das variações (erro 1 da planilha)", perto(f.fator, 1 + soma, 1e-6), false);
+confere("o próprio mês do preço não entra", perto(fatorIpca("2026-09", "2026-09", indices).fator, 1), true);
+confere("preço depois do mês-base: fator 1", fatorIpca("2026-10", "2026-09", indices), {
+  fator: 1,
+  mesPreco: "2026-10",
+  mesBase: "2026-09",
+  semIndice: false,
+});
+confere("mês sem índice: fator 1, sinalizado", fatorIpca("2024-05", "2026-09", indices), {
+  fator: 1,
+  mesPreco: "2024-05",
+  mesBase: "2026-09",
+  semIndice: true,
+});
+confere(
+  "IPCA só nos incisos I e II",
+  ORDEM_FONTES.filter(corrigidoPeloIpca),
+  ["comprasgov", "bps", "siasg", "pncp", "arp", "similar"]
+);
+
+// ── Duplicidade entre bases (P18) ────────────────────────────────────────────
+
+const reg = (r: Partial<RegistroParaDuplicidade> & Pick<RegistroParaDuplicidade, "id" | "fonte">): RegistroParaDuplicidade => ({
+  chaveItemCompra22: null,
+  cnpjFornecedor: "11.222.333/0001-44",
+  preco: 100,
+  uf: "SP",
+  data: "2026-05-10T00:00:00.000Z",
+  qtd: 50,
+  ...r,
+});
+const chave = "1201950590041202600122";
+
+const porChave = marcarDuplicidades([
+  reg({ id: "PNCP:1", fonte: "pncp", chaveItemCompra22: chave }),
+  reg({ id: "COMPRASGOV:1", fonte: "comprasgov", chaveItemCompra22: chave }),
+  reg({ id: "ARP:1", fonte: "arp", chaveItemCompra22: chave }),
+]);
+confere("mesma chave: prevalece o Compras.gov.br", Array.from(porChave.keys()).sort(), ["ARP:1", "PNCP:1"]);
+confere("mesma chave: não é 'provável'", porChave.get("PNCP:1"), { fonte: "comprasgov", id: "COMPRASGOV:1", provavel: false });
+
+const compras = reg({ id: "COMPRASGOV:9", fonte: "comprasgov" });
+confere(
+  "BPS: mesmo CNPJ, preço, UF e qtd, 10 dias → provável",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", data: "2026-05-20T00:00:00.000Z" })]).get("BPS:a"),
+  { fonte: "comprasgov", id: "COMPRASGOV:9", provavel: true }
+);
+confere(
+  "BPS: mesma qtd, 16 dias → não",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", data: "2026-05-26T00:00:00.000Z" })]).has("BPS:a"),
+  false
+);
+confere(
+  "BPS: sem qtd, 3 dias → provável",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", qtd: null, data: "2026-05-13T00:00:00.000Z" })]).has("BPS:a"),
+  true
+);
+confere(
+  "BPS: sem qtd, 4 dias → não",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", qtd: null, data: "2026-05-14T00:00:00.000Z" })]).has("BPS:a"),
+  false
+);
+confere(
+  "BPS: preço diferente no centavo → não",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", preco: 100.01 })]).has("BPS:a"),
+  false
+);
+confere(
+  "BPS: outra UF → não",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", uf: "RJ" })]).has("BPS:a"),
+  false
+);
+confere(
+  "BPS: CNPJ com e sem pontuação casa",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps", cnpjFornecedor: "11222333000144" })]).has("BPS:a"),
+  true
+);
+confere(
+  "revertida pelo responsável → não marca",
+  marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps" })], new Set(["BPS:a"])).has("BPS:a"),
+  false
+);
+const dois = marcarDuplicidades([compras, reg({ id: "BPS:a", fonte: "bps" }), reg({ id: "BPS:b", fonte: "bps" })]);
+confere("cada compra casa com um registro do BPS só", Array.from(dois.keys()), ["BPS:a"]);
+
+// ── Escolha gravada na cesta (P11/P12) ───────────────────────────────────────
+
+confere("sem escolha gravada", escolhaGravada({ metodoPreco: null, regraTeto: null, aliquotaTeto: null }), null);
+confere(
+  "escolha gravada completa",
+  escolhaGravada({ metodoPreco: "criterio_dlog", regraTeto: "pmvg_referencia", aliquotaTeto: "17" }),
+  { metodo: "criterio_dlog", regraTeto: "pmvg_referencia", aliquota: "17" }
+);
+confere(
+  "valor desconhecido é ignorado",
+  escolhaGravada({ metodoPreco: "inventado", regraTeto: "pmvg_referencia", aliquotaTeto: "99" }),
+  { regraTeto: "pmvg_referencia" }
+);
+
+console.log(`${casos - falhas}/${casos} caso(s) conferido(s).`);
+if (falhas) {
+  console.log(`${falhas} falha(s).`);
+  process.exit(1);
+}

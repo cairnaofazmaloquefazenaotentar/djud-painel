@@ -8,13 +8,23 @@ import {
   ESCOLHA_PADRAO_MAPA,
   classificarCodigo,
   normalizarEscolha,
+  normalizarPeriodo,
   normalizarUnidade,
   pesquisarPrecos,
+  validarPeriodo,
 } from "@/lib/pesquisa-preco";
 import { escolhaExplicita, relatorioAvulsoSchema } from "@/lib/relatorio-schemas";
 import { montarMapaItem } from "@/lib/mapa-dlog/dados";
 import { gerarMapaDlog } from "@/lib/mapa-dlog/gerar";
-import { contextoBases, hashArquivo, hashConteudo, nomeArquivoMapa, recorteDoItem } from "@/lib/mapa-dlog/meta";
+import {
+  contextoBases,
+  hashArquivo,
+  hashConteudo,
+  ipcaParaMapa,
+  nomeArquivoMapa,
+  periodoParaMapa,
+  recorteDoItem,
+} from "@/lib/mapa-dlog/meta";
 import { registrarRelatorio } from "@/lib/relatorio-registro";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -53,6 +63,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Campo 'unidade' (unidade de fornecimento) é obrigatório" }, { status: 400 });
     }
 
+    const periodo = normalizarPeriodo(b.periodo);
+    const erroPeriodo = validarPeriodo(periodo);
+    if (erroPeriodo) return NextResponse.json({ error: erroPeriodo }, { status: 400 });
     const escolha = normalizarEscolha(b.escolha, ESCOLHA_PADRAO_MAPA);
     const geradoEm = new Date();
     const [resultado, bases] = await Promise.all([
@@ -64,6 +77,9 @@ export async function POST(request: NextRequest) {
         exclusoes: b.exclusoes,
         orcamentos: b.orcamentos,
         escolha,
+        periodo,
+        corrigirIpca: b.corrigirIpca,
+        duplicidadesRevertidas: b.duplicidadesRevertidas,
         registrosCompletos: true,
       }),
       contextoBases(),
@@ -94,12 +110,12 @@ export async function POST(request: NextRequest) {
       cargo: b.cargo,
       usuario,
       geradoEm,
-      dataReferencia: geradoEm,
+      dataReferencia: new Date(`${resultado.periodo.dataReferencia}T12:00:00Z`),
       cmedVigencia: bases.cmedVigencia,
       cmedPublicacao: bases.cmedPublicacao,
       fontesConsultadas: bases.fontesConsultadas,
-      periodo: "Sem recorte de período: amostra dos registros mais recentes de cada base (até 500 por fonte).",
-      ipca: { ligado: false, mesBase: null, convencao: "", indices: [] },
+      periodo: periodoParaMapa([resultado]),
+      ipca: await ipcaParaMapa([resultado]),
       versaoDados: bases.versaoDados,
       hashConteudo: hashConteudo([item]),
       filtrosPorItem: new Map([[1, recorteDoItem(resultado)]]),
@@ -125,6 +141,9 @@ export async function POST(request: NextRequest) {
           processo: b.processo,
           orgao: b.orgao,
           escolha,
+          periodo: resultado.periodo,
+          ipca: resultado.ipca,
+          duplicidadesRevertidas: b.duplicidadesRevertidas,
           escolhaExplicita: escolhaExplicita(b.escolha),
           justificativaEditada: item.justificativaEditada,
           precoFinal: resultado.recomendacao.precoFinal,

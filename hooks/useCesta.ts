@@ -46,6 +46,11 @@ export interface AdicionarItemArgs {
   /** Curadoria feita na tela de pesquisa, gravada junto com o item. */
   exclusoes?: ExclusaoRegistro[];
   orcamentos?: OrcamentoFornecedor[];
+  /** Período (D1), IPCA (D2) e duplicatas mantidas (P18) da pesquisa da tela. */
+  periodoMeses?: 0 | 12 | 24 | 36 | null;
+  justificativaPeriodo?: string | null;
+  corrigirIpca?: boolean;
+  duplicidadesRevertidas?: string[];
 }
 
 export function useAdicionarItemCesta() {
@@ -77,6 +82,14 @@ export function useAtualizarItemCesta() {
       observacao?: string | null;
       exclusoes?: ExclusaoRegistro[];
       orcamentos?: OrcamentoFornecedor[];
+      metodoPreco?: string | null;
+      regraTeto?: string | null;
+      aliquotaTeto?: string | null;
+      justificativa?: string | null;
+      periodoMeses?: 0 | 12 | 24 | 36 | null;
+      justificativaPeriodo?: string | null;
+      corrigirIpca?: boolean;
+      duplicidadesRevertidas?: string[];
     }
   >({
     mutationFn: async ({ id, ...dados }) => {

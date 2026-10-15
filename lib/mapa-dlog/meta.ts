@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { db } from "@/lib/db";
 import { getDataVersion } from "@/lib/data-version";
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
+import { descricaoPeriodo } from "@/lib/pesquisa-preco-periodo";
+import { CONVENCAO_IPCA } from "@/lib/ipca";
+import { carregarIpca } from "@/lib/ipca-indices";
+import { fontesDoResultado } from "@/lib/pesquisa-preco-fontes";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import type { MapaItem } from "@/lib/mapa-dlog/dados";
+import type { MetaMapa } from "@/lib/mapa-dlog/gerar";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Metadados do mapa XLSX que não vêm da pesquisa: a situação das bases do
@@ -69,6 +74,41 @@ export function hashConteudo(itens: MapaItem[]): string {
 
 export function hashArquivo(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+/**
+ * IPCA para a aba "Índices IPCA": do mês mais antigo que foi corrigido até o
+ * mês-base, com os números-índices da tabela (nunca digitados nem somados).
+ */
+export async function ipcaParaMapa(resultados: Array<ResultadoPesquisa | null>): Promise<MetaMapa["ipca"]> {
+  const ligados = resultados.filter((r): r is ResultadoPesquisa => !!r?.ipca.ligado && !!r.ipca.mesBase);
+  if (!ligados.length) return { ligado: false, mesBase: null, convencao: CONVENCAO_IPCA, indices: [] };
+  const mesBase = ligados.map((r) => r.ipca.mesBase as string).sort().at(-1) as string;
+  let maisAntigo = mesBase;
+  for (const r of ligados) {
+    for (const { dados } of fontesDoResultado(r)) {
+      for (const reg of dados.registros) {
+        if (reg.fatorIpca != null && reg.mesIndice && reg.mesIndice < maisAntigo) maisAntigo = reg.mesIndice;
+      }
+    }
+  }
+  const tabela = await carregarIpca();
+  const indices = Array.from(tabela.indices.entries())
+    .filter(([mes]) => mes >= maisAntigo && mes <= mesBase)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([mes, numeroIndice]) => ({
+      competencia: `${mes}-01`,
+      numeroIndice,
+      variacaoMensal: tabela.variacoes.get(mes) ?? null,
+    }));
+  return { ligado: true, mesBase, convencao: CONVENCAO_IPCA, indices };
+}
+
+/** Texto do período para a aba Parâmetros: o mesmo para todos os itens, ou por item. */
+export function periodoParaMapa(resultados: Array<ResultadoPesquisa | null>): string {
+  const textos = Array.from(new Set(resultados.filter((r): r is ResultadoPesquisa => !!r).map((r) => descricaoPeriodo(r.periodo))));
+  if (!textos.length) return "—";
+  return textos.length === 1 ? textos[0] : "Varia por item — ver as linhas de cada item abaixo.";
 }
 
 /** UF e filtros opcionais aplicados, em texto, para a aba Parâmetros. */

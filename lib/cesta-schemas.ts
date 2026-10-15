@@ -7,6 +7,7 @@ import {
   MOTIVO_MIN,
 } from "@/lib/pesquisa-preco-curadoria";
 import { escolhaItemSchema } from "@/lib/relatorio-schemas";
+import { ALIQUOTAS_TETO, METODOS, REGRAS_TETO } from "@/lib/pesquisa-preco-metodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cesta de itens da Pesquisa de Preços — validação das rotas /api/precos/cesta
@@ -54,8 +55,20 @@ export const exclusaoRegistroSchema = z.object({
     .max(MOTIVO_MAX),
 });
 
-/** Orçamento apresentado diretamente por fornecedor (art. 5º, IV). */
+/** Preço informado pelo responsável: cotação (IV), mídia (III), nota fiscal (V) ou contratação similar (II). */
 export const orcamentoSchema = z.object({
+  tipo: z.enum(["IV", "III", "V", "II"]).default("IV"),
+  url: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => /^https?:\/\//i.test(v), { message: "Endereço deve começar com http:// ou https://" })
+    .nullable()
+    .optional()
+    .default(null),
+  acessadoEm: z.coerce.date().nullable().optional().default(null),
+  chaveNfe: z.string().trim().max(60).nullable().optional().default(null),
+  justificativaForaPeriodo: z.string().trim().max(MOTIVO_MAX).nullable().optional().default(null),
   fornecedor: z.string().trim().min(2, "Informe a empresa que apresentou a proposta").max(200),
   cnpj: z.string().trim().max(20).nullable().optional().default(null),
   marca: z.string().trim().max(120).nullable().optional().default(null),
@@ -71,6 +84,27 @@ export const orcamentoSchema = z.object({
   considerarNoCalculo: z.boolean().default(true),
 });
 
+/**
+ * Escolhas do responsável que ficam no item e são reaplicadas na emissão:
+ * método e teto (P11/P12), justificativa editada, período do art. 5º (D1),
+ * IPCA (D2) e prováveis duplicatas mantidas (P18).
+ */
+const configuracaoItemSchema = {
+  metodoPreco: z.enum(METODOS as [string, ...string[]]).nullable().optional(),
+  regraTeto: z.enum(REGRAS_TETO as [string, ...string[]]).nullable().optional(),
+  aliquotaTeto: z.enum(ALIQUOTAS_TETO as [string, ...string[]]).nullable().optional(),
+  justificativa: z.string().trim().max(4000).nullable().optional(),
+  /** 12 (padrão), 24 ou 36 meses; 0 = todo o período. */
+  periodoMeses: z.union([z.literal(0), z.literal(12), z.literal(24), z.literal(36)]).nullable().optional(),
+  justificativaPeriodo: z.string().trim().max(1000).nullable().optional(),
+  corrigirIpca: z.boolean().optional(),
+  duplicidadesRevertidas: z.array(z.string().max(200)).max(500).optional(),
+};
+
+const periodoComJustificativa = (d: { periodoMeses?: number | null; justificativaPeriodo?: string | null }) =>
+  d.periodoMeses == null || d.periodoMeses === 12 || (d.justificativaPeriodo ?? "").trim().length >= 20;
+const MSG_PERIODO = "Ampliar o período além de 12 meses exige justificativa (mínimo de 20 caracteres)";
+
 export const adicionarItemCestaSchema = z.object({
   codigo: z.string().trim().min(1, "Código do material é obrigatório"),
   unidade: z.string().trim().min(1, "Unidade de fornecimento é obrigatória"),
@@ -82,7 +116,8 @@ export const adicionarItemCestaSchema = z.object({
   // precisa refazer o trabalho na hora do relatório consolidado.
   exclusoes: z.array(exclusaoRegistroSchema).max(MAX_EXCLUSOES).optional(),
   orcamentos: z.array(orcamentoSchema).max(MAX_ORCAMENTOS).optional(),
-});
+  ...configuracaoItemSchema,
+}).refine(periodoComJustificativa, { message: MSG_PERIODO });
 
 /**
  * PATCH do item da cesta. `exclusoes` e `orcamentos` são substituição total,
@@ -96,15 +131,12 @@ export const atualizarItemCestaSchema = z
     observacao: z.string().trim().max(500).nullable().optional(),
     exclusoes: z.array(exclusaoRegistroSchema).max(MAX_EXCLUSOES).optional(),
     orcamentos: z.array(orcamentoSchema).max(MAX_ORCAMENTOS).optional(),
+    ...configuracaoItemSchema,
   })
-  .refine(
-    (d) =>
-      d.quantidade !== undefined ||
-      d.observacao !== undefined ||
-      d.exclusoes !== undefined ||
-      d.orcamentos !== undefined,
-    { message: "Informe quantidade, observação, registros desconsiderados ou orçamentos" }
-  );
+  .refine((d) => Object.values(d).some((v) => v !== undefined), {
+    message: "Informe ao menos um campo do item a alterar",
+  })
+  .refine(periodoComJustificativa, { message: MSG_PERIODO });
 
 export const relatorioCestaSchema = z.object({
   responsavel: z.string().trim().max(200).default(""),

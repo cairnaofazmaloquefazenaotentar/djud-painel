@@ -23,6 +23,13 @@ export const escolhaItemSchema = z.object({
 
 export type EscolhaItemInput = z.infer<typeof escolhaItemSchema>;
 
+/** Período do art. 5º; a ampliação sem justificativa é recusada pela rota (validarPeriodo). */
+export const periodoSchema = z.object({
+  dataReferencia: z.string().trim().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  mesesMercado: z.union([z.literal(12), z.literal(24), z.literal(36), z.null()]).optional(),
+  justificativaAmpliacao: z.string().trim().max(1000).nullable().optional(),
+});
+
 const textoOpcional = (max: number) =>
   z
     .union([z.string(), z.null()])
@@ -54,6 +61,11 @@ export const relatorioAvulsoSchema = z.object({
   especificacao: textoOpcional(500),
   quantidade: z.coerce.number().int().min(1).max(QUANTIDADE_MAX).optional().default(1),
   escolha: escolhaItemSchema.optional(),
+  /** Período do art. 5º (D1) e IPCA (D2) da pesquisa da tela. */
+  periodo: periodoSchema.optional(),
+  corrigirIpca: z.boolean().optional().default(true),
+  /** Prováveis duplicatas mantidas no conjunto único (P18). */
+  duplicidadesRevertidas: z.array(z.string().max(200)).max(500).optional().default([]),
 });
 
 export type RelatorioAvulsoInput = z.infer<typeof relatorioAvulsoSchema>;

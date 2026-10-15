@@ -77,6 +77,10 @@ export interface ParametrosBusca {
   fornecedor: string | null;
   fabricante: string | null;
   cnpjComprador: string | null;
+  /** Período do art. 5º (D1): data de referência, meses (null = todo o período) e justificativa. */
+  periodo: { dataReferencia: string; mesesMercado: 12 | 24 | 36 | null; justificativaAmpliacao: string | null };
+  /** Atualização pelo IPCA dos incisos I e II (D2). */
+  corrigirIpca: boolean;
 }
 
 /** Pesquisa consolidada — dispara apenas quando os parâmetros são submetidos. */
@@ -90,6 +94,10 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       params?.fornecedor,
       params?.fabricante,
       params?.cnpjComprador,
+      params?.periodo.dataReferencia,
+      params?.periodo.mesesMercado,
+      params?.periodo.justificativaAmpliacao,
+      params?.corrigirIpca,
     ],
     queryFn: async () => {
       if (!params) throw new Error("Parâmetros de pesquisa ausentes");
@@ -98,6 +106,10 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       if (params.fornecedor) sp.set("fornecedor", params.fornecedor);
       if (params.fabricante) sp.set("fabricante", params.fabricante);
       if (params.cnpjComprador) sp.set("cnpjComprador", params.cnpjComprador);
+      sp.set("dataReferencia", params.periodo.dataReferencia);
+      sp.set("meses", params.periodo.mesesMercado === null ? "todos" : String(params.periodo.mesesMercado));
+      if (params.periodo.justificativaAmpliacao) sp.set("justificativaPeriodo", params.periodo.justificativaAmpliacao);
+      if (!params.corrigirIpca) sp.set("ipca", "0");
       const res = await fetch(apiPath(`/api/precos/buscar?${sp.toString()}`));
       if (!res.ok) await lerErro(res, "Erro na pesquisa de preços");
       return res.json();

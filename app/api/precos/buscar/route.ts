@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
-import { classificarCodigo, pesquisarPrecos } from "@/lib/pesquisa-preco";
+import { classificarCodigo, normalizarPeriodo, pesquisarPrecos, validarPeriodo } from "@/lib/pesquisa-preco";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -39,6 +39,9 @@ export async function POST(request: NextRequest) {
     },
     exclusoes: body?.exclusoes ?? [],
     orcamentos: body?.orcamentos ?? [],
+    duplicidadesRevertidas: body?.duplicidadesRevertidas ?? [],
+    periodo: body?.periodo ?? null,
+    corrigirIpca: body?.corrigirIpca !== false,
   });
 }
 
@@ -53,6 +56,12 @@ export async function GET(request: NextRequest) {
       fabricante: sp.get("fabricante"),
       cnpjComprador: sp.get("cnpjComprador"),
     },
+    periodo: {
+      dataReferencia: sp.get("dataReferencia") ?? undefined,
+      mesesMercado: sp.get("meses") === "todos" ? null : (Number(sp.get("meses")) as 12 | 24 | 36) || 12,
+      justificativaAmpliacao: sp.get("justificativaPeriodo"),
+    },
+    corrigirIpca: sp.get("ipca") !== "0",
   });
 }
 
@@ -78,6 +87,9 @@ async function responder(p: Parameters<typeof pesquisarPrecos>[0]): Promise<Next
     if (p.uf && !/^[A-Z]{2}$/.test(p.uf)) {
       return NextResponse.json({ error: "UF inválida" }, { status: 400 });
     }
+    // Ampliar o período sem justificativa é recusado, não corrigido em silêncio (D1).
+    const erroPeriodo = validarPeriodo(normalizarPeriodo(p.periodo));
+    if (erroPeriodo) return NextResponse.json({ error: erroPeriodo }, { status: 400 });
 
     const resultado = await pesquisarPrecos(p);
     if (!resultado) {

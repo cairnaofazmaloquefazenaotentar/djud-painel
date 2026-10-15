@@ -126,6 +126,16 @@ export interface DuplicidadeRef {
   provavel: boolean;
 }
 
+/**
+ * Atualização pelo IPCA (D2): só os incisos I e II — bases oficiais, atas e a
+ * contratação similar informada. Mídia, cotação e nota fiscal (III a V) ficam
+ * no valor informado.
+ */
+export function corrigidoPeloIpca(fonte: FonteMercadoChave): boolean {
+  const inciso = INFO_FONTE[fonte].inciso;
+  return inciso === "I" || inciso === "II";
+}
+
 /** Ordem de apresentação e de prevalência na deduplicação. */
 export const ORDEM_FONTES: FonteMercadoChave[] = [
   "comprasgov",

@@ -99,6 +99,16 @@ python scripts/create_orcamento_table.py --dry-run|--confirm
 # --limpar-orfas, --saida relatorio.csv
 python scripts/import_cmed_mensal.py --dir cmed_originais_arr --dry-run|--confirm
 python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Python, cabeçalhos e valores
+
+# Avaliação da DLOG (out/2026) — uma vez por ambiente, ANTES do deploy que lê as colunas/tabelas
+python scripts/create_dadosabertos_tables.py --dry-run|--confirm   # DadosAbertosPreco/Coleta, PncpVinculo
+python scripts/alter_cesta_dlog.py --dry-run|--confirm             # colunas de D1/D2/P11–P13/P18 na cesta
+python scripts/import_ipca.py --dry-run|--confirm                  # IndiceIpca (SIDRA 1737); mensal, UPSERT
+
+# Autotestes e conferências (sem banco, exceto o mapa gerado)
+npx tsx scripts/autoteste-pesquisa-preco.ts       # período, IPCA, duplicidade, escolha gravada (roda no CI)
+npx tsx scripts/conferir-mapear-dados-abertos.ts  # mapear.ts × esperado_mapear.json (roda no CI)
+python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--painel r.json]
 ```
 
 ## Pesquisa de Preços (aba /pesquisa-preco)
@@ -112,9 +122,10 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
 - Fontes: CMED (teto), **Compras.gov.br — Painel de Preços** (API de dados abertos), BPS (API do
   Ministério da Saúde ou, sem coleta, a base histórica `PrecoBps`), SIASG judicial, PNCP, **atas de
-  registro de preços** (API) e **orçamento direto de fornecedor** (art. 5º, IV — informado pelo
-  usuário). Cruzamento por código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local o código puro;
-  as fontes de dados abertos gravam o CATMAT sem zeros.
+  registro de preços** (API) e os **preços informados pelo responsável** (P13: II contratação similar,
+  III mídia/sítio, IV cotação com fornecedor, V nota fiscal — cada tipo é uma fonte). Cruzamento por
+  código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local o código puro; as fontes de dados
+  abertos gravam o CATMAT sem zeros.
 - A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
   só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços. Não confundir
   com a fonte "Compras.gov.br" (tabela `DadosAbertosPreco`, origem `COMPRASGOV`).
@@ -169,8 +180,9 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   simplesmente não retorna nada. Não entra em `FONTE_SEM_CAMPO` de propósito — passa a filtrar
   sozinha quando os dados chegarem.
 - Fabricante recorta **também o teto**: o PMVG passa a ser o do laboratório escolhido.
-- A cesta guarda só `codigo`+`unidade`+`uf`; o relatório consolidado refaz a pesquisa **sem** os
-  filtros opcionais. A tela avisa isso ao adicionar um item com filtro ativo.
+- A cesta guarda `codigo`+`unidade`+`uf`, a curadoria e as escolhas do item, mas **não** os filtros
+  opcionais: o relatório consolidado refaz a pesquisa sem eles. A tela avisa isso ao adicionar um
+  item com filtro ativo.
 
 ### Estatística e curadoria (art. 6º da IN 65/2021)
 
@@ -189,9 +201,19 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   IQR incide sobre o que sobrou.
 - `REGISTROS_ANALISE` (150) por fonte = os mais recentes **mais todos os outliers do IQR**;
   sem a segunda parte, justamente os registros a desconsiderar ficariam fora da lista.
-- **Orçamento direto de fornecedor** entra como uma fonte a mais (uma mediana no vetor
-  consolidado) e **não** passa por IQR — as propostas foram escolhidas a dedo pelo
-  responsável. `considerarNoCalculo: false` mantém a cotação no relatório, fora da conta.
+- **Preços informados** (P13; `TIPOS_PRECO_INFORMADO` em `lib/pesquisa-preco-curadoria.ts`):
+  IV cotação com fornecedor, III mídia especializada ou sítio (URL e data/hora de acesso), V nota
+  fiscal (nº e chave da NF-e), II contratação similar fora das bases. Gravados em `CestaOrcamento`
+  (`tipo`, `url`, `acessadoEm`, `chaveNfe`, `justificativaForaPeriodo`). Cada tipo é uma fonte a mais
+  (uma mediana no vetor consolidado) e **não** passa por IQR — foram escolhidos a dedo.
+  `considerarNoCalculo: false` e "fora da janela do inciso sem justificativa" viram exclusão com
+  motivo declarado: o preço continua no relatório, fora da conta.
+- **A mesma compra em mais de uma base** (P18, `lib/pesquisa-preco-duplicidade.ts`, puro): mesma
+  chave de 22 dígitos → prevalece a primeira fonte de `ORDEM_FONTES`; BPS × Compras.gov.br por regra
+  (mesmo CNPJ, preço em 2 casas e UF; mesma quantidade até 15 dias, sem quantidade até 3) = provável
+  duplicata, reversível na curadoria (`duplicidadesRevertidas`). A cópia sai **só do conjunto
+  único** (`porRegistro`, aba do item: "Compõe = Não — duplicado de …"); cada base mantém a sua
+  estatística no consolidado por fonte.
 - O relatório nomina **empresa vencedora, marca e fabricante** em cada registro
   (BPS: fabricante; SIASG: fabricante + marca; PNCP: só fornecedor).
 - Tela de curadoria: `components/pesquisa-preco/curadoria-dialog.tsx`, usada tanto pela
@@ -215,6 +237,28 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   Sem escolha no pedido, o HTML usa `ESCOLHA_PADRAO` (padrão do painel).
 - Justificativa do preço (`lib/mapa-dlog/justificativa.ts`, pura) gerada dos números; editável
   na modal (o `AuditLog` registra a edição).
+
+### Período do art. 5º e IPCA (D1/D2 da avaliação da DLOG)
+
+- `lib/pesquisa-preco-periodo.ts` (puro): data de referência (padrão = hoje em Brasília; na cesta,
+  a da emissão; nunca no futuro), `mesesMercado` 12 (padrão) | 24 | 36 | null = todo o período.
+  Ampliar exige justificativa (≥ 20 caracteres): a rota **recusa com 400**, não corrige em silêncio;
+  a justificativa sai no relatório, na aba Parâmetros e no `AuditLog`. Sem ampliação automática.
+- Janela por fonte (`janelaDaFonte`): bases e atas (I e II) seguem o período escolhido; preços
+  informados ficam na janela do seu inciso (II e V: 12 meses; III e IV: 6), mesmo com as bases
+  ampliadas. Cada fonte devolve `periodo { inicio, fim, foraDoPeriodo, maisRecenteFora }`; fonte
+  vazia na janela com registros mais antigos gera a observação do art. 5º, §1º.
+- `lib/ipca.ts` (puro): mês-base = último índice publicado não posterior ao mês anterior à data de
+  referência; fator = NI(mês-base) ÷ NI(mês do preço) — composto, começa no mês **seguinte** ao do
+  preço (a DLOG inclui o próprio mês: convenção a confirmar, P10). Sem índice → fator 1, sinalizado.
+  Corrige só os incisos I e II (`corrigidoPeloIpca`: bases, atas e contratação similar); mídia,
+  cotação, nota fiscal e o **teto CMED nunca**. `RegistroMercado.precoNominal` guarda o publicado,
+  `preco` é o corrigido (estatística, IQR, curadoria e consolidados usam o corrigido).
+- Tabela `IndiceIpca` (`scripts/import_ipca.py`, SIDRA 1737: 2266 número-índice, 63 variação, ids
+  conferidos pelo nome; autoteste produto × razão). Sem a tabela, a pesquisa sai nominal com aviso.
+- HTML: seção "Período da Pesquisa e Atualização Monetária" (fontes corrigidas, fatores, mês do
+  preço mais antigo) e o nominal × fator ao lado de cada preço. XLSX: W = `INDEX/MATCH` na aba
+  "Índices IPCA" (fator = razão dos índices), X = N × (1 + W); `conferir_mapa_dlog.py` confere os dois.
 
 ### Mapa comparativo no modelo da DLOG (XLSX)
 
@@ -252,6 +296,12 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   `CestaOrcamento`. O relatório da cesta refaz `pesquisarPrecos` **reaplicando** as duas —
   são decisão do responsável, não resultado de consulta, e não caducam com ela. `exclusoes`
   e `orcamentos` no PATCH do item são **substituição total**, não incremento.
+- Escolhas gravadas no item (`scripts/alter_cesta_dlog.py`): `periodoMeses` (12/24/36; 0 = todo o
+  período) e `justificativaPeriodo` (D1), `corrigirIpca` (D2), `duplicidadesRevertidas` (P18),
+  `metodoPreco`/`regraTeto`/`aliquotaTeto` e `justificativa` (E2 — gravados pela modal a cada
+  emissão; a próxima emissão parte deles). `parametrosDoItem` monta a pesquisa do item com a **data
+  de referência da emissão**. PATCH que muda curadoria, período, IPCA, duplicatas ou método
+  **refaz o snapshot** de preço; quantidade, observação e o texto da justificativa, não.
 - Gerar o relatório esvazia a cesta por padrão (checkbox na modal permite manter).
 - HTML dos relatórios: blocos compartilhados em `lib/relatorio-pesquisa-preco.ts`, usados tanto pelo
   relatório de um item quanto pelo da cesta.

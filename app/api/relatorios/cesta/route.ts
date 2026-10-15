@@ -4,11 +4,12 @@ export const maxDuration = 60;
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
-import { listarCesta, type CestaItemDTO } from "@/lib/cesta";
+import { escolhaGravada, listarCesta, parametrosDoItem, type CestaItemDTO } from "@/lib/cesta";
 import { relatorioCestaSchema } from "@/lib/cesta-schemas";
 import {
   ESCOLHA_PADRAO,
   ROTULO_METODO,
+  hojeBrasilia,
   normalizarEscolha,
   rotuloRegraTeto,
   type EscolhaPreco,
@@ -30,7 +31,9 @@ import {
   conteudoEspecificacao,
   conteudoMetodo,
   conteudoObservacoes,
-  conteudoOrcamentos,
+  conteudoAtualizacaoMonetaria,
+  conteudoPeriodo,
+  conteudoPrecosInformados,
   conteudoPncp,
   conteudoReferencias,
   conteudoSiasg,
@@ -73,20 +76,16 @@ async function apurarCesta(
   itens: CestaItemDTO[],
   escolhas: Record<string, EscolhaItemInput>
 ): Promise<ItemProcessado[]> {
-  const apurados = await processarItens(itens, (cesta) => ({
-    codigo: cesta.codigo,
-    unidade: cesta.unidade,
-    uf: cesta.uf,
-    // A pesquisa é refeita, mas a curadoria do item é reaplicada: as
-    // exclusões justificadas e os orçamentos juntados são decisão do
-    // responsável, não resultado de consulta, e não caducam com ela.
-    exclusoes: cesta.exclusoes,
-    orcamentos: cesta.orcamentos,
-    escolha: normalizarEscolha(escolhas[cesta.id], ESCOLHA_PADRAO),
-  }));
+  // A pesquisa é refeita, mas a curadoria e as escolhas do item são
+  // reaplicadas: decisão do responsável, não resultado de consulta. A data de
+  // referência é a da emissão (D1).
+  const dataReferencia = hojeBrasilia();
+  const apurados = await processarItens(itens, (cesta) =>
+    parametrosDoItem(cesta, dataReferencia, normalizarEscolha(escolhas[cesta.id] ?? escolhaGravada(cesta), ESCOLHA_PADRAO))
+  );
   return apurados.map(({ item: cesta, resultado }) => {
     const precoFinal = resultado?.recomendacao.precoFinal ?? null;
-    const editada = escolhas[cesta.id]?.justificativa?.trim();
+    const editada = (escolhas[cesta.id]?.justificativa ?? cesta.justificativa)?.trim();
     return {
       cesta,
       resultado,
@@ -226,6 +225,9 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     ${cabecalho}
     <p style="font-size:11px;margin-bottom:8px;">${linhaCodigo(r)} · Unidade de fornecimento <strong>${esc(r.unidade)}</strong>${r.uf ? ` · UF ${esc(r.uf)}` : ""}</p>
     ${conteudoEspecificacao(r, especificacaoDoItem(r, ""))}
+    <div style="margin-top:10px;"><strong style="font-size:11px;">Período da pesquisa e atualização monetária (art. 5º)</strong></div>
+    ${conteudoPeriodo(r)}
+    ${conteudoAtualizacaoMonetaria(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">CMED/ANVISA — teto regulatório por unidade</strong></div>
     ${conteudoCmed(r)}
     <div style="margin-top:10px;"><strong style="font-size:11px;">Compras.gov.br — Painel de Preços</strong></div>
@@ -240,8 +242,8 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
     ${conteudoArp(r)}
     ${
       r.orcamentos.length
-        ? `<div style="margin-top:10px;"><strong style="font-size:11px;">Orçamentos diretos de fornecedor (art. 5º, IV)</strong></div>
-    ${conteudoOrcamentos(r)}`
+        ? `<div style="margin-top:10px;"><strong style="font-size:11px;">Preços informados pelo responsável (art. 5º, II a V)</strong></div>
+    ${conteudoPrecosInformados(r)}`
         : ""
     }
     <div style="margin-top:10px;"><strong style="font-size:11px;">Média, mediana e menor valor — por fonte e consolidados (art. 6º)</strong></div>
@@ -295,7 +297,7 @@ function gerarHTML(processados: ItemProcessado[], meta: MetaRelatorio): string {
       <li style="font-size:10px;margin-bottom:3px;">Os preços unitários foram apurados individualmente por item, na respectiva unidade de fornecimento, e o PMVG vigente (CMED) foi aplicado como teto obrigatório sempre que o preço de mercado o superou.</li>
       ${
         totalOrcamentos > 0
-          ? `<li style="font-size:10px;margin-bottom:3px;">${totalOrcamentos} orçamento(s) apresentado(s) diretamente por fornecedor foram juntados à pesquisa (art. 5º, IV da IN 65/2021) e estão detalhados no item correspondente.</li>`
+          ? `<li style="font-size:10px;margin-bottom:3px;">${totalOrcamentos} preço(s) informado(s) pelo responsável (cotação, mídia especializada, nota fiscal ou contratação similar — art. 5º, II a V da IN 65/2021) foram juntados à pesquisa e estão detalhados no item correspondente.</li>`
           : ""
       }
       ${
@@ -378,17 +380,21 @@ export async function POST(request: NextRequest) {
     if (limparCesta) {
       await db.cestaItem.deleteMany({ where: { userId } });
     } else {
-      // Mantém a cesta em dia com os preços que acabaram de sair no relatório.
+      // Mantém a cesta em dia com os preços que acabaram de sair no relatório
+      // e grava no item a escolha e a justificativa feitas na modal (E2).
       for (const p of processados) {
         const rec = p.resultado?.recomendacao;
-        if (!rec) continue;
+        const e = escolhas[p.cesta.id];
         await db.cestaItem.updateMany({
           where: { id: p.cesta.id, userId },
           data: {
-            precoReferencia: rec.precoReferencia,
-            limitePmvg: rec.limitePmvg,
-            precoFinal: rec.precoFinal,
-            calculadoEm: geradoEm,
+            ...(rec
+              ? { precoReferencia: rec.precoReferencia, limitePmvg: rec.limitePmvg, precoFinal: rec.precoFinal, calculadoEm: geradoEm }
+              : {}),
+            ...(e?.metodo ? { metodoPreco: e.metodo } : {}),
+            ...(e?.regraTeto ? { regraTeto: e.regraTeto } : {}),
+            ...(e?.aliquota ? { aliquotaTeto: e.aliquota } : {}),
+            ...(e && e.justificativa !== undefined ? { justificativa: e.justificativa?.trim() || null } : {}),
           },
         });
       }
@@ -415,7 +421,11 @@ export async function POST(request: NextRequest) {
             precoFinal: p.resultado?.recomendacao.precoFinal ?? null,
             escolha: p.resultado?.recomendacao.escolha ?? null,
             escolhaExplicita: escolhaExplicita(escolhas[p.cesta.id]),
-            justificativaEditada: !!escolhas[p.cesta.id]?.justificativa?.trim(),
+            justificativaEditada: !!(escolhas[p.cesta.id]?.justificativa ?? p.cesta.justificativa)?.trim(),
+            // Período (com a justificativa da ampliação), IPCA e duplicatas mantidas (D1/D2/P18).
+            periodo: p.resultado?.periodo ?? null,
+            ipca: p.resultado ? { ligado: p.resultado.ipca.ligado, mesBase: p.resultado.ipca.mesBase } : null,
+            duplicidadesRevertidas: p.cesta.duplicidadesRevertidas,
             mediaConsolidada: p.resultado?.recomendacao.mediaConsolidada ?? null,
             menorConsolidado: p.resultado?.recomendacao.menorConsolidado ?? null,
             // Rastreabilidade fora do documento: quem descartou o quê e por quê.

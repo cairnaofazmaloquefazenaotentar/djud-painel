@@ -1,5 +1,12 @@
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
-import { NOME_FONTE_CURADA } from "@/lib/pesquisa-preco-curadoria";
+import {
+  NOME_FONTE_CURADA,
+  ORDEM_TIPOS_INFORMADOS,
+  TIPOS_PRECO_INFORMADO,
+  type OrcamentoFornecedor,
+} from "@/lib/pesquisa-preco-curadoria";
+import { INFO_FONTE, ORDEM_FONTES, corrigidoPeloIpca } from "@/lib/pesquisa-preco-fontes";
+import { descricaoPeriodo } from "@/lib/pesquisa-preco-periodo";
 import {
   ROTULO_METODO,
   rotuloRegraTeto,
@@ -49,12 +56,32 @@ export function fmtInt(n: number): string {
   return n.toLocaleString("pt-BR");
 }
 
+/**
+ * Data de calendário (meia-noite UTC: "2026-03-10", data da compra, da
+ * proposta) sai como foi gravada; instante (data e hora: emissão, coleta), no
+ * fuso de Brasília. Sem isso, o mesmo relatório mudava de dia conforme o fuso
+ * do servidor.
+ */
+function fusoDe(d: Date): string {
+  const meiaNoiteUtc =
+    d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return meiaNoiteUtc ? "UTC" : "America/Sao_Paulo";
+}
+
 export function fmtDate(d: Date | string): string {
-  return new Date(d).toLocaleDateString("pt-BR");
+  const dt = new Date(d);
+  return dt.toLocaleDateString("pt-BR", { timeZone: fusoDe(dt) });
 }
 
 export function fmtDateLong(d: Date | string): string {
-  return new Date(d).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" });
+  const dt = new Date(d);
+  return dt.toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric", timeZone: fusoDe(dt) });
+}
+
+/** "2026-09" → "09/2026". */
+export function fmtMes(mes: string | null | undefined): string {
+  if (!mes) return "—";
+  return `${mes.slice(5, 7)}/${mes.slice(0, 4)}`;
 }
 
 export function slug(s: string): string {
@@ -197,8 +224,9 @@ export function conteudoMetodo(
         <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
         <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT), na base carregada no painel.</li>
         <li><strong>Atas de registro de preços</strong> (inciso II): itens de atas com vigência iniciada nos últimos 12 meses, por código CATMAT, coletados da API de dados abertos, com o link da ata no PNCP.</li>
-        <li><strong>Orçamento direto de fornecedor</strong> (art. 5º, IV) — propostas apresentadas diretamente ao órgão, quando juntadas ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
+        <li><strong>Preços informados pelo responsável</strong> (art. 5º, II a V) — contratação similar fora das bases, mídia especializada ou sítio eletrônico, cotação com fornecedor e nota fiscal eletrônica, quando juntados ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
+      <p style="font-size:11px;margin-top:6px;">Cada fonte é consultada no período do art. 5º — bases e contratações similares, 12 meses antes da data de referência, salvo ampliação justificada; mídia e cotação, 6 meses — e, por padrão, os preços dos incisos I e II são atualizados pelo IPCA. A data de referência, o período e a atualização aplicados constam da seção própria.</p>
       <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. ${
         metodoUnico
           ? `O preço de referência adotado é o seguinte: <strong>${esc(ROTULO_METODO[metodoUnico].longo.toLowerCase())}</strong>${
@@ -255,10 +283,17 @@ function colunasMercado(ultima: Coluna<RegistroMercado>): Coluna<RegistroMercado
       // sem a marca, quem lê vê um preço dez vezes menor que a mediana ao lado
       // dela e não tem como saber que ele ficou fora do cálculo.
       label: "Preço",
-      fn: (r) =>
-        r.outlierIqr
+      fn: (r) => {
+        const preco = r.outlierIqr
           ? `<span style="text-decoration:line-through;color:#c0392b;">${fmtBRL(r.preco)}</span> <sup>*</sup>`
-          : fmtBRL(r.preco),
+          : fmtBRL(r.preco);
+        // Com o IPCA, o publicado (nominal) aparece sempre ao lado (P10).
+        return r.fatorIpca != null && r.fatorIpca !== 1 && r.precoNominal != null
+          ? `${preco}<br/><span style="font-size:8px;color:#666;">${fmtBRL(r.precoNominal)} × ${r.fatorIpca
+              .toFixed(4)
+              .replace(".", ",")}</span>`
+          : preco;
+      },
       right: true,
     },
     { label: "Data", fn: (r) => (r.data ? fmtDate(r.data) : "—") },
@@ -280,6 +315,31 @@ function boxesEstatisticas(e: Estatisticas): string {
       </div>`;
 }
 
+/**
+ * Janela do art. 5º aplicada à fonte (D1): " Período considerado: 12 meses (de
+ * 15/10/2025 a 15/10/2026), art. 5º, inciso I. Fora do período: 3 registro(s),
+ * o mais recente em 02/09/2025 — não entram na apuração."
+ */
+export function textoPeriodoFonte(f: FonteMercadoResultado): string {
+  const p = f.periodo;
+  if (!p) return "";
+  const janela = p.inicio
+    ? `${p.meses} meses (de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)})`
+    : `todo o período disponível até ${fmtDate(p.fim)}`;
+  // Base: o que está fora da janela nem é lido. Preço informado: fica listado e
+  // sai do cálculo, salvo justificativa do responsável (coluna "No cálculo").
+  const fora = p.foraDoPeriodo
+    ? ` Fora do período: <strong>${fmtInt(p.foraDoPeriodo)}</strong> ${
+        f.origemDados === "INFORMADO" ? "preço(s)" : "registro(s)"
+      }${p.maisRecenteFora ? `, o mais recente em ${fmtDate(p.maisRecenteFora)}` : ""} — ${
+        f.origemDados === "INFORMADO"
+          ? "fora do cálculo, salvo justificativa do responsável (ver a coluna “No cálculo”)."
+          : "não entram na apuração."
+      }`
+    : "";
+  return ` Período considerado: ${janela}, art. 5º, inciso ${p.inciso}.${fora}`;
+}
+
 function conteudoMercado(
   fonte: FonteMercadoResultado,
   vazio: string,
@@ -291,12 +351,14 @@ function conteudoMercado(
     return `<p style="color:#666;font-style:italic;font-size:11px;">Esta base não registra ${esc(campos)}. Com esse filtro ativo, a fonte foi excluída da apuração do preço de referência.</p>`;
   }
   if (fonte.total === 0) {
-    return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}</p>`;
+    // Vazia na janela, mas com registros fora dela: diz quantos e de quando
+    // (art. 5º, §1º — priorizar os incisos I e II e justificar).
+    return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}${textoPeriodoFonte(fonte)}</p>`;
   }
   const considerados = fonte.registros.filter((r) => r.excluidoPor === null);
   const exibidos = considerados.slice(0, 10);
   return `
-      <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes. ${
+      <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)}${textoPeriodoFonte(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes do período. ${
         fonte.outliersRemovidos > 0
           ? `Removidos <strong>${fonte.outliersRemovidos}</strong> outliers pelo método IQR.`
           : "Nenhum outlier identificado."
@@ -582,30 +644,90 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
 
 // ── Orçamentos diretos de fornecedor (art. 5º, IV) ───────────────────────────
 
-export function conteudoOrcamentos(resultado: ResultadoPesquisa): string {
-  const { orcamentos, resultados, unidade } = resultado;
-  if (!orcamentos.length) return "";
-  const noCalculo = resultados.orcamentos?.estatisticas.n ?? 0;
+/** Situação de um preço informado no cálculo: considerado, fora do período justificado ou fora. */
+function situacaoInformado(o: OrcamentoFornecedor, resultado: ResultadoPesquisa): string {
+  const fonte = TIPOS_PRECO_INFORMADO[o.tipo ?? "IV"].fonte;
+  const descarte = resultado.descartes.find((d) => d.fonte === fonte && d.id === o.id);
+  if (descarte) return `<span style="color:#c0392b;">Não — ${esc(descarte.motivo)}</span>`;
+  const per = resultado.resultados[fonte as keyof ResultadoPesquisa["resultados"]] as FonteMercadoResultado | null | undefined;
+  const dia = o.dataOrcamento.slice(0, 10);
+  const fora = per?.periodo && ((per.periodo.inicio !== null && dia < per.periodo.inicio) || dia > per.periodo.fim);
+  if (fora && o.justificativaForaPeriodo) {
+    return `Sim — fora do período do inciso, mantido com justificativa: ${esc(o.justificativaForaPeriodo)}`;
+  }
+  return "Sim";
+}
 
-  return `
-    <p style="font-size:11px;margin-bottom:8px;">Foram juntadas ao processo <strong>${orcamentos.length}</strong> proposta(s) apresentada(s) diretamente por fornecedor, nos termos do art. 5º, IV da IN SEGES/ME nº 65/2021. ${
-      noCalculo > 0
-        ? `<strong>${noCalculo}</strong> compõe(m) a apuração do preço de referência como fonte adicional; a(s) demais permanece(m) registrada(s) apenas para instrução do processo.`
-        : "Nenhuma foi considerada no cálculo do preço de referência — todas constam apenas para instrução do processo."
-    } Esta fonte não passa pela remoção automática de outliers (IQR): as propostas foram selecionadas pelo responsável, e descartá-las automaticamente contrariaria a própria juntada.</p>
-    ${tabela(orcamentos, [
-      { label: "Fornecedor", fn: (o) => esc(o.fornecedor.substring(0, 38)) },
+/** Identificação do documento de cada tipo: proposta, página consultada, NF-e ou contrato. */
+function identificacaoInformado(o: OrcamentoFornecedor): string {
+  const partes: string[] = [];
+  if (o.documento) partes.push(esc(o.documento));
+  if (o.chaveNfe) partes.push(`chave NF-e ${esc(o.chaveNfe)}`);
+  if (o.url) {
+    partes.push(
+      `<a href="${esc(o.url)}" style="color:#1a56db;word-break:break-all;">${esc(o.url.substring(0, 60))}</a>${
+        o.acessadoEm ? ` (acesso em ${esc(new Date(o.acessadoEm).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }))})` : ""
+      }`
+    );
+  }
+  return partes.length ? partes.join("<br/>") : "—";
+}
+
+/**
+ * Preços informados pelo responsável (P13): cotação com fornecedor (IV), mídia
+ * especializada ou sítio (III), nota fiscal (V) e contratação similar fora das
+ * bases (II). Cada tipo é uma fonte própria no consolidado; nenhum passa por
+ * IQR; fora da janela do seu inciso sai do cálculo, salvo justificativa.
+ */
+export function conteudoPrecosInformados(resultado: ResultadoPesquisa): string {
+  const { orcamentos, unidade } = resultado;
+  if (!orcamentos.length) return "";
+  const considerados = orcamentos.filter((o) => situacaoInformado(o, resultado).startsWith("Sim")).length;
+
+  const grupos = ORDEM_TIPOS_INFORMADOS.map((tipo) => {
+    const doTipo = orcamentos.filter((o) => (o.tipo ?? "IV") === tipo);
+    if (!doTipo.length) return "";
+    const { fonte, rotulo } = TIPOS_PRECO_INFORMADO[tipo];
+    const dados = resultado.resultados[fonte as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    const registro = (id: string) => dados?.registros.find((r) => r.id === id);
+    return `
+    <div style="margin-top:8px;"><strong style="font-size:10px;">${esc(rotulo)}</strong>${
+      dados ? `<span style="font-size:10px;color:#444;">${textoPeriodoFonte(dados)}</span>` : ""
+    }</div>
+    ${tabela(doTipo, [
+      { label: tipo === "III" ? "Fonte / Fornecedor" : "Fornecedor", fn: (o) => esc(o.fornecedor.substring(0, 38)) },
       { label: "CNPJ", fn: (o) => esc(o.cnpj || "—") },
       { label: "Marca / Fabricante", fn: (o) => esc(marcaFabricante(o).substring(0, 30)) },
-      { label: `Valor por ${unidade}`, fn: (o) => `<strong>${fmtBRL(o.valorUnitario)}</strong>`, right: true },
-      { label: "Data", fn: (o) => fmtDate(o.dataOrcamento) },
-      { label: "Validade", fn: (o) => (o.validade ? fmtDate(o.validade) : "—") },
-      { label: "Documento", fn: (o) => esc((o.documento || "—").substring(0, 24)) },
       {
-        label: "No cálculo",
-        fn: (o) => (o.considerarNoCalculo ? "Sim" : "<span style='color:#c0392b;'>Não</span>"),
+        label: `Valor por ${unidade}`,
+        fn: (o) => {
+          const r = registro(o.id);
+          // A contratação similar (II) é atualizada pelo IPCA como as bases.
+          return r && r.fatorIpca != null && r.fatorIpca !== 1
+            ? `<strong>${fmtBRL(r.preco)}</strong><br/><span style="font-size:8px;color:#666;">${fmtBRL(o.valorUnitario)} × ${r.fatorIpca
+                .toFixed(4)
+                .replace(".", ",")}</span>`
+            : `<strong>${fmtBRL(o.valorUnitario)}</strong>`;
+        },
+        right: true,
       },
-    ])}
+      { label: tipo === "V" ? "Emissão" : "Data", fn: (o) => fmtDate(o.dataOrcamento) },
+      ...(tipo === "IV" ? [{ label: "Validade", fn: (o: OrcamentoFornecedor) => (o.validade ? fmtDate(o.validade) : "—") }] : []),
+      { label: TIPOS_PRECO_INFORMADO[tipo].documento, fn: identificacaoInformado },
+      { label: "No cálculo", fn: (o) => situacaoInformado(o, resultado) },
+    ])}`;
+  }).join("");
+
+  return `
+    <p style="font-size:11px;margin-bottom:8px;">Foram juntados ao processo <strong>${orcamentos.length}</strong> preço(s) informado(s) pelo responsável pela pesquisa (art. 5º, incisos II a V da IN SEGES/ME nº 65/2021). ${
+      considerados > 0
+        ? `<strong>${considerados}</strong> compõe(m) a apuração do preço de referência — cada tipo como uma fonte própria no consolidado; os demais permanecem registrados apenas para instrução do processo, com o motivo.`
+        : "Nenhum foi considerado no cálculo do preço de referência — todos constam apenas para instrução do processo, com o motivo."
+    } Estes preços não passam pela remoção automática de outliers (IQR): foram selecionados pelo responsável, e descartá-los automaticamente contrariaria a própria juntada. Janelas do art. 5º: contratação similar (II) e nota fiscal (V), 12 meses; mídia especializada (III) e cotação com fornecedor (IV), 6 meses — fora delas, o preço sai do cálculo, salvo justificativa.</p>
+    ${grupos}
     ${
       orcamentos.some((o) => o.observacao)
         ? `<ul style="margin-top:6px;padding-left:18px;">${orcamentos
@@ -615,6 +737,82 @@ export function conteudoOrcamentos(resultado: ResultadoPesquisa): string {
                 `<li style="font-size:10px;margin-bottom:2px;"><strong>${esc(o.fornecedor)}:</strong> ${esc(o.observacao)}</li>`
             )
             .join("")}</ul>`
+        : ""
+    }`;
+}
+
+// ── Período e atualização monetária (D1/D2) ──────────────────────────────────
+
+/** Data de referência, período das bases e janelas dos preços informados (D1). */
+export function conteudoPeriodo(resultado: ResultadoPesquisa): string {
+  const p = resultado.periodo;
+  const vazias = ORDEM_FONTES.filter((f) => !INFO_FONTE[f].informado).flatMap((f) => {
+    const dados = resultado.resultados[f as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    return dados && dados.total === 0 && (dados.periodo?.foraDoPeriodo ?? 0) > 0 ? [INFO_FONTE[f].nome] : [];
+  });
+  return `<p style="font-size:11px;margin-bottom:6px;">${esc(descricaoPeriodo(p))}</p>
+    <p style="font-size:10px;color:#444;margin-bottom:6px;">A janela de cada fonte e os registros que ficaram fora dela constam do resultado da respectiva fonte. Não há ampliação automática: ampliar o período das bases exige justificativa do responsável, impressa acima.</p>${
+      vazias.length
+        ? `<p style="font-size:10px;color:#c0392b;margin-bottom:6px;">Sem preço no período, mas com registros mais antigos: ${esc(vazias.join(", "))}. Art. 5º, §1º: priorizam-se os incisos I e II; a ausência de preços no período deve ser considerada na justificativa do preço adotado.</p>`
+        : ""
+    }`;
+}
+
+/**
+ * Atualização monetária (D2): mês-base, convenção, fontes corrigidas e o
+ * intervalo dos fatores. O preço publicado aparece ao lado do atualizado em
+ * cada registro; o teto CMED nunca é corrigido.
+ */
+export function conteudoAtualizacaoMonetaria(resultado: ResultadoPesquisa): string {
+  const { ipca } = resultado;
+  if (!ipca.pedido) {
+    return `<p style="font-size:11px;">Atualização monetária não aplicada por opção do responsável: os preços estão em valores nominais, como publicados nas bases.</p>`;
+  }
+  if (!ipca.ligado || !ipca.mesBase) {
+    return `<p style="font-size:11px;color:#c0392b;">Atualização pelo IPCA pedida, mas a tabela de números-índices não estava disponível na emissão: os preços estão em valores nominais, como publicados.</p>`;
+  }
+  const linhas = ORDEM_FONTES.filter(corrigidoPeloIpca).flatMap((f) => {
+    const dados = resultado.resultados[f as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    const corrigidos = (dados?.registros ?? []).filter((r) => r.fatorIpca != null && r.fatorIpca !== 1);
+    if (!dados || !dados.registros.length) return [];
+    const fatores = corrigidos.map((r) => r.fatorIpca as number);
+    const meses = dados.registros.map((r) => r.mesIndice).filter(Boolean) as string[];
+    return [
+      {
+        fonte: INFO_FONTE[f].nome,
+        registros: dados.registros.length,
+        corrigidos: corrigidos.length,
+        menor: fatores.length ? Math.min(...fatores) : null,
+        maior: fatores.length ? Math.max(...fatores) : null,
+        maisAntigo: meses.length ? meses.reduce((a, b) => (a < b ? a : b)) : null,
+      },
+    ];
+  });
+  const fator = (v: number | null) => (v === null ? "—" : v.toFixed(4).replace(".", ","));
+  return `<p style="font-size:11px;margin-bottom:6px;">Os preços das bases de compras públicas, das atas e das contratações similares (art. 5º, incisos I e II) foram atualizados pelo IPCA (IBGE) até <strong>${fmtMes(
+    ipca.mesBase
+  )}</strong> — o último número-índice publicado não posterior ao mês anterior à data de referência (${fmtDate(
+    resultado.periodo.dataReferencia
+  )}). ${esc(ipca.convencao)} O fator é composto (razão entre números-índices), e não a soma das variações mensais. O preço publicado (nominal) consta ao lado do atualizado em cada registro. Mídia especializada, cotação com fornecedor e nota fiscal (incisos III a V) ficam no valor informado, e o teto CMED não é corrigido.${
+    ipca.semIndice
+      ? ` <span style="color:#c0392b;">${fmtInt(ipca.semIndice)} registro(s) sem número-índice para o mês do preço ficaram sem correção (fator 1).</span>`
+      : ""
+  }</p>
+    ${
+      linhas.length
+        ? tabela(linhas, [
+            { label: "Fonte", fn: (l) => esc(l.fonte) },
+            { label: "Registros", fn: (l) => fmtInt(l.registros), right: true },
+            { label: "Atualizados", fn: (l) => fmtInt(l.corrigidos), right: true },
+            { label: "Fator (menor – maior)", fn: (l) => (l.menor === null ? "—" : `${fator(l.menor)} – ${fator(l.maior)}`), right: true },
+            { label: "Mês do preço mais antigo", fn: (l) => fmtMes(l.maisAntigo) },
+          ])
         : ""
     }`;
 }

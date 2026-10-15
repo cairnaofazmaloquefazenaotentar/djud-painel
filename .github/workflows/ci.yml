@@ -26,6 +26,13 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # Módulos puros da Pesquisa de Preços (período, IPCA, duplicidade) e o
+      # mapeamento das APIs de dados abertos contra o contrato gravado.
+      - name: Autotestes
+        run: |
+          npx tsx scripts/autoteste-pesquisa-preco.ts
+          npx tsx scripts/conferir-mapear-dados-abertos.ts
+
   lint:
     name: ESLint
     runs-on: ubuntu-latest

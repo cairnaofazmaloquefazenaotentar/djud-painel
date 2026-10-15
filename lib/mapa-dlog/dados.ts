@@ -19,6 +19,7 @@ import { ESTATISTICAS_VAZIAS, type Estatisticas } from "@/lib/pesquisa-preco-cur
 import type { RegistroMercado, ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { gerarJustificativa, type ContextoJustificativa } from "@/lib/mapa-dlog/justificativa";
 import { NAO_DISPONIVEL, NAO_INFORMADO, abaItem } from "@/lib/mapa-dlog/layout";
+import { descricaoPeriodo } from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Mapa comparativo no modelo da DLOG — dados de cada aba, sem exceljs.
@@ -106,6 +107,8 @@ export interface LinhaBase {
   identificador: string;
   /** AB — compõe a estatística da própria fonte (duplicata entre bases conta na sua fonte). */
   compoeFonte: boolean;
+  /** O preço foi corrigido pelo IPCA (incisos I e II): a coluna W vira fórmula. */
+  ipcaAplicado: boolean;
 }
 
 export interface ResumoFonte {
@@ -182,6 +185,8 @@ export interface MapaItem {
   cmed: LinhaCmed[];
   /** Texto curto da regra do teto, para a aba Parâmetros. */
   descricaoTeto: string;
+  /** Período do art. 5º aplicado ao item (aba Parâmetros). */
+  descricaoPeriodo: string;
 }
 
 // ── Utilidades ───────────────────────────────────────────────────────────────
@@ -222,9 +227,10 @@ function motivoNaoCompoe(
   somenteRegistro: Set<string>
 ): string {
   if (r.excluidoPor) {
-    return fonte === "orcamentos" && somenteRegistro.has(r.id)
-      ? "somente registro"
-      : `exclusão justificada: ${r.excluidoPor}`;
+    if (INFO_FONTE[fonte].informado && somenteRegistro.has(r.id)) return "somente registro";
+    // Fora da janela do inciso é regra do art. 5º, não decisão do responsável.
+    if (r.excluidoPor.startsWith("Fora do período")) return `f${r.excluidoPor.slice(1)}`;
+    return `exclusão justificada: ${r.excluidoPor}`;
   }
   if (r.outlierIqr) return "fora do IQR";
   if (!(r.preco > 0)) return "preço zerado";
@@ -289,6 +295,7 @@ function linhaDaBase(
     motivo,
     identificador: `${fonte}:${r.id}`,
     compoeFonte,
+    ipcaAplicado: ipcaLigado,
   };
 }
 
@@ -382,6 +389,7 @@ export function montarMapaItem(e: EntradaMapa): MapaItem {
       ipcaLigado: false,
       cmed: [],
       descricaoTeto: "—",
+      descricaoPeriodo: "—",
     };
   }
 
@@ -439,6 +447,9 @@ export function montarMapaItem(e: EntradaMapa): MapaItem {
     descricaoTeto: `${rotuloRegraTeto(rec.escolha.regraTeto, rec.escolha.aliquota)}${
       rec.teto ? ` — ${rec.teto.produto} (reg. ${rec.teto.registro})` : " — sem PMVG vigente"
     }`,
+    descricaoPeriodo: `${descricaoPeriodo(r.periodo)}${
+      r.ipca.ligado && r.ipca.mesBase ? ` IPCA até ${r.ipca.mesBase.slice(5, 7)}/${r.ipca.mesBase.slice(0, 4)}.` : " Sem correção pelo IPCA."
+    }${r.duplicidades ? ` ${r.duplicidades} duplicata(s) entre bases fora do conjunto único.` : ""}`,
   };
 }
 

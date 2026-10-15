@@ -61,6 +61,14 @@ import {
   type EscolhaPreco,
 } from "@/lib/pesquisa-preco-metodo";
 import { gerarJustificativa } from "@/lib/mapa-dlog/justificativa";
+import { mesAnterior } from "@/lib/ipca";
+import {
+  JUSTIFICATIVA_PERIODO_MIN,
+  OPCOES_MESES,
+  hojeBrasilia,
+  type MesesMercado,
+} from "@/lib/pesquisa-preco-periodo";
+import { useQuery } from "@tanstack/react-query";
 import type {
   CmedResultado,
   Consolidado,
@@ -68,6 +76,7 @@ import type {
   ItemPesquisa,
   Recomendacao,
   RegistroMercado,
+  ResultadoPesquisa,
   UnidadeOpcao,
 } from "@/lib/pesquisa-preco";
 
@@ -171,6 +180,20 @@ function SourcePanel({
           </Badge>
         )}
       </div>
+      {stats?.periodo && (
+        <p className="text-[11px] text-muted-foreground">
+          {stats.periodo.meses === null ? "Todo o período" : `${stats.periodo.meses} meses`}
+          {stats.periodo.inicio ? ` (${fmtDate(`${stats.periodo.inicio}T12:00:00Z`)} a ${fmtDate(`${stats.periodo.fim}T12:00:00Z`)})` : ""}
+          {" · inciso "}
+          {stats.periodo.inciso}
+          {stats.periodo.foraDoPeriodo > 0 && (
+            <span className={stats.total === 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
+              {` · fora do período: ${fmtInt(stats.periodo.foraDoPeriodo)}`}
+              {stats.periodo.maisRecenteFora ? ` (mais recente em ${fmtDate(stats.periodo.maisRecenteFora)})` : ""}
+            </span>
+          )}
+        </p>
+      )}
       {stats?.origemDados === "API" && stats.coleta?.coletadoEm && (
         <p className={`text-[11px] ${stats.coleta.valida ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}`}>
           {stats.coleta.origemCarga === "EXTRATOR" ? "Carga do extrator" : "Coletado"} em{" "}
@@ -231,7 +254,7 @@ function SourcePanel({
           </div>
           <p className="text-[11px] text-muted-foreground text-center">
             {fmtInt(stats.estatisticas.n)} preço(s) no cálculo, de uma amostra de{" "}
-            {fmtInt(stats.amostra)} registro(s) mais recente(s)
+            {fmtInt(stats.amostra)} registro(s) {stats.periodo ? "no período" : "mais recente(s)"}
             {stats.outliersRemovidos > 0 ? ` · ${stats.outliersRemovidos} outlier(s) removido(s) (IQR)` : ""}
             {stats.excluidosManualmente > 0
               ? ` · ${stats.excluidosManualmente} desconsiderado(s) com justificativa`
@@ -271,6 +294,16 @@ function SourcePanel({
                       </p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground">
                         <span className="font-semibold text-foreground">{fmt(r.preco)}</span>
+                        {r.fatorIpca != null && r.fatorIpca !== 1 && r.precoNominal != null && (
+                          <span title="Preço publicado × fator do IPCA = preço corrigido">
+                            ({fmt(r.precoNominal)} × {r.fatorIpca.toFixed(4)} IPCA)
+                          </span>
+                        )}
+                        {r.duplicadoDe && (
+                          <Badge variant="outline" className="h-4 text-[10px]">
+                            {r.duplicadoDe.provavel ? "provável duplicata" : "duplicada"}
+                          </Badge>
+                        )}
                         {r.unidade && <span>/{r.unidade}</span>}
                         <span>{fmtDate(r.data)}</span>
                         {r.uf && <span>{r.uf}</span>}
@@ -605,6 +638,12 @@ export default function PesquisaPrecoPage() {
   const [uf, setUf] = useState("todos");
   const [params, setParams] = useState<ParametrosBusca | null>(null);
 
+  // Parâmetros da apuração (D1/D2): data de referência, período do art. 5º e IPCA.
+  const [dataReferencia, setDataReferencia] = useState(() => hojeBrasilia());
+  const [mesesMercado, setMesesMercado] = useState<MesesMercado>(12);
+  const [justificativaPeriodo, setJustificativaPeriodo] = useState("");
+  const [corrigirIpca, setCorrigirIpca] = useState(true);
+
   // "Mais filtros" — recorte opcional, recolhido por padrão.
   const [maisFiltros, setMaisFiltros] = useState(false);
   const [fornecedor, setFornecedor] = useState("");
@@ -621,6 +660,7 @@ export default function PesquisaPrecoPage() {
   const [curadoriaDestino, setCuradoriaDestino] = useState<"revisar" | "relatorio">("revisar");
   const [exclusoes, setExclusoes] = useState<ExclusaoRegistro[]>([]);
   const [orcamentos, setOrcamentos] = useState<OrcamentoFornecedor[]>([]);
+  const [duplicidadesRevertidas, setDuplicidadesRevertidas] = useState<string[]>([]);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [avisoCesta, setAvisoCesta] = useState<{ texto: string; erro: boolean } | null>(null);
   const [relMeta, setRelMeta] = useState({
@@ -646,10 +686,34 @@ export default function PesquisaPrecoPage() {
   const unidadeSelecionada = unidades.find((u) => u.unidade === unidade) ?? null;
 
   const {
-    data: result,
-    isFetching: loading,
+    data: resultadoBruto,
+    isFetching: carregandoBusca,
     error: erroBusca,
   } = usePesquisaPrecos(params);
+
+  // Com curadoria (descartes, preços informados, duplicatas mantidas), a tela
+  // mostra a pesquisa refeita no servidor com ela — o mesmo número que vai para
+  // o relatório. Sem curadoria, a pesquisa simples basta.
+  const temCuradoria = exclusoes.length + orcamentos.length + duplicidadesRevertidas.length > 0;
+  const { data: resultadoCurado, isFetching: carregandoCurado } = useQuery<ResultadoPesquisa>({
+    queryKey: ["precos-buscar-curado", params, exclusoes, orcamentos, duplicidadesRevertidas],
+    queryFn: async () => {
+      const res = await fetch(apiPath("/api/precos/buscar"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...params, exclusoes, orcamentos, duplicidadesRevertidas }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Erro ao aplicar a curadoria");
+      }
+      return res.json();
+    },
+    enabled: !!params && temCuradoria,
+    staleTime: 60 * 1000,
+  });
+  const result = temCuradoria ? (resultadoCurado ?? resultadoBruto) : resultadoBruto;
+  const loading = carregandoBusca || (temCuradoria && carregandoCurado);
 
   const adicionarCesta = useAdicionarItemCesta();
 
@@ -660,6 +724,7 @@ export default function PesquisaPrecoPage() {
     setAvisoCesta(null);
     setExclusoes([]);
     setOrcamentos([]);
+    setDuplicidadesRevertidas([]);
     setJustificativaEditada(false);
   }, [params]);
 
@@ -697,7 +762,12 @@ export default function PesquisaPrecoPage() {
   const filtrosInvalidos = fornecedorCurto || fabricanteCurto || cnpjCurto;
   const qtdFiltros = [fornecedor.trim(), fabricante.trim(), digitosCnpj].filter(Boolean).length;
 
-  const canSubmit = !!material && !!unidade && !carregandoItem && !filtrosInvalidos;
+  // Ampliar o período exige justificativa (D1): o Buscar fica bloqueado com o motivo à vista.
+  const periodoAmpliado = mesesMercado !== 12;
+  const periodoSemJustificativa =
+    periodoAmpliado && justificativaPeriodo.trim().length < JUSTIFICATIVA_PERIODO_MIN;
+
+  const canSubmit = !!material && !!unidade && !carregandoItem && !filtrosInvalidos && !periodoSemJustificativa;
 
   const limparFiltros = useCallback(() => {
     setFornecedor("");
@@ -714,8 +784,14 @@ export default function PesquisaPrecoPage() {
       fornecedor: fornecedor.trim() || null,
       fabricante: fabricante.trim() || null,
       cnpjComprador: cnpjComprador.trim() || null,
+      periodo: {
+        dataReferencia,
+        mesesMercado,
+        justificativaAmpliacao: periodoAmpliado ? justificativaPeriodo.trim() : null,
+      },
+      corrigirIpca,
     });
-  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador]);
+  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca]);
 
   const handleAdicionarCesta = useCallback(() => {
     if (!params) return;
@@ -728,6 +804,12 @@ export default function PesquisaPrecoPage() {
         quantidade: 1,
         exclusoes,
         orcamentos,
+        // O período e o IPCA da pesquisa viajam com o item; a data de referência
+        // na cesta é sempre a da emissão.
+        periodoMeses: params.periodo.mesesMercado === null ? 0 : params.periodo.mesesMercado,
+        justificativaPeriodo: params.periodo.justificativaAmpliacao,
+        corrigirIpca: params.corrigirIpca,
+        duplicidadesRevertidas,
       },
       {
         onSuccess: (r) =>
@@ -740,7 +822,7 @@ export default function PesquisaPrecoPage() {
         onError: (e) => setAvisoCesta({ texto: e.message, erro: true }),
       }
     );
-  }, [adicionarCesta, exclusoes, orcamentos, params]);
+  }, [adicionarCesta, exclusoes, orcamentos, params, duplicidadesRevertidas]);
 
   /** Corpo comum ao HTML e ao mapa XLSX — a mesma escolha nos dois documentos. */
   const corpoEmissao = useCallback(
@@ -749,12 +831,13 @@ export default function PesquisaPrecoPage() {
       ...relMeta,
       exclusoes,
       orcamentos,
+      duplicidadesRevertidas,
       quantidade: Math.max(1, Math.trunc(Number(quantidade)) || 1),
       // Texto não editado vai como null: o servidor gera o mesmo texto com os
       // números da emissão.
       escolha: { ...escolha, justificativa: justificativaEditada ? textoJustificativa : null },
     }),
-    [params, relMeta, exclusoes, orcamentos, quantidade, escolha, textoJustificativa, justificativaEditada]
+    [params, relMeta, exclusoes, orcamentos, duplicidadesRevertidas, quantidade, escolha, textoJustificativa, justificativaEditada]
   );
 
   const handleGerarXlsx = useCallback(async () => {
@@ -918,6 +1001,84 @@ export default function PesquisaPrecoPage() {
               </SelectContent>
             </Select>
           </div>
+        </div>
+
+        {/* Parâmetros da apuração (art. 5º e IPCA) — valem para a tela e para os relatórios */}
+        <div className="border-t pt-3 space-y-2">
+          <p className="text-xs font-medium">Parâmetros da apuração</p>
+          <div className="grid gap-3 md:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
+            <div className="space-y-1.5">
+              <Label className="text-xs" htmlFor="data-referencia">Data de referência</Label>
+              <Input
+                id="data-referencia"
+                type="date"
+                max={hojeBrasilia()}
+                value={dataReferencia}
+                onChange={(e) => setDataReferencia(e.target.value || hojeBrasilia())}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs" htmlFor="periodo-meses">Período das bases (incisos I e II)</Label>
+              <Select
+                value={mesesMercado === null ? "todos" : String(mesesMercado)}
+                onValueChange={(v) => setMesesMercado(v === "todos" ? null : (Number(v) as 12 | 24 | 36))}
+              >
+                <SelectTrigger id="periodo-meses" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {OPCOES_MESES.map((o) => (
+                    <SelectItem key={String(o.valor)} value={o.valor === null ? "todos" : String(o.valor)}>
+                      {o.rotulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-xs cursor-pointer md:pb-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-primary"
+                checked={corrigirIpca}
+                onChange={(e) => setCorrigirIpca(e.target.checked)}
+              />
+              {/* Até a pesquisa, o mês anterior à data de referência; depois, o mês-base
+                  que o servidor de fato usou (o último índice publicado até lá). */}
+              Atualizar pelo IPCA até{" "}
+              {(() => {
+                const mes =
+                  result?.ipca.mesBase && result.periodo.dataReferencia === dataReferencia
+                    ? result.ipca.mesBase
+                    : mesAnterior(dataReferencia);
+                return `${mes.slice(5, 7)}/${mes.slice(0, 4)}`;
+              })()}
+            </label>
+          </div>
+          {periodoAmpliado && (
+            <div className="space-y-1">
+              <Input
+                placeholder="Justificativa da ampliação do período (vai impressa no relatório)"
+                value={justificativaPeriodo}
+                onChange={(e) => setJustificativaPeriodo(e.target.value)}
+              />
+              <p className={`text-[11px] ${periodoSemJustificativa ? "text-destructive" : "text-muted-foreground"}`}>
+                {periodoSemJustificativa
+                  ? `Ampliar além de 12 meses exige justificativa de ao menos ${JUSTIFICATIVA_PERIODO_MIN} caracteres.`
+                  : "A justificativa vai impressa no relatório e no log de auditoria."}
+              </p>
+            </div>
+          )}
+          {result?.ipca.pedido && !result.ipca.ligado && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              A tabela de índices do IPCA não está carregada neste ambiente: os preços aparecem em
+              valores nominais.
+            </p>
+          )}
+          <p className="text-[11px] text-muted-foreground">
+            Art. 5º da IN 65/2021: bases e contratações similares de até 1 ano; mídia especializada e
+            cotação com fornecedor de até 6 meses; nota fiscal de até 1 ano. O IPCA corrige só os
+            incisos I e II, a partir do mês seguinte ao do preço; o teto CMED não é corrigido.
+          </p>
         </div>
 
         {/* Filtros opcionais — recolhidos até o usuário pedir */}
@@ -1277,12 +1438,14 @@ export default function PesquisaPrecoPage() {
         parametros={params}
         exclusoesIniciais={exclusoes}
         orcamentosIniciais={orcamentos}
+        duplicidadesIniciais={duplicidadesRevertidas}
         rotuloConfirmar={
           curadoriaDestino === "relatorio" ? "Continuar para o relatório" : "Aplicar à pesquisa"
         }
-        onConfirmar={({ exclusoes: e, orcamentos: o }) => {
+        onConfirmar={({ exclusoes: e, orcamentos: o, duplicidadesRevertidas: d }) => {
           setExclusoes(e);
           setOrcamentos(o);
+          setDuplicidadesRevertidas(d);
           setCuradoriaOpen(false);
           if (curadoriaDestino === "relatorio") setModalOpen(true);
         }}

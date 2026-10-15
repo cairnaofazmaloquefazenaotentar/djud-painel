@@ -30,6 +30,7 @@ import {
 
 import {
   INFO_FONTE,
+  corrigidoPeloIpca,
   type ContratacaoRef,
   type DuplicidadeRef,
   type FonteMercadoChave,
@@ -449,6 +450,9 @@ export interface ResultadoPesquisa {
   periodo: PeriodoPesquisa;
   /** Atualização monetária (D2): ligada, disponível, mês-base e convenção. */
   ipca: {
+    /** O responsável pediu a atualização (padrão: sim, P10). */
+    pedido: boolean;
+    /** Pedida E aplicada (havia índice para o mês-base). */
     ligado: boolean;
     /** A tabela IndiceIpca existe e tem índices. */
     disponivel: boolean;
@@ -1427,7 +1431,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const mesBase = indicesIpca ? mesBaseIpca(periodo.dataReferencia, indicesIpca) : null;
   let semIndice = 0;
   for (const f of fontesBrutas) {
-    const corrige = mesBase !== null && indicesIpca !== null && !INFO_FONTE[f.fonte].informado;
+    const corrige = mesBase !== null && indicesIpca !== null && corrigidoPeloIpca(f.fonte);
     for (const r of f.registros) {
       r.precoNominal = r.preco;
       r.mesIndice = r.data.slice(0, 7);
@@ -1745,6 +1749,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     },
     periodo,
     ipca: {
+      pedido: corrigirIpca,
       ligado: corrigirIpca && mesBase !== null,
       disponivel: !!tabelaIpca?.disponivel,
       mesBase: corrigirIpca ? mesBase : null,

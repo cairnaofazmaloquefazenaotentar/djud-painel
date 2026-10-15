@@ -20,6 +20,13 @@ import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -52,7 +59,18 @@ import {
 import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { CamposEscolhaPreco } from "@/components/pesquisa-preco/escolha-preco";
-import { ESCOLHA_PADRAO_MAPA, type EscolhaPreco } from "@/lib/pesquisa-preco-metodo";
+import {
+  ESCOLHA_PADRAO_MAPA,
+  escolhaGravada,
+  normalizarEscolha,
+  type EscolhaPreco,
+} from "@/lib/pesquisa-preco-metodo";
+import {
+  JUSTIFICATIVA_PERIODO_MIN,
+  OPCOES_MESES,
+  hojeBrasilia,
+  type MesesMercado,
+} from "@/lib/pesquisa-preco-periodo";
 import type { CestaItemDTO } from "@/lib/cesta";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { apiPath } from "@/lib/url";
@@ -73,6 +91,129 @@ const fmt = (v: number | null | undefined, decimals = 4) => {
 
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
 
+/** periodoMeses gravado (0 = todo o período, null = padrão) → valor da pesquisa. */
+function mesesDoItem(item: CestaItemDTO): MesesMercado {
+  if (item.periodoMeses === 0) return null;
+  return item.periodoMeses === 24 || item.periodoMeses === 36 ? item.periodoMeses : 12;
+}
+
+function rotuloPeriodo(meses: MesesMercado): string {
+  return meses === null ? "todo o período" : `${meses} meses`;
+}
+
+// ── Período e IPCA do item (D1/D2) ───────────────────────────────────────────
+
+function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean }) {
+  const atualizar = useAtualizarItemCesta();
+  const [aberto, setAberto] = useState(false);
+  const [meses, setMeses] = useState<MesesMercado>(mesesDoItem(item));
+  const [justificativa, setJustificativa] = useState(item.justificativaPeriodo ?? "");
+  const [ipca, setIpca] = useState(item.corrigirIpca);
+
+  // Ao abrir, parte do que está gravado (outra aba pode ter mudado o item).
+  const alternar = () => {
+    if (!aberto) {
+      setMeses(mesesDoItem(item));
+      setJustificativa(item.justificativaPeriodo ?? "");
+      setIpca(item.corrigirIpca);
+    }
+    setAberto((v) => !v);
+  };
+
+  const ampliado = meses !== 12;
+  const semJustificativa = ampliado && justificativa.trim().length < JUSTIFICATIVA_PERIODO_MIN;
+  const mudou =
+    meses !== mesesDoItem(item) ||
+    ipca !== item.corrigirIpca ||
+    (ampliado && justificativa.trim() !== (item.justificativaPeriodo ?? ""));
+
+  const salvar = async () => {
+    await atualizar.mutateAsync({
+      id: item.id,
+      periodoMeses: meses === null ? 0 : meses,
+      justificativaPeriodo: ampliado ? justificativa.trim() : null,
+      corrigirIpca: ipca,
+    });
+    setAberto(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Período: {rotuloPeriodo(mesesDoItem(item))}
+          {mesesDoItem(item) !== 12 && " (ampliado)"} · IPCA {item.corrigirIpca ? "ligado" : "desligado"}
+        </span>
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+          disabled={ocupado}
+          onClick={alternar}
+          aria-expanded={aberto}
+        >
+          {aberto ? "fechar" : "alterar"}
+        </button>
+      </div>
+      {aberto && (
+        <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+          <Select
+            value={meses === null ? "todos" : String(meses)}
+            onValueChange={(v) => setMeses(v === "todos" ? null : (Number(v) as 12 | 24 | 36))}
+          >
+            <SelectTrigger className="h-7 w-full text-xs" aria-label="Período das bases">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPCOES_MESES.map((o) => (
+                <SelectItem key={String(o.valor)} value={o.valor === null ? "todos" : String(o.valor)}>
+                  {o.rotulo}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {ampliado && (
+            <div className="space-y-1">
+              <Input
+                className="h-7 text-xs"
+                placeholder="Justificativa da ampliação do período (vai impressa no relatório)"
+                value={justificativa}
+                onChange={(e) => setJustificativa(e.target.value)}
+              />
+              {semJustificativa && (
+                <p className="text-[11px] text-destructive">
+                  Ampliar além de 12 meses exige justificativa de ao menos {JUSTIFICATIVA_PERIODO_MIN} caracteres.
+                </p>
+              )}
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={ipca}
+              onChange={(e) => setIpca(e.target.checked)}
+            />
+            Atualizar pelo IPCA (incisos I e II) até o mês anterior à emissão
+          </label>
+          <div className="flex items-center justify-end gap-2">
+            {atualizar.isError && <span className="text-[11px] text-destructive">{atualizar.error.message}</span>}
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={!mudou || semJustificativa || atualizar.isPending}
+              onClick={salvar}
+            >
+              {atualizar.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              Salvar
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Linha da cesta ────────────────────────────────────────────────────────────
 
 function LinhaItem({ item }: { item: CestaItemDTO }) {
@@ -83,27 +224,39 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
   const [obs, setObs] = useState(item.observacao ?? "");
 
   // Curadoria do item: a pesquisa é refeita sob demanda ao abrir o diálogo,
-  // porque a cesta só guarda código/unidade/UF — os registros a conferir são
-  // os da data de hoje, os mesmos que o relatório vai usar.
+  // porque a cesta não guarda registros — os registros a conferir são os da
+  // data de hoje, com o período, o IPCA e as duplicatas do item: os mesmos que
+  // o relatório vai usar.
   const [curadoriaOpen, setCuradoriaOpen] = useState(false);
   const [base, setBase] = useState<ResultadoPesquisa | null>(null);
   const [erroBase, setErroBase] = useState<string | null>(null);
+
+  const parametros = useMemo(
+    () => ({
+      codigo: item.codigo,
+      unidade: item.unidade,
+      uf: item.uf,
+      periodo: {
+        dataReferencia: hojeBrasilia(),
+        mesesMercado: mesesDoItem(item),
+        justificativaAmpliacao: mesesDoItem(item) === 12 ? null : item.justificativaPeriodo,
+      },
+      corrigirIpca: item.corrigirIpca,
+    }),
+    [item]
+  );
 
   const abrirCuradoria = useCallback(async () => {
     setCuradoriaOpen(true);
     setBase(null);
     setErroBase(null);
     try {
+      // A base da conferência vem SEM as duplicatas mantidas: a curadoria
+      // mostra a marca e o responsável decide de novo.
       const res = await fetch(apiPath("/api/precos/buscar"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          codigo: item.codigo,
-          unidade: item.unidade,
-          uf: item.uf,
-          exclusoes: item.exclusoes,
-          orcamentos: item.orcamentos,
-        }),
+        body: JSON.stringify({ ...parametros, exclusoes: item.exclusoes, orcamentos: item.orcamentos }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -113,9 +266,9 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
     } catch (e) {
       setErroBase(e instanceof Error ? e.message : "Erro ao carregar a pesquisa");
     }
-  }, [item.codigo, item.exclusoes, item.orcamentos, item.uf, item.unidade]);
+  }, [item.exclusoes, item.orcamentos, parametros]);
 
-  const curadoriaAtiva = item.exclusoes.length + item.orcamentos.length;
+  const curadoriaAtiva = item.exclusoes.length + item.orcamentos.length + item.duplicidadesRevertidas.length;
 
   // Reflete mudanças vindas do servidor (ex.: item adicionado de novo somou qtd).
   useEffect(() => setQtd(String(item.quantidade)), [item.quantidade]);
@@ -246,12 +399,20 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
         </Button>
         {curadoriaAtiva > 0 && (
           <span className="text-[11px] text-muted-foreground">
-            {item.exclusoes.length > 0 && `${item.exclusoes.length} descarte(s)`}
-            {item.exclusoes.length > 0 && item.orcamentos.length > 0 && " · "}
-            {item.orcamentos.length > 0 && `${item.orcamentos.length} orçamento(s)`}
+            {[
+              item.exclusoes.length > 0 ? `${item.exclusoes.length} descarte(s)` : null,
+              item.orcamentos.length > 0 ? `${item.orcamentos.length} preço(s) informado(s)` : null,
+              item.duplicidadesRevertidas.length > 0
+                ? `${item.duplicidadesRevertidas.length} duplicata(s) mantida(s)`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         )}
       </div>
+
+      <PeriodoDoItem item={item} ocupado={ocupado} />
 
       {atualizar.isError && (
         <p className="text-[11px] text-destructive">{atualizar.error.message}</p>
@@ -266,12 +427,13 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
         onOpenChange={setCuradoriaOpen}
         titulo={`Conferir valores — ${item.descricao.substring(0, 70)}`}
         base={base}
-        parametros={{ codigo: item.codigo, unidade: item.unidade, uf: item.uf }}
+        parametros={parametros}
         exclusoesIniciais={item.exclusoes}
         orcamentosIniciais={item.orcamentos}
+        duplicidadesIniciais={item.duplicidadesRevertidas}
         rotuloConfirmar="Salvar na cesta"
-        onConfirmar={async ({ exclusoes, orcamentos }) => {
-          await atualizar.mutateAsync({ id: item.id, exclusoes, orcamentos });
+        onConfirmar={async ({ exclusoes, orcamentos, duplicidadesRevertidas }) => {
+          await atualizar.mutateAsync({ id: item.id, exclusoes, orcamentos, duplicidadesRevertidas });
           setCuradoriaOpen(false);
         }}
       />
@@ -285,6 +447,16 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
 interface AjusteItem {
   escolha: EscolhaPreco | null;
   justificativa: string;
+}
+
+/** O que o item já tem gravado vira o ajuste inicial na modal. */
+function ajusteGravado(item: CestaItemDTO): AjusteItem | null {
+  const gravada = escolhaGravada(item);
+  if (!gravada && !item.justificativa) return null;
+  return {
+    escolha: gravada ? normalizarEscolha(gravada, ESCOLHA_PADRAO_MAPA) : null,
+    justificativa: item.justificativa ?? "",
+  };
 }
 
 function AjusteDoItem({
@@ -328,6 +500,12 @@ function AjusteDoItem({
             value={atual.justificativa}
             onChange={(e) => onChange({ ...atual, justificativa: e.target.value })}
           />
+          {item.justificativa && atual.justificativa === item.justificativa && (
+            <p className="text-[11px] text-muted-foreground">
+              Texto gravado numa emissão anterior: confira se os números ainda conferem, ou apague para o
+              painel gerar o texto com os números de agora.
+            </p>
+          )}
           {atual.escolha && (
             <button
               type="button"
@@ -369,6 +547,21 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
 
   const itens = useMemo(() => cesta?.itens ?? [], [cesta?.itens]);
   const total = cesta?.total ?? 0;
+
+  // Ao abrir a modal, cada item parte da escolha e da justificativa que já
+  // tem gravadas (emissão anterior): sem isso, reemitir com "manter a cesta"
+  // trocaria em silêncio a escolha do item pela geral.
+  const abrirModalRelatorio = useCallback(() => {
+    setAjustes(
+      Object.fromEntries(
+        itens.flatMap((i) => {
+          const a = ajusteGravado(i);
+          return a ? [[i.id, a]] : [];
+        })
+      )
+    );
+    setModalRelatorio(true);
+  }, [itens]);
 
   const corpoEmissao = useCallback(
     () => ({
@@ -523,14 +716,14 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                   {(cesta?.itensCurados ?? 0) > 0 && (
                     <p className="text-[11px] text-muted-foreground">
                       {cesta?.itensCurados} item(ns) com curadoria registrada — descartes
-                      justificados e/ou orçamentos de fornecedor serão reaplicados no relatório.
+                      justificados e/ou preços informados serão reaplicados no relatório.
                     </p>
                   )}
                 </div>
 
                 <div className="flex flex-col gap-2">
                   {podeGerarRelatorio ? (
-                    <Button onClick={() => setModalRelatorio(true)}>
+                    <Button onClick={abrirModalRelatorio}>
                       <FileText className="h-4 w-4 mr-2" />
                       Gerar relatório da cesta
                     </Button>
@@ -590,10 +783,10 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
             <DialogTitle>Relatório consolidado da cesta</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground -mt-2">
-            {fmtInt(total)} item(ns) serão pesquisados novamente para que o documento traga os
-            preços da data de emissão. Os registros desconsiderados e os orçamentos de
-            fornecedor salvos em cada item são reaplicados na nova apuração. Os campos
-            institucionais são opcionais.
+            {fmtInt(total)} item(ns) serão pesquisados novamente, com a data de hoje como data de
+            referência, para que o documento traga os preços da emissão. O período, o IPCA, os
+            registros desconsiderados e os preços informados salvos em cada item são reaplicados na
+            nova apuração. Os campos institucionais são opcionais.
           </p>
           <div className="grid gap-3 py-1">
             <div className="grid grid-cols-2 gap-3">

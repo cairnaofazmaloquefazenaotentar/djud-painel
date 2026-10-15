@@ -95,6 +95,8 @@ interface LinhaCuradoria {
   desvio: number | null;
   /** Cópia de uma compra de outra base (P18): "duplicado de Compras.gov.br". */
   duplicata: { texto: string; provavel: boolean } | null;
+  /** Preço publicado e fator do IPCA quando o preço foi atualizado (D2). */
+  ipca: { nominal: number; fator: number } | null;
 }
 
 function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCuradoria[] {
@@ -118,6 +120,7 @@ function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCur
       outlierIqr: false,
       desvio: relativo(r.pmvgUnitario ?? r.pmvgEmbalagem, ref),
       duplicata: null,
+      ipca: null,
     }));
   }
 
@@ -154,6 +157,10 @@ function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCur
           provavel: r.duplicadoDe.provavel,
         }
       : null,
+    ipca:
+      r.fatorIpca != null && r.fatorIpca !== 1 && r.precoNominal != null
+        ? { nominal: r.precoNominal, fator: r.fatorIpca }
+        : null,
   }));
 }
 
@@ -193,6 +200,11 @@ function LinhaRegistro({
           {linha.detalhe && <p className="text-muted-foreground leading-snug">{linha.detalhe}</p>}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
             <span className="font-semibold text-foreground">{fmt(linha.preco)}</span>
+            {linha.ipca && (
+              <span title="Preço publicado × fator do IPCA = preço atualizado">
+                ({fmt(linha.ipca.nominal)} × {linha.ipca.fator.toFixed(4).replace(".", ",")} IPCA)
+              </span>
+            )}
             {linha.data && <span>{fmtData(linha.data)}</span>}
             {linha.uf && <span>{linha.uf}</span>}
             {linha.desvio !== null && (
@@ -760,11 +772,13 @@ export function CuradoriaDialog({
   parametros,
   exclusoesIniciais,
   orcamentosIniciais,
+  duplicidadesIniciais,
   rotuloConfirmar,
   onConfirmar,
 }: CuradoriaDialogProps) {
   const [exclusoes, setExclusoes] = useState<Map<string, string>>(new Map());
   const [orcamentos, setOrcamentos] = useState<OrcamentoFornecedor[]>([]);
+  const [revertidas, setRevertidas] = useState<Set<string>>(new Set());
   const [previa, setPrevia] = useState<ResultadoPesquisa | null>(null);
   const [calculando, setCalculando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -775,9 +789,11 @@ export function CuradoriaDialog({
     if (!aberto) return;
     setExclusoes(new Map(exclusoesIniciais.map((e) => [`${e.fonte}:${e.id}`, e.motivo])));
     setOrcamentos(orcamentosIniciais);
+    setRevertidas(new Set(duplicidadesIniciais ?? []));
     setPrevia(null);
     setErro(null);
-  }, [aberto, exclusoesIniciais, orcamentosIniciais]);
+  }, [aberto, exclusoesIniciais, orcamentosIniciais, duplicidadesIniciais]);
+  const listaRevertidas = useMemo(() => Array.from(revertidas).sort(), [revertidas]);
 
   const listaExclusoes = useMemo<ExclusaoRegistro[]>(
     () =>
@@ -799,8 +815,8 @@ export function CuradoriaDialog({
   // Recalcula no servidor com um respiro, para não disparar uma consulta a
   // cada tecla da justificativa.
   const assinatura = useMemo(
-    () => JSON.stringify({ e: listaExclusoes, o: orcamentos }),
-    [listaExclusoes, orcamentos]
+    () => JSON.stringify({ e: listaExclusoes, o: orcamentos, d: listaRevertidas }),
+    [listaExclusoes, orcamentos, listaRevertidas]
   );
   // Chave por VALOR, não por identidade: um chamador que monte `parametros`
   // como objeto literal criaria uma referência nova a cada render e o efeito
@@ -809,7 +825,7 @@ export function CuradoriaDialog({
 
   useEffect(() => {
     if (!aberto || !parametros) return;
-    if (listaExclusoes.length === 0 && orcamentos.length === 0) {
+    if (listaExclusoes.length === 0 && orcamentos.length === 0 && listaRevertidas.length === 0) {
       setPrevia(null);
       return;
     }
@@ -821,7 +837,12 @@ export function CuradoriaDialog({
         const res = await fetch(apiPath("/api/precos/buscar"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...parametros, exclusoes: listaExclusoes, orcamentos }),
+          body: JSON.stringify({
+            ...parametros,
+            exclusoes: listaExclusoes,
+            orcamentos,
+            duplicidadesRevertidas: listaRevertidas,
+          }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
@@ -849,7 +870,7 @@ export function CuradoriaDialog({
     setSalvando(true);
     setErro(null);
     try {
-      await onConfirmar({ exclusoes: listaExclusoes, orcamentos });
+      await onConfirmar({ exclusoes: listaExclusoes, orcamentos, duplicidadesRevertidas: listaRevertidas });
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao salvar a curadoria");
     } finally {
@@ -919,8 +940,9 @@ export function CuradoriaDialog({
                 ))}
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Cada fonte pesa igual: o cálculo incide sobre as medianas apuradas em BPS, SIASG,
-                PNCP e nos orçamentos diretos. O preço adotado pelo painel é a mediana.
+                Cada fonte pesa igual: o cálculo incide sobre as medianas apuradas em cada base
+                consultada e em cada tipo de preço informado. No padrão do painel, o preço adotado é
+                a mediana; o método e o teto podem ser escolhidos na emissão.
               </p>
             </div>
 
@@ -935,7 +957,7 @@ export function CuradoriaDialog({
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="orcamentos">
-                  Orçamentos de fornecedor
+                  Preços informados
                   {orcamentos.length > 0 && (
                     <Badge variant="secondary" className="ml-1.5 h-4 px-1.5 text-[10px]">
                       {orcamentos.length}
@@ -945,7 +967,13 @@ export function CuradoriaDialog({
               </TabsList>
 
               <TabsContent value="registros">
-                <AbaRegistros base={base} exclusoes={exclusoes} setExclusoes={setExclusoes} />
+                <AbaRegistros
+                  base={base}
+                  exclusoes={exclusoes}
+                  setExclusoes={setExclusoes}
+                  revertidas={revertidas}
+                  setRevertidas={setRevertidas}
+                />
               </TabsContent>
 
               <TabsContent value="orcamentos">

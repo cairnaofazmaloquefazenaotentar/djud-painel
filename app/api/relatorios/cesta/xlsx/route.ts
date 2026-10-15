@@ -4,14 +4,22 @@ export const maxDuration = 60;
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
-import { listarCesta } from "@/lib/cesta";
+import { escolhaGravada, listarCesta, parametrosDoItem } from "@/lib/cesta";
 import { relatorioCestaSchema } from "@/lib/cesta-schemas";
-import { ESCOLHA_PADRAO_MAPA, normalizarEscolha } from "@/lib/pesquisa-preco";
+import { ESCOLHA_PADRAO_MAPA, hojeBrasilia, normalizarEscolha } from "@/lib/pesquisa-preco";
 import { processarItens } from "@/lib/pesquisa-preco-processar";
 import { escolhaExplicita } from "@/lib/relatorio-schemas";
 import { montarMapaItem } from "@/lib/mapa-dlog/dados";
 import { gerarMapaDlog } from "@/lib/mapa-dlog/gerar";
-import { contextoBases, hashArquivo, hashConteudo, nomeArquivoMapa, recorteDoItem } from "@/lib/mapa-dlog/meta";
+import {
+  contextoBases,
+  hashArquivo,
+  hashConteudo,
+  ipcaParaMapa,
+  nomeArquivoMapa,
+  periodoParaMapa,
+  recorteDoItem,
+} from "@/lib/mapa-dlog/meta";
 import { registrarRelatorio } from "@/lib/relatorio-registro";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -53,14 +61,14 @@ export async function POST(request: NextRequest) {
     }
 
     const geradoEm = new Date();
+    // Na cesta, a data de referência é a da emissão (D1); período, IPCA e
+    // curadoria são os gravados em cada item.
+    const dataReferencia = hojeBrasilia(geradoEm);
+    const escolhaDo = (id: string, c: (typeof cesta.itens)[number]) =>
+      normalizarEscolha(escolhas[id] ?? escolhaGravada(c), ESCOLHA_PADRAO_MAPA);
     const [apurados, bases] = await Promise.all([
       processarItens(cesta.itens, (c) => ({
-        codigo: c.codigo,
-        unidade: c.unidade,
-        uf: c.uf,
-        exclusoes: c.exclusoes,
-        orcamentos: c.orcamentos,
-        escolha: normalizarEscolha(escolhas[c.id], ESCOLHA_PADRAO_MAPA),
+        ...parametrosDoItem(c, dataReferencia, escolhaDo(c.id, c)),
         registrosCompletos: true,
       })),
       contextoBases(),
@@ -74,8 +82,8 @@ export async function POST(request: NextRequest) {
         unidade: c.unidade,
         quantidade: c.quantidade,
         resultado,
-        justificativaEditada: escolhas[c.id]?.justificativa ?? null,
-        escolhaExplicita: escolhaExplicita(escolhas[c.id]),
+        justificativaEditada: escolhas[c.id]?.justificativa ?? c.justificativa ?? null,
+        escolhaExplicita: escolhaExplicita(escolhas[c.id]) || !!(c.metodoPreco && c.regraTeto),
         consultadoEm: geradoEm,
       })
     );
@@ -87,12 +95,12 @@ export async function POST(request: NextRequest) {
       cargo,
       usuario,
       geradoEm,
-      dataReferencia: geradoEm,
+      dataReferencia: new Date(`${dataReferencia}T12:00:00Z`),
       cmedVigencia: bases.cmedVigencia,
       cmedPublicacao: bases.cmedPublicacao,
       fontesConsultadas: bases.fontesConsultadas,
-      periodo: "Sem recorte de período: amostra dos registros mais recentes de cada base (até 500 por fonte).",
-      ipca: { ligado: false, mesBase: null, convencao: "", indices: [] },
+      periodo: periodoParaMapa(apurados.map((a) => a.resultado)),
+      ipca: await ipcaParaMapa(apurados.map((a) => a.resultado)),
       versaoDados: bases.versaoDados,
       hashConteudo: hashConteudo(itens),
       filtrosPorItem: new Map(apurados.map(({ resultado }, i) => [i + 1, recorteDoItem(resultado)])),
@@ -101,17 +109,21 @@ export async function POST(request: NextRequest) {
     const nomeArquivo = nomeArquivoMapa(processo, geradoEm);
     const valorGlobal = itens.reduce((s, i) => s + (i.valorTotal ?? 0), 0);
 
-    // Mantém a cesta em dia com os preços que acabaram de sair no mapa.
+    // Mantém a cesta em dia com os preços que acabaram de sair no mapa e grava
+    // no item a escolha e a justificativa feitas na modal (E2).
     for (const { item: c, resultado } of apurados) {
       const rec = resultado?.recomendacao;
-      if (!rec) continue;
+      const e = escolhas[c.id];
       await db.cestaItem.updateMany({
         where: { id: c.id, userId },
         data: {
-          precoReferencia: rec.precoReferencia,
-          limitePmvg: rec.limitePmvg,
-          precoFinal: rec.precoFinal,
-          calculadoEm: geradoEm,
+          ...(rec
+            ? { precoReferencia: rec.precoReferencia, limitePmvg: rec.limitePmvg, precoFinal: rec.precoFinal, calculadoEm: geradoEm }
+            : {}),
+          ...(e?.metodo ? { metodoPreco: e.metodo } : {}),
+          ...(e?.regraTeto ? { regraTeto: e.regraTeto } : {}),
+          ...(e?.aliquota ? { aliquotaTeto: e.aliquota } : {}),
+          ...(e && e.justificativa !== undefined ? { justificativa: e.justificativa?.trim() || null } : {}),
         },
       });
     }
@@ -137,8 +149,11 @@ export async function POST(request: NextRequest) {
             uf: c.uf,
             quantidade: c.quantidade,
             escolha: resultado?.recomendacao.escolha ?? null,
-            escolhaExplicita: escolhaExplicita(escolhas[c.id]),
+            escolhaExplicita: escolhaExplicita(escolhas[c.id]) || !!(c.metodoPreco && c.regraTeto),
             justificativaEditada: itens[i].justificativaEditada,
+            periodo: resultado?.periodo ?? null,
+            ipca: resultado ? { ligado: resultado.ipca.ligado, mesBase: resultado.ipca.mesBase } : null,
+            duplicidadesRevertidas: c.duplicidadesRevertidas,
             precoFinal: resultado?.recomendacao.precoFinal ?? null,
             descartes: (resultado?.descartes ?? []).map((d) => ({ fonte: d.fonte, id: d.id, preco: d.preco, motivo: d.motivo })),
           })),

@@ -592,7 +592,7 @@ function escreverLinhaBase(ws: ExcelJS.Worksheet, r: number, item: MapaItem, l: 
   }
   valor(c(21), l.compoe ? "Sim" : "Não");
   valor(c(22), dataUtc(l.mesReferencia), FORMATO.mesAno);
-  if (item.ipcaLigado) {
+  if (item.ipcaLigado && l.ipcaAplicado) {
     formula(
       c(23),
       `IFERROR(INDEX(${ref(ABA.ipca, "$D:$D")},MATCH(V${r},${ref(ABA.ipca, "$A:$A")},0))-1,0)`,
@@ -777,7 +777,11 @@ function abaParametros(wb: ExcelJS.Workbook, itens: MapaItem[], meta: MetaMapa) 
     [
       "Atualização pelo IPCA",
       meta.ipca.ligado
-        ? `Ligada — mês-base ${meta.ipca.mesBase ? `${meta.ipca.mesBase.slice(5, 7)}/${meta.ipca.mesBase.slice(0, 4)}` : "—"}. ${meta.ipca.convencao}`
+        ? `${
+            itens.every((i) => i.ipcaLigado || i.precoAdotado === null)
+              ? "Ligada"
+              : `Ligada em ${itens.filter((i) => i.ipcaLigado).length} de ${itens.length} itens (ver a linha de cada item)`
+          } — mês-base ${meta.ipca.mesBase ? `${meta.ipca.mesBase.slice(5, 7)}/${meta.ipca.mesBase.slice(0, 4)}` : "—"}. ${meta.ipca.convencao}`
         : "Desligada — preços em valores nominais.",
     ],
     ...meta.fontesConsultadas.map((f, i): [string, string] => [i === 0 ? "Fontes consultadas" : "", f]),
@@ -793,6 +797,7 @@ function abaParametros(wb: ExcelJS.Workbook, itens: MapaItem[], meta: MetaMapa) 
       `${item.aba} — método e teto`,
       `${item.descricaoMetodo}; teto: ${item.descricaoTeto}${item.justificativaEditada ? "; justificativa editada pelo responsável" : ""}`,
     ]);
+    linhas.push([`${item.aba} — período e IPCA`, item.descricaoPeriodo]);
     const filtros = meta.filtrosPorItem.get(item.numero);
     if (filtros) linhas.push([`${item.aba} — recorte`, filtros]);
   }

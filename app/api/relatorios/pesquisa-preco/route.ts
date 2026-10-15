@@ -8,8 +8,10 @@ import {
   ESCOLHA_PADRAO,
   classificarCodigo,
   normalizarEscolha,
+  normalizarPeriodo,
   normalizarUnidade,
   pesquisarPrecos,
+  validarPeriodo,
   rotuloRegraTeto,
   type ResultadoPesquisa,
 } from "@/lib/pesquisa-preco";
@@ -27,7 +29,9 @@ import {
   conteudoEspecificacao,
   conteudoMetodo,
   conteudoObservacoes,
-  conteudoOrcamentos,
+  conteudoAtualizacaoMonetaria,
+  conteudoPeriodo,
+  conteudoPrecosInformados,
   conteudoPncp,
   conteudoReferencias,
   conteudoSiasg,
@@ -97,6 +101,11 @@ function gerarHTML(resultado: ResultadoPesquisa, emissao: Emissao, meta: MetaRel
       conteudoEspecificacao(resultado, especificacaoDoItem(resultado, emissao.especificacao))
     ),
     secao(++n, "Método de Pesquisa de Preços", conteudoMetodo(escolha.metodo, rotuloRegraTeto(escolha.regraTeto, escolha.aliquota))),
+    secao(
+      ++n,
+      "Período da Pesquisa e Atualização Monetária (art. 5º)",
+      `${conteudoPeriodo(resultado)}<div style="margin-top:8px;"><strong style="font-size:11px;">Atualização monetária</strong></div>${conteudoAtualizacaoMonetaria(resultado)}`
+    ),
     secao(++n, "Resultado por Fonte — CMED/ANVISA (Preço-Teto Regulatório por Unidade)", conteudoCmed(resultado)),
     secao(++n, "Resultado por Fonte — Compras.gov.br (Painel de Preços)", conteudoComprasGov(resultado)),
     secao(++n, "Resultado por Fonte — BPS (Banco de Preços em Saúde)", conteudoBps(resultado)),
@@ -106,7 +115,7 @@ function gerarHTML(resultado: ResultadoPesquisa, emissao: Emissao, meta: MetaRel
   ];
   if (resultado.orcamentos.length > 0) {
     secoes.push(
-      secao(++n, "Resultado por Fonte — Orçamentos Diretos de Fornecedor (art. 5º, IV)", conteudoOrcamentos(resultado))
+      secao(++n, "Resultado por Fonte — Preços Informados pelo Responsável (art. 5º, II a V)", conteudoPrecosInformados(resultado))
     );
   }
   secoes.push(
@@ -172,6 +181,9 @@ export async function POST(request: NextRequest) {
     if (!unidade || !normalizarUnidade(String(unidade))) {
       return NextResponse.json({ error: "Campo 'unidade' (unidade de fornecimento) é obrigatório" }, { status: 400 });
     }
+    const periodo = normalizarPeriodo(parsed.data.periodo);
+    const erroPeriodo = validarPeriodo(periodo);
+    if (erroPeriodo) return NextResponse.json({ error: erroPeriodo }, { status: 400 });
 
     const resultado = await pesquisarPrecos({
       codigo: String(codigo),
@@ -181,6 +193,9 @@ export async function POST(request: NextRequest) {
       exclusoes,
       orcamentos,
       escolha,
+      periodo,
+      corrigirIpca: parsed.data.corrigirIpca,
+      duplicidadesRevertidas: parsed.data.duplicidadesRevertidas,
     });
     if (!resultado) {
       return NextResponse.json(
@@ -218,6 +233,9 @@ export async function POST(request: NextRequest) {
           processo,
           quantidade,
           escolha,
+          periodo: resultado.periodo,
+          ipca: resultado.ipca,
+          duplicidadesRevertidas: parsed.data.duplicidadesRevertidas,
           escolhaExplicita: escolhaExplicita(parsed.data.escolha),
           justificativaEditada: justificativaEditada !== null,
           precoFinal: resultado.recomendacao.precoFinal,

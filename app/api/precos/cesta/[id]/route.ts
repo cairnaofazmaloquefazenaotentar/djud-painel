@@ -3,12 +3,13 @@ export const runtime = "nodejs";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hasPermission } from "@/lib/permissions";
-import { paraDTO } from "@/lib/cesta";
+import { escolhaGravada, paraDTO, parametrosDoItem } from "@/lib/cesta";
+import { hojeBrasilia, pesquisarPrecos } from "@/lib/pesquisa-preco";
 import { atualizarItemCestaSchema } from "@/lib/cesta-schemas";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Item da cesta — PATCH (quantidade/observação) e DELETE.
+// Item da cesta — PATCH (quantidade, observação, curadoria e escolhas) e DELETE.
 // O `where` sempre inclui o userId: ninguém mexe na cesta de outro usuário.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { status: 400 }
       );
     }
-    const { quantidade, observacao, exclusoes, orcamentos } = parsed.data;
+    const { quantidade, observacao, exclusoes, orcamentos, ...config } = parsed.data;
+    // Só o que veio no pedido muda; `undefined` deixa como está.
+    const configDefinida = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined));
 
     const item = await db.cestaItem.findFirst({
       where: { id, userId: session.user.id as string },
@@ -58,11 +61,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ...(observacao === undefined ? {} : { observacao }),
           // Lista vazia apaga a curadoria; `undefined` deixa como está.
           ...(exclusoes === undefined ? {} : { exclusoes }),
+          ...configDefinida,
         },
         include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
       });
       return linha;
     });
+
+    // Curadoria, período, IPCA, duplicatas e método mudam o preço: o snapshot
+    // exibido na cesta é refeito com eles. Quantidade, observação e a
+    // justificativa escrita, não.
+    const mudaPreco =
+      exclusoes !== undefined ||
+      orcamentos !== undefined ||
+      Object.keys(configDefinida).some((k) => k !== "justificativa");
+    if (mudaPreco) {
+      const dto = paraDTO(atualizado);
+      const resultado = await pesquisarPrecos(parametrosDoItem(dto, hojeBrasilia(), escolhaGravada(dto)));
+      const rec = resultado?.recomendacao;
+      if (rec) {
+        const refeito = await db.cestaItem.update({
+          where: { id: item.id },
+          data: {
+            precoReferencia: rec.precoReferencia,
+            limitePmvg: rec.limitePmvg,
+            precoFinal: rec.precoFinal,
+            calculadoEm: new Date(),
+          },
+          include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
+        });
+        return NextResponse.json({ item: paraDTO(refeito) });
+      }
+    }
 
     return NextResponse.json({ item: paraDTO(atualizado) });
   } catch (error) {

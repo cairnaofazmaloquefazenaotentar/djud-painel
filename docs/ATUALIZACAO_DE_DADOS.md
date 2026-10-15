@@ -35,12 +35,32 @@ Enquanto o importador automatizado nao estiver instalado, a equipe responsavel d
 
 ## Pesquisa de Precos — bases, coletas e ordem
 
-Tabelas novas (uma vez por ambiente, revisar o `--dry-run` antes do `--confirm`):
+Tabelas e colunas novas (uma vez por ambiente, **antes** de publicar a versao que as le; revisar o `--dry-run` antes do `--confirm`):
 
 ```bash
 python scripts/create_dadosabertos_tables.py --dry-run
 python scripts/create_dadosabertos_tables.py --confirm   # DadosAbertosPreco, DadosAbertosColeta, PncpVinculo
+python scripts/alter_cesta_dlog.py --dry-run
+python scripts/alter_cesta_dlog.py --confirm             # colunas da cesta: periodo, IPCA, metodo/teto, justificativa, duplicatas, tipo do preco informado
+python scripts/import_ipca.py --dry-run
+python scripts/import_ipca.py --confirm                  # cria IndiceIpca e carrega a serie do IBGE
 ```
+
+As DDLs sao as mesmas do `prisma db push` (com `IF NOT EXISTS`): um `db:push` depois e no-op. Nenhuma apaga dado.
+
+### IPCA (todo mes)
+
+O IBGE publica o IPCA do mes por volta do dia 10 do mes seguinte. Depois da publicacao:
+
+```bash
+python scripts/import_ipca.py --dry-run    # mostra o ultimo mes lido e o autoteste
+python scripts/import_ipca.py --confirm    # UPSERT por competencia
+```
+
+- O autoteste compara, mes a mes, o produto de `(1 + variacao/100)` com a razao dos numeros-indices (tolerancia de 0,1%). Se falhar, **nao grava**.
+- Sem acesso a API do SIDRA: baixar a tabela 1737 (variaveis 2266 e 63) e usar `--file` com o JSON ou um CSV `AAAA-MM;numero_indice;variacao`.
+- Enquanto o mes anterior a data de referencia nao estiver publicado, o painel usa o ultimo mes publicado como mes-base (e o relatorio diz qual foi).
+- Sem a tabela carregada, a pesquisa sai em valores nominais, com aviso na tela e no relatorio.
 
 Ordem de atualizacao:
 

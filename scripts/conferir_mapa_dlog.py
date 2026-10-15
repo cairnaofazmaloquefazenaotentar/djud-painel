@@ -16,6 +16,11 @@ Confere, sem Excel, o que a seção 8.7 da avaliação pede:
      do ResultadoPesquisa (tolerância de R$ 0,01).
   4. Regras — toda linha "Compõe = Não" tem motivo (Y) e AA vazio; a coluna V
      é data; os preços da aba CMED são números.
+  5. IPCA (D2) — na aba "Índices IPCA", o fator de cada mês é a razão dos
+     números-índices até o mês-base (fator 1 no mês-base) e bate com o produto
+     das variações mensais (tolerância de 0,1%: fator COMPOSTO, nunca a soma);
+     em cada aba de item, W = fator do mês V − 1 (0 sem índice ou sem
+     correção) e X = N × (1 + W).
 
 Uso:
     python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx
@@ -300,6 +305,71 @@ def conferir_item(nome: str, ws_v, rel: Relatorio, painel: dict | None) -> None:
             rel.erro(f"{nome}: mediana das medianas ≠ painel {pf.get('mediana')}")
 
 
+def para_mes(v) -> str | None:
+    if isinstance(v, (datetime, date)):
+        return f"{v.year:04d}-{v.month:02d}"
+    return None
+
+
+def conferir_ipca(wb_f, wb_v, rel: Relatorio) -> None:
+    """Fatores da aba Índices IPCA e as colunas W/X das abas de item."""
+    nome = "Índices IPCA"
+    if nome not in wb_v.sheetnames:
+        return
+    ws = wb_v[nome]
+    meses: dict[str, dict] = {}
+    r = 6
+    while ws.cell(r, 1).value is not None:
+        mes = para_mes(ws.cell(r, 1).value)
+        if mes:
+            meses[mes] = {
+                "variacao": numero(ws.cell(r, 2).value),
+                "indice": numero(ws.cell(r, 3).value),
+                "fator": numero(ws.cell(r, 4).value),
+            }
+        r += 1
+    if meses:
+        ordem = sorted(meses)
+        base = [m for m in ordem if meses[m]["fator"] is not None and abs(meses[m]["fator"] - 1) < 1e-12]
+        if not base:
+            rel.erro(f"{nome}: nenhum mês com fator 1 (mês-base)")
+            return
+        mes_base = base[-1]
+        ni_base = meses[mes_base]["indice"]
+        for m in ordem:
+            d = meses[m]
+            if d["indice"] and ni_base and d["fator"] is not None and not perto(d["fator"], ni_base / d["indice"], 1e-9):
+                rel.erro(f"{nome} {m}: fator {d['fator']} ≠ índice do mês-base ÷ índice do mês ({ni_base / d['indice']})")
+            # Fator composto: produto de (1 + variação) dos meses SEGUINTES ao do preço até o mês-base.
+            seguintes = [x for x in ordem if m < x <= mes_base]
+            if seguintes and all(meses[x]["variacao"] is not None for x in seguintes) and d["fator"] is not None:
+                produto = 1.0
+                for x in seguintes:
+                    produto *= 1 + meses[x]["variacao"]
+                if abs(produto - d["fator"]) > 0.001 * d["fator"]:
+                    rel.erro(f"{nome} {m}: fator {d['fator']:.6f} ≠ produto das variações {produto:.6f}")
+        rel.certo(f"{nome}: {len(meses)} mês(es) até o mês-base {mes_base}; fatores = razão dos índices = produto das variações")
+
+    corrigidas = 0
+    for aba in abas_item(wb_v):
+        ws_v, ws_f = wb_v[aba], wb_f[aba]
+        for r in linhas_base(ws_v):
+            n = numero(ws_v.cell(r, 14).value)
+            w = numero(ws_v.cell(r, 23).value)
+            x = numero(ws_v.cell(r, 24).value)
+            if n is not None and x is not None and not perto(x, n * (1 + (w or 0)), 1e-6 * max(1.0, abs(x))):
+                rel.erro(f"{aba}!X{r}: {x} ≠ N × (1 + W) = {n * (1 + (w or 0))}")
+            formula_w = ws_f.cell(r, 23).value
+            if isinstance(formula_w, str) and formula_w.startswith("="):
+                mes = para_mes(ws_v.cell(r, 22).value)
+                esperado = (meses[mes]["fator"] - 1) if mes in meses and meses[mes]["fator"] is not None else 0.0
+                if w is None or not perto(w, esperado, 1e-9):
+                    rel.erro(f"{aba}!W{r}: {w} ≠ fator do mês {mes} − 1 = {esperado}")
+                if w:
+                    corrigidas += 1
+    rel.certo(f"Colunas W e X conferidas ({corrigidas} linha(s) com correção pelo IPCA)")
+
+
 def conferir_cmed(ws_v, rel: Relatorio) -> None:
     textos = 0
     for linha in ws_v.iter_rows(min_row=5):
@@ -348,6 +418,7 @@ def main() -> int:
     rel.certo(f"Estatísticas de {len(itens)} item(ns) recalculadas sobre as linhas 'Compõe = Sim'")
     if "CMED" in wb_v.sheetnames:
         conferir_cmed(wb_v["CMED"], rel)
+    conferir_ipca(wb_f, wb_v, rel)
 
     for m in rel.ok:
         print(f"  ok     {m}")
