@@ -10,6 +10,7 @@ import {
 } from "@/lib/relatorio-pesquisa-preco";
 import type { MetricsData } from "@/lib/metrics";
 import type { LinhaRanking, RankingAnualData } from "@/lib/metrics-ranking-anual";
+import { descreverFiltro, type FiltroDemandas } from "@/lib/demandas-filtro-tipos";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Exportação do painel analítico — planilha (CSV) e relatório (HTML imprimível)
@@ -38,8 +39,26 @@ export interface ContextoExport {
 
 // ── CSV ──────────────────────────────────────────────────────────────────────
 
+/**
+ * O recorte impresso no topo dos dois formatos: só os filtros realmente
+ * aplicados, com o rótulo que o usuário vê na tela — e o código CATMAT
+ * traduzido para o que de fato filtrou (as substâncias).
+ */
+export function descreverRecorte(filtro: FiltroDemandas, m: MetricsData): FiltroDescrito[] {
+  const descritos: FiltroDescrito[] = descreverFiltro(filtro);
+  if (m.filtroCatmat) {
+    const f = m.filtroCatmat;
+    const i = descritos.findIndex(([r]) => r === "CATMAT / registro ANVISA");
+    const texto = f.encontrado
+      ? `${f.codigo} — ${f.descricao ?? ""} (substâncias: ${f.grupos.map((g) => g.rotulo).join(" · ")})`
+      : `${f.codigo} — ${f.motivo ?? "não encontrado"}`;
+    if (i >= 0) descritos[i] = [f.tipo === "REGISTRO" ? "Registro ANVISA" : "Código CATMAT", texto];
+  }
+  return descritos;
+}
+
 /** Número no padrão pt-BR (vírgula decimal) — o Excel local espera assim. */
-function num(v: number | null | undefined, dec = 0): string {
+export function num(v: number | null | undefined, dec = 0): string {
   if (v == null || !Number.isFinite(v)) return "";
   return v.toFixed(dec).replace(".", ",");
 }
@@ -48,15 +67,15 @@ function num(v: number | null | undefined, dec = 0): string {
  * Campo de CSV com separador ";". Aspas duplicadas, e o campo é sempre
  * envolvido: descrições de demanda trazem ";" e quebras de linha à vontade.
  */
-function campo(v: unknown): string {
+export function campo(v: unknown): string {
   return `"${String(v ?? "").replace(/"/g, '""')}"`;
 }
 
-function linha(...valores: unknown[]): string {
+export function linha(...valores: unknown[]): string {
   return valores.map(campo).join(";");
 }
 
-interface BlocoCsv {
+export interface BlocoCsv {
   titulo: string;
   cabecalho: string[];
   linhas: unknown[][];
@@ -72,7 +91,7 @@ function blocosDoPainel(m: MetricsData, ranking: RankingAnualData | null): Bloco
         ["Passivo ativo (não concluídos)", m.demandasAtivas],
         ["Demandas críticas (Alta + Crítica)", m.demandasCriticas],
         ["Taxa de resolução (%)", num(m.taxaResolucao, 2)],
-        ["Valor estimado total (R$)", num(m.totalValorEstimado, 2)],
+        ["Valor total pago — SIAFI (R$)", num(m.totalValorEstimado, 2)],
       ],
     },
     {
@@ -162,27 +181,7 @@ function blocosDoPainel(m: MetricsData, ranking: RankingAnualData | null): Bloco
     },
   ];
 
-  if (ranking) {
-    for (const r of ranking.rankings) {
-      if (!r.linhas.length) continue;
-      const casas = r.unidade === "reais" ? 2 : 0;
-      blocos.push({
-        titulo: `Ranking por ano — ${r.rotulo}`,
-        cabecalho: [
-          "Categoria",
-          ...ranking.anos.map(String),
-          "Total do período",
-          "Variação 1º→último ano (%)",
-        ],
-        linhas: r.linhas.map((l) => [
-          l.categoria,
-          ...ranking.anos.map((a) => num(l.porAno[a] ?? 0, casas)),
-          num(l.total, casas),
-          l.variacao === null ? "" : num(l.variacao, 1),
-        ]),
-      });
-    }
-  }
+  if (ranking) blocos.push(...blocosRankingAnual(ranking));
 
   return blocos;
 }
@@ -192,8 +191,40 @@ export function csvDoPainel(
   ranking: RankingAnualData | null,
   ctx: ContextoExport
 ): string {
+  return csvDeBlocos("Painel de Inteligência DJUD — Ministério da Saúde", m, ctx, blocosDoPainel(m, ranking));
+}
+
+/** Categoria como o leitor a reconhece: o TRF vem gravado só com o número. */
+export function rotuloCategoria(r: Pick<RankingAnualData["rankings"][number], "dimensao">, categoria: string): string {
+  return r.dimensao === "trf" && /^\d+$/.test(categoria) ? `${categoria}ª Região` : categoria;
+}
+
+/** Blocos dos rankings por ano, completos (as 15 categorias de cada um). */
+export function blocosRankingAnual(ranking: RankingAnualData): BlocoCsv[] {
+  return ranking.rankings
+    .filter((r) => r.linhas.length > 0)
+    .map((r) => {
+      const casas = r.unidade === "reais" ? 2 : 0;
+      return {
+        titulo: `Ranking por ano — ${r.rotulo}`,
+        cabecalho: ["Categoria", ...ranking.anos.map(String), "Total do período", "Variação 1º→último ano (%)"],
+        linhas: r.linhas.map((l) => [
+          rotuloCategoria(r, l.categoria),
+          ...ranking.anos.map((a) => num(l.porAno[a] ?? 0, casas)),
+          num(l.total, casas),
+          l.variacao === null ? "" : num(l.variacao, 1),
+        ]),
+      };
+    });
+}
+
+/**
+ * Planilha multi-bloco: cabeçalho com o recorte e um bloco por indicador.
+ * Separador ";", decimal com vírgula e BOM — os três cuidados do Excel pt-BR.
+ */
+export function csvDeBlocos(titulo: string, m: MetricsData, ctx: ContextoExport, blocos: BlocoCsv[]): string {
   const partes: string[] = [
-    linha("Painel de Inteligência DJUD — Ministério da Saúde"),
+    linha(titulo),
     linha("Departamento de Judicialização — demandas judiciais de medicamentos"),
     linha("Gerado em", fmtDateLong(ctx.geradoEm)),
     linha("Exportado por", ctx.responsavel || "—"),
@@ -208,7 +239,7 @@ export function csvDoPainel(
     partes.push("", linha("AVISO", m.filtroCatmat.motivo ?? "Código não encontrado"));
   }
 
-  for (const bloco of blocosDoPainel(m, ranking)) {
+  for (const bloco of blocos) {
     partes.push("", linha(bloco.titulo.toUpperCase()), bloco.cabecalho.map(campo).join(";"));
     if (!bloco.linhas.length) {
       partes.push(linha("(sem dados no recorte selecionado)"));
@@ -224,24 +255,24 @@ export function csvDoPainel(
 
 // ── Relatório HTML imprimível ────────────────────────────────────────────────
 
-function tabelaSimples<T>(rows: T[], colunas: Coluna<T>[]): string {
+export function tabelaSimples<T>(rows: T[], colunas: Coluna<T>[]): string {
   if (!rows.length) {
     return `<p style="color:#666;font-size:11px;font-style:italic;">Sem dados no recorte selecionado.</p>`;
   }
   return tabela(rows, colunas);
 }
 
-const brl = (v: number, dec = 2) =>
+export const brl = (v: number, dec = 2) =>
   `R$ ${v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
 
-function cartao(label: string, valor: string): string {
+export function cartao(label: string, valor: string): string {
   return `<div style="flex:1;min-width:130px;border:1px solid ${AZUL};border-radius:4px;padding:10px;text-align:center;background:#eef2f7;">
       <div style="font-size:9px;color:#555;text-transform:uppercase;margin-bottom:4px;">${label}</div>
       <div style="font-size:17px;font-weight:bold;color:${AZUL};">${valor}</div>
     </div>`;
 }
 
-function secaoRankingAnual(ranking: RankingAnualData): string {
+export function secaoRankingAnual(ranking: RankingAnualData): string {
   if (!ranking.anos.length) {
     return `<p style="font-size:11px;color:#666;font-style:italic;">Não há anos suficientes no recorte selecionado para a comparação.</p>`;
   }
@@ -253,7 +284,7 @@ function secaoRankingAnual(ranking: RankingAnualData): string {
         const casas = r.unidade === "reais" ? 2 : 0;
         const valor = (v: number) => (r.unidade === "reais" ? brl(v, casas) : fmtInt(v));
         const colunas: Coluna<LinhaRanking>[] = [
-          { label: "Categoria", fn: (l) => esc(l.categoria.substring(0, 60)) },
+          { label: "Categoria", fn: (l) => esc(rotuloCategoria(r, l.categoria).substring(0, 60)) },
           ...ranking.anos.map((ano) => ({
             label: String(ano),
             fn: (l: LinhaRanking) => (l.porAno[ano] ? valor(l.porAno[ano]) : "—"),
@@ -282,16 +313,9 @@ function secaoRankingAnual(ranking: RankingAnualData): string {
       .join("")}`;
 }
 
-export function paginaPainelHTML(
-  m: MetricsData,
-  ranking: RankingAnualData | null,
-  ctx: ContextoExport
-): string {
-  const corpo = [
-    secao(
-      1,
-      "Recorte da Análise",
-      `<table style="width:100%;border-collapse:collapse;font-size:11px;">
+/** Tabela "recorte da análise": emissão, quem exportou e os filtros aplicados. */
+export function tabelaRecorte(m: MetricsData, ctx: ContextoExport): string {
+  return `<table style="width:100%;border-collapse:collapse;font-size:11px;">
         <tr><td style="border:1px solid #ccc;padding:4px 8px;width:32%;background:#f5f5f5;font-weight:bold;">Data de emissão</td><td style="border:1px solid #ccc;padding:4px 8px;">${fmtDateLong(ctx.geradoEm)}</td></tr>
         <tr><td style="border:1px solid #ccc;padding:4px 8px;background:#f5f5f5;font-weight:bold;">Exportado por</td><td style="border:1px solid #ccc;padding:4px 8px;">${esc(ctx.responsavel) || "—"}</td></tr>
         ${
@@ -307,10 +331,18 @@ export function paginaPainelHTML(
       </table>
       ${
         m.filtroCatmat?.encontrado
-          ? `<p style="font-size:10px;color:#444;margin-top:6px;">O filtro por código não incide sobre uma coluna CATMAT da demanda — a base do Redmine não a possui. Ele traduz o código para a(s) substância(s) do catálogo e procura por elas no princípio ativo, no título e na descrição da demanda: ${esc(m.filtroCatmat.grupos.map((g) => g.rotulo).join(" · "))}.</p>`
+          ? `<p style="font-size:10px;color:#444;margin-top:6px;">A base do Redmine não traz o CATMAT. O filtro por código reúne as demandas em que a apresentação foi identificada como este código (entregas no SISMAT pelo NUP ou concentração citada no texto) e, entre as demandas sem apresentação identificada, as da mesma substância — procurada no princípio ativo, no título e na descrição: ${esc(m.filtroCatmat.grupos.map((g) => g.rotulo).join(" · "))}.</p>`
           : ""
-      }`
-    ),
+      }`;
+}
+
+export function paginaPainelHTML(
+  m: MetricsData,
+  ranking: RankingAnualData | null,
+  ctx: ContextoExport
+): string {
+  const corpo = [
+    secao(1, "Recorte da Análise", tabelaRecorte(m, ctx)),
     secao(
       2,
       "Indicadores Principais",
@@ -319,7 +351,7 @@ export function paginaPainelHTML(
         ${cartao("Passivo ativo", fmtInt(m.demandasAtivas))}
         ${cartao("Demandas críticas", fmtInt(m.demandasCriticas))}
         ${cartao("Taxa de resolução", `${m.taxaResolucao.toFixed(1)}%`)}
-        ${cartao("Valor estimado total", brl(m.totalValorEstimado))}
+        ${cartao("Valor total (SIAFI)", brl(m.totalValorEstimado))}
       </div>`
     ),
     secao(
@@ -387,11 +419,21 @@ export function paginaPainelHTML(
     corpo.push(secao(7, "Rankings em Série Anual — Comparação entre Exercícios", secaoRankingAnual(ranking)));
   }
 
+  return documentoHTML({
+    titulo: "Painel DJUD — Relatório Analítico",
+    subtitulo: "Relatório Analítico do Painel de Demandas Judiciais de Medicamentos",
+    corpo: corpo.join("\n"),
+    ctx,
+  });
+}
+
+/** Moldura dos relatórios do painel (A4, botão de imprimir, cabeçalho e rodapé). */
+export function documentoHTML(d: { titulo: string; subtitulo: string; corpo: string; ctx: ContextoExport }): string {
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Painel DJUD — Relatório Analítico</title>
+  <title>${esc(d.titulo)}</title>
   <style>
     @page { size: A4; margin: 18mm 15mm 20mm 20mm; }
     @media print { .no-print { display: none !important; } body { background: white !important; } .section { page-break-inside: avoid; } }
@@ -410,11 +452,11 @@ export function paginaPainelHTML(
   <div class="page">
     <div class="header">
       <h1>Ministério da Saúde — Departamento de Judicialização</h1>
-      <h2>Relatório Analítico do Painel de Demandas Judiciais de Medicamentos</h2>
+      <h2>${esc(d.subtitulo)}</h2>
     </div>
-    ${corpo.join("\n")}
+    ${d.corpo}
     <footer>
-      <span>Gerado pelo DJUD Painel · ${fmtDate(ctx.geradoEm)}</span>
+      <span>Gerado pelo DJUD Painel · ${fmtDate(d.ctx.geradoEm)}</span>
       <span>Os números refletem os filtros declarados na seção 1</span>
     </footer>
   </div>

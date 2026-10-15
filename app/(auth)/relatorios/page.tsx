@@ -2,10 +2,11 @@
 
 import { useSession } from "next-auth/react";
 import { hasPermission } from "@/lib/permissions";
-import { BarChart3, FileText, ShieldCheck, Clock, Download, ExternalLink } from "lucide-react";
+import { BarChart3, FileText, ShieldCheck, Clock, Download, ExternalLink, FileSpreadsheet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
+import { apiPath } from "@/lib/url";
 
 interface RelatorioCard {
   id: string;
@@ -49,9 +50,9 @@ const relatorios: RelatorioCard[] = [
     id: "executivo",
     titulo: "Panorama Executivo",
     descricao:
-      "Visão consolidada de demandas ativas, orçamento comprometido, evolução mensal e indicadores-chave de desempenho (KPIs) para gestores.",
+      "Destaques, indicadores-chave, evolução (últimos 12 meses × 12 anteriores e série anual), onde se concentra a demanda, tramitação e risco, distribuição geográfica e tendência por exercício — com os mesmos números do Dashboard. Aqui, a base inteira; para um recorte, use o botão Panorama Executivo no Dashboard, que leva os filtros da tela.",
     permission: "relatorios:executivo",
-    status: "em-breve",
+    status: "disponivel",
     icone: BarChart3,
   },
 ];
@@ -114,6 +115,27 @@ export default function RelatoriosPage() {
                     Ir para Pesquisa de Preço
                   </Link>
                 </Button>
+              ) : rel.id === "executivo" && rel.status === "disponivel" && temPermissao ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Button size="sm" asChild>
+                    <a href={apiPath("/api/relatorios/executivo?format=html")} target="_blank" rel="noopener noreferrer">
+                      <Download className="h-4 w-4 mr-2" />
+                      Relatório (PDF)
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <a href={apiPath("/api/relatorios/executivo?format=csv")}>
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />
+                      Planilha (CSV)
+                    </a>
+                  </Button>
+                  <Button size="sm" variant="ghost" className="col-span-2" asChild>
+                    <Link href="/dashboard">
+                      <ExternalLink className="h-4 w-4 mr-2" />
+                      Recortar no Dashboard
+                    </Link>
+                  </Button>
+                </div>
               ) : (
                 <Button
                   size="sm"
@@ -134,8 +156,9 @@ export default function RelatoriosPage() {
         <p className="font-medium text-foreground mb-1">Nota</p>
         <p>
           Os relatórios de pesquisa de preços são gerados em PDF, conforme o modelo
-          estabelecido pela IN SEGES/ME nº 65/2021. Os módulos de relatório serão
-          disponibilizados nas próximas atualizações do sistema.
+          estabelecido pela IN SEGES/ME nº 65/2021, e o mapa comparativo em XLSX, no modelo
+          da DLOG. O Panorama Executivo abre pronto para imprimir ou salvar em PDF. Análise de
+          Risco e Prazos e Dimensionamento para ARP estão em especificação.
         </p>
       </div>
     </div>

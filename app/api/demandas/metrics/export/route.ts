@@ -5,8 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getMetricsData } from "@/lib/metrics";
 import { getRankingAnual, type RankingAnualData } from "@/lib/metrics-ranking-anual";
-import { csvDoPainel, paginaPainelHTML, type FiltroDescrito } from "@/lib/metrics-export";
-import { descreverFiltro, lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
+import { csvDoPainel, descreverRecorte, paginaPainelHTML } from "@/lib/metrics-export";
+import { lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,15 +41,7 @@ export async function GET(request: NextRequest) {
 
     // O que vai impresso como "recorte da análise": só os filtros realmente
     // aplicados, com o rótulo que o usuário vê na tela.
-    const descritos: FiltroDescrito[] = descreverFiltro(filtro);
-    if (metrics.filtroCatmat) {
-      const f = metrics.filtroCatmat;
-      const i = descritos.findIndex(([r]) => r === "CATMAT / registro ANVISA");
-      const texto = f.encontrado
-        ? `${f.codigo} — ${f.descricao ?? ""} (substâncias: ${f.grupos.map((g) => g.rotulo).join(" · ")})`
-        : `${f.codigo} — ${f.motivo ?? "não encontrado"}`;
-      if (i >= 0) descritos[i] = [f.tipo === "REGISTRO" ? "Registro ANVISA" : "Código CATMAT", texto];
-    }
+    const descritos = descreverRecorte(filtro, metrics);
 
     const geradoEm = new Date();
     const ctx = {

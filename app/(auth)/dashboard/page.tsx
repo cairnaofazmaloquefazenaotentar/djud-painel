@@ -273,7 +273,7 @@ export default function DashboardPage() {
   }, [catmatInput]);
 
   const [dimensaoRanking, setDimensaoRanking] = useState<DimensaoRanking>("medicamento");
-  const [exportando, setExportando] = useState<"csv" | "html" | null>(null);
+  const [exportando, setExportando] = useState<"csv" | "html" | "executivo" | null>(null);
 
   const { data: principios, isLoading: principiosLoading } = usePrincipiosAtivos();
   const { data: opcoes, isLoading: opcoesLoading } = useOpcoesDemandas();
@@ -318,14 +318,16 @@ export default function DashboardPage() {
     setCatmatInput(""); setCatmat("");
   };
 
-  const exportar = async (formato: "csv" | "html") => {
-    setExportando(formato);
+  // "executivo" = Panorama Executivo (Frente C): o mesmo recorte, na visão do gestor.
+  const exportar = async (formato: "csv" | "html", relatorio: "painel" | "executivo" = "painel") => {
+    setExportando(relatorio === "executivo" ? "executivo" : formato);
     const janela = formato === "html" ? window.open("", "_blank") : null;
     try {
       const params = paramsDeMetrics(filtro);
       params.set("format", formato);
-      if (activeTab === "ranking-anual") params.set("rankingAnual", "1");
-      const res = await fetch(apiPath(`/api/demandas/metrics/export?${params.toString()}`));
+      if (relatorio === "painel" && activeTab === "ranking-anual") params.set("rankingAnual", "1");
+      const rota = relatorio === "executivo" ? "/api/relatorios/executivo" : "/api/demandas/metrics/export";
+      const res = await fetch(apiPath(`${rota}?${params.toString()}`));
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         janela?.close();
@@ -534,6 +536,20 @@ export default function DashboardPage() {
                       <Download className="h-3.5 w-3.5 mr-1.5" />
                     )}
                     Relatório (PDF)
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={exportando !== null}
+                    onClick={() => exportar("html", "executivo")}
+                    title="Destaques, indicadores-chave, evolução e rankings do mesmo recorte, para gestores"
+                  >
+                    {exportando === "executivo" ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                    ) : (
+                      <PieChart className="h-3.5 w-3.5 mr-1.5" />
+                    )}
+                    Panorama Executivo
                   </Button>
                 </div>
               </div>

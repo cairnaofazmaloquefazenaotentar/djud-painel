@@ -479,6 +479,25 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   os mesmos filtros, então a planilha traz a série mensal inteira e não só os pontos que
   couberam no gráfico. Registrada no `AuditLog`.
 
+## Relatórios — Panorama Executivo e especificação de Risco/ARP (Frente C)
+
+- **Panorama Executivo**: `GET /api/relatorios/executivo?format=html|csv&<filtros>` (permissão
+  `relatorios:executivo`), montado em `lib/relatorio-executivo.ts` (puro) sobre o que
+  `getMetricsData` e `getRankingAnual` já apuraram — **nenhum número novo é consultado**, por
+  isso bate com o Dashboard sob os mesmos filtros. Deriva só participações (%), a série anual e
+  os últimos 12 meses completos × os 12 anteriores (o mês mais recente da série fica de fora, por
+  poder estar incompleto; sem 24 meses completos antes dele, não compara). Destaques = frases
+  montadas dos números, sem juízo.
+- Grava `AuditLog` (EXPORT, entidade `PanoramaExecutivo`, com SHA-256) e `RelatorioGerado`
+  (`EXECUTIVO`, com a consulta). Entradas: botão **Panorama Executivo** no Dashboard (leva os
+  filtros da tela) e o card da página Relatórios (base inteira, HTML ou CSV).
+- Moldura, recorte e CSV multi-bloco compartilhados com a exportação do Dashboard em
+  `lib/metrics-export.ts` (`documentoHTML`, `tabelaRecorte`, `descreverRecorte`, `csvDeBlocos`,
+  `blocosRankingAnual`).
+- **Análise de Risco e Prazos** e **Dimensionamento para ARP**: especificados em
+  `spec/relatorios-risco-arp.md`, com as decisões pendentes (prazo, histórico de situação,
+  faixas de prioridade, unidade do SISMAT, método de projeção). Datas de entrega: do usuário.
+
 ## Variáveis de Ambiente
 
 Copiar `.env.example` → `.env.local`:
