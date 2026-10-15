@@ -185,6 +185,15 @@ model Demanda {
   deletedAt                    DateTime?
   attachments                  Attachment[]
 
+  // Avaliação da DLOG (out/2026) — colunas criadas por scripts/alter_demanda_busca.py
+  nupSei                       String?          // NUP_SEI Principal, formato canônico "25000.123456/2021-11" (A6)
+  medicamento                  String?          // Medicamento identificado (A5; scripts/enriquecer_demandas.py)
+  medicamentoOrigem            String?          // REDMINE | TITULO | DESCRICAO | SISMAT
+  apresentacoes                Json?            // Apresentações identificadas (A5)
+  catmatsDerivados             String[]         @default([]) // CATMATs derivados da apresentação (A5)
+  unidadesDerivadas            String[]         @default([]) // Unidades de fornecimento desses CATMATs (CMED), normalizadas
+  buscaNorm                    String?          @db.Text // Texto normalizado da busca (A4; lib/demandas-filtro-tipos.ts)
+
   @@index([ano])
   @@index([formaCumprimento])
   @@index([trfRegiao])
@@ -201,6 +210,9 @@ model Demanda {
   @@index([fornecedor])
   @@index([autor])
   @@index([deletedAt])
+  @@index([nupSei])
+  // Busca sem acento por trecho (P8): GIN pg_trgm — a extensão é criada pelo script.
+  @@index([buscaNorm(ops: raw("gin_trgm_ops"))], type: Gin, map: "Demanda_buscaNorm_trgm_idx")
   @@schema("public")
 }
 
@@ -775,6 +787,17 @@ model CestaItem {
   // lib/pesquisa-preco-curadoria.ts). Fica no item porque a curadoria é do
   // item: o relatório da cesta refaz a pesquisa e reaplica estas exclusões.
   exclusoes       Json?
+  // Escolhas do responsável para o item (avaliação da DLOG). Ficam no item,
+  // como a curadoria: o relatório refaz a pesquisa e reaplica todas.
+  metodoPreco          String?          // P11 — null = padrão (mediana das medianas)
+  regraTeto            String?          // P12 — null = padrão da emissão
+  aliquotaTeto         String?          // P12 — alíquota do PMVG da regra do medicamento de referência
+  justificativa        String?  @db.Text // justificativa do preço editada pelo responsável
+  periodoMeses         Int?             // D1 — null = 12 meses; 0 = todo o período
+  periodoInicio          String?  // Intervalo de datas: início das bases ("AAAA-MM-DD"); prevalece sobre periodoMeses
+  justificativaPeriodo String?  @db.Text // D1 — obrigatória quando o período é ampliado
+  corrigirIpca         Boolean  @default(true) // D2 — atualização monetária pelo IPCA
+  duplicidadesRevertidas Json?          // P18 — ids de prováveis duplicatas mantidas pelo responsável
   calculadoEm     DateTime @default(now())
   criadoEm        DateTime @default(now())
   atualizadoEm    DateTime @updatedAt
@@ -802,6 +825,13 @@ model CestaOrcamento {
   documento           String?                // Nº da proposta / e-mail / SEI
   observacao          String?   @db.Text
   considerarNoCalculo Boolean   @default(true) // false = só registro no relatório
+  // P13 — tipo do preço informado: IV cotação, III mídia/sítio, V nota fiscal,
+  // II contratação similar. Cada tipo é uma fonte própria no consolidado.
+  tipo                String    @default("IV")
+  url                 String?                // III — página consultada
+  acessadoEm          DateTime?              // III — data e hora do acesso
+  chaveNfe            String?                // V — chave de acesso da NF-e
+  justificativaForaPeriodo String? @db.Text  // mantém no cálculo fora da janela do inciso
   criadoEm            DateTime  @default(now())
   atualizadoEm        DateTime  @updatedAt
 
@@ -846,4 +876,139 @@ model SiafiPagamento {
   @@index([dtPagtoSiafi])
   @@index([ano])
   @@schema("sismat")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dados abertos — preços coletados das APIs públicas (Frente D0 da avaliação
+// da DLOG). Não confundir com sismat."ComprasGovPreco", que é outra base (sem
+// CATMAT) e alimenta só a aba Preços.
+//
+//   • DadosAbertosPreco — um registro por item comprado: Compras.gov.br (Painel
+//     de Preços, /modulo-pesquisa-preco/1_consultarMaterial), BPS do Ministério
+//     da Saúde (/economia-da-saude/bps), itens de ata (/modulo-arp) e, depois,
+//     itens de contratação PNCP. Vem da coleta pelo painel (um CATMAT por vez)
+//     ou da carga em lote da saída do Extrator-CATMAT-DA
+//     (scripts/import_extrator_da.py). O mapeamento campo a campo fica em
+//     lib/dados-abertos/mapear.ts (espelho: scripts/dados_abertos_mapear.py).
+//     O id é DETERMINÍSTICO (COMPRASGOV:<chave22>, BPS:<sha1>, ARP:<ata>:<item>):
+//     a curadoria grava exclusões pelo id, e recoletar não pode mudá-lo.
+//   • DadosAbertosColeta — uma linha por coleta (origem × CATMAT × janela), com
+//     o relatório de integridade (esperados × baixados) do extrator.
+//   • PncpVinculo — compra (idCompra, 17 dígitos) → contratação no PNCP. Cache
+//     permanente quando encontrada; "não encontrada" vale 30 dias.
+//
+// Tabelas criadas por scripts/create_dadosabertos_tables.py (mesma DDL que o
+// `prisma db push` geraria a partir destes modelos).
+// ─────────────────────────────────────────────────────────────────────────────
+model DadosAbertosPreco {
+  id                    String    @id // COMPRASGOV:<chave22> | BPS:<sha1> | ARP:<ata>:<item> | PNCP:<idCompraItem>
+  origem                String // COMPRASGOV | BPS | PNCP_ITEM | ARP_ITEM
+  chaveOrigem           String // a chave sem o prefixo
+  chaveItemCompra22     String? // idCompra (17) + nº do item (5) — deduplicação entre bases
+  codigoCatmat          String // sem zeros à esquerda
+  codigoPdm             String?
+  descricao             String    @db.Text // limpa pelas regras do extrator
+  descricaoDetalhada    String?   @db.Text
+  unidade               String?
+  unidadeNorm           String? // normalizarUnidade — filtro da pesquisa
+  capacidade            Float?
+  quantidade            Float?
+  precoUnitario         Float
+  valorUnitarioEstimado Float?
+  dataCompra            DateTime? @db.Date // BPS: homologação; ata: início da vigência
+  dataResultado         DateTime? @db.Date
+  dataInsercao          DateTime? @db.Date
+  idCompra              String? // 17 dígitos
+  numeroCompra          String? // "90041/2026"
+  numeroItemCompra      String?
+  modalidade            String? // nome, já traduzido do código
+  criterioJulgamento    String?
+  forma                 String? // SISRP | SISPP
+  situacao              String?
+  codigoUasg            String?
+  nomeUasg              String?
+  orgao                 String?
+  cnpjOrgao             String?
+  esfera                String?
+  poder                 String?
+  uf                    String?
+  municipio             String?
+  niFornecedor          String?
+  nomeFornecedor        String?
+  marca                 String?
+  cnpjFabricante        String?
+  nomeFabricante        String?
+  registroAnvisa        String?
+  generico              Boolean?
+  processoCompra        String? // BPS: numeroProcessoCompra
+  numeroAta             String? // BPS e atas
+  validadeCompra        String?
+  observacoes           String?   @db.Text
+  numeroControlePncp    String?
+  numeroControlePncpAta String?
+  origemCarga           String // API_PAINEL | EXTRATOR
+  bruto                 Json? // item como veio da origem (auditoria)
+  coletadoEm            DateTime  @default(now())
+
+  @@unique([origem, chaveOrigem])
+  @@index([codigoCatmat, origem, dataCompra])
+  @@index([idCompra])
+  @@schema("public")
+}
+
+model DadosAbertosColeta {
+  id           String    @id @default(cuid())
+  origem       String // COMPRASGOV | BPS | PNCP_ITEM | ARP_ITEM
+  codigoCatmat String
+  dataInicio   DateTime  @db.Date
+  dataFim      DateTime  @db.Date
+  assinatura   String? // "tipo+codigo" | "codigoItemCatalogo" (recuo da API antiga)
+  status       String // EM_ANDAMENTO | OK | PARCIAL | ERRO | CONTRATO_ALTERADO
+  paginas      Int       @default(0)
+  esperados    Int?
+  baixados     Int       @default(0)
+  erro         String?   @db.Text
+  origemCarga  String    @default("API_PAINEL") // API_PAINEL | EXTRATOR
+  usuarioId    String?
+  iniciadoEm   DateTime  @default(now())
+  concluidoEm  DateTime?
+
+  @@index([codigoCatmat, origem, iniciadoEm])
+  @@schema("public")
+}
+
+model PncpVinculo {
+  idCompra           String   @id // 17 dígitos
+  encontrado         Boolean
+  numeroControlePncp String?
+  situacao           String? // situação da contratação no PNCP
+  modalidade         String?
+  numeroCompra       String?
+  processo           String?
+  objeto             String?  @db.Text
+  cnpjOrgao          String?
+  url                String? // página pública da contratação
+  /// nº do item → { situacao, criterio, valorHomologado } (/2.1_…_Id)
+  itens              Json?
+  bruto              Json?
+  consultadoEm       DateTime @default(now())
+
+  @@schema("public")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IPCA — número-índice mensal (IBGE/SIDRA, tabela 1737; dez/1993 = 100), para a
+// atualização monetária da Pesquisa de Preços (D2 da avaliação da DLOG).
+// Carregado por scripts/import_ipca.py, que também cria a tabela com a mesma
+// DDL que o `prisma db push` geraria. Fator = índice do mês-base ÷ índice do
+// mês do preço — nunca a soma das variações.
+// ─────────────────────────────────────────────────────────────────────────────
+model IndiceIpca {
+  competencia    DateTime @id @db.Date // 1º dia do mês
+  numeroIndice   Float
+  variacaoMensal Float? // % no mês
+  fonte          String // "IBGE/SIDRA 1737" ou o arquivo informado
+  importadoEm    DateTime @default(now())
+
+  @@schema("public")
 }

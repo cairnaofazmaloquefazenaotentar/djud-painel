@@ -21,5 +21,13 @@ export function useFontes() {
 export function fmtDataFonte(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  // Data de calendário gravada à meia-noite UTC (vigência da CMED, datas do
+  // SISMAT): no fuso de Brasília ela cairia no dia anterior.
+  const calendario = iso.endsWith("T00:00:00.000Z");
+  return d.toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    ...(calendario ? { timeZone: "UTC" } : {}),
+  });
 }

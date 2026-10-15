@@ -1,11 +1,9 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@prisma/client";
-import {
-  resolverFiltroCatmat,
-  sqlDemandaPorCatmat,
-  whereDemandaPorCatmat,
-  type FiltroCatmat,
-} from "@/lib/demandas-catmat";
+import type { FiltroCatmat } from "@/lib/demandas-catmat";
+import type { GrupoTermos } from "@/lib/substancia";
+import { aplicarFiltro, sqlDemandas, whereDemandas, whereSelecao } from "@/lib/demandas-filtro";
+import { STATUS_RESOLVIDOS, type FiltroDemandas } from "@/lib/demandas-filtro-tipos";
 
 export interface MetricsData {
   // ── Indicadores principais ──────────────────────────────────────────────────
@@ -64,22 +62,24 @@ export interface MetricsData {
   // houve e o código não resolveu, `encontrado` é false e as métricas vêm
   // zeradas — a tela mostra o motivo em vez de gráficos vazios sem explicação.
   filtroCatmat: FiltroCatmat | null;
+  /** Radicais do medicamento digitado (B3), para a tela dizer o que filtrou. */
+  medicamento: GrupoTermos | null;
+
+  // ── Resumo do recorte (B3) ──────────────────────────────────────────────────
+  demandasEncerradas: number;
+  /** Apresentações (CATMAT derivado, A5) no recorte; "não identificada" sempre presente. */
+  apresentacaoDistribution: Array<{ catmat: string | null; rotulo: string; count: number }>;
+  /** Demandas com "Cessar Atos" no Ponto de Controle (não é status: diagnóstico 3.1). */
+  demandasCessarAtos: number;
+  primeiraEntrada: Date | null;
+  ultimaEntrada: Date | null;
 }
 
 export interface MetricsFilterInput {
-  startDate?:      Date;
-  endDate?:        Date;
-  status?:         string;
-  prioridade?:     string;
-  principioAtivo?: string;
-  organizacaoId?:  string;
-  eixoDataValor?:  "pagamento" | "processo";
-  /** CATMAT (até 6 dígitos) ou registro ANVISA (13) — mesmo filtro da lista. */
-  catmat?:         string;
+  /** O filtro único das demandas (lib/demandas-filtro-tipos.ts) — o mesmo da lista. */
+  filtro: FiltroDemandas;
+  eixoDataValor?: "pagamento" | "processo";
 }
-
-// Status considerados "resolvidos"
-const STATUS_RESOLVIDOS   = ["Fechada", "Concluída", "Encerrada", "Cancelada"];
 // Prioridades de risco elevado
 const PRIORIDADES_RISCO   = ["Alta", "Crítica"];
 
@@ -105,7 +105,7 @@ const ordemFluxo = (status: string) => FLUXO_DJUD[status] ?? 999;
 
 
 /** Painel zerado — usado quando o código pesquisado não existe no catálogo. */
-function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
+function metricsVazio(filtroCatmat: FiltroCatmat | null): MetricsData {
   return {
     totalDemandas: 0,
     demandasAtivas: 0,
@@ -135,71 +135,43 @@ function metricsVazio(filtroCatmat: FiltroCatmat): MetricsData {
     valorPorTrf: [],
     valorPorStatus: [],
     filtroCatmat,
+    medicamento: null,
+    demandasEncerradas: 0,
+    apresentacaoDistribution: [],
+    demandasCessarAtos: 0,
+    primeiraEntrada: null,
+    ultimaEntrada: null,
   };
 }
 
 export async function getMetricsData(filters: MetricsFilterInput): Promise<MetricsData> {
-  // Filtro por código: resolvido antes de tudo, para devolver o motivo quando
-  // não há como filtrar em vez de um painel vazio sem explicação.
-  const codigo = filters.catmat?.trim() ?? "";
-  const filtroCatmat = codigo ? await resolverFiltroCatmat(codigo) : null;
-  if (filtroCatmat && !filtroCatmat.encontrado) return metricsVazio(filtroCatmat);
+  // Filtro único (lib/demandas-filtro.ts): o mesmo WHERE da lista de Demandas,
+  // nas três formas — ORM, SQL e SQL com alias "d" para o JOIN com o SIAFI.
+  // Antes, o CATMAT não chegava às consultas de valor e a lixeira entrava nas
+  // contagens (diagnóstico 3.4).
+  const aplicado = await aplicarFiltro(filters.filtro);
+  if (aplicado.vazio) return metricsVazio(aplicado.catmat);
 
-  // WHERE clause Prisma ORM
-  const where: Prisma.DemandaWhereInput = {};
-
-  if (filters.startDate || filters.endDate) {
-    where.criadoEm = {};
-    if (filters.startDate) (where.criadoEm as any).gte = filters.startDate;
-    if (filters.endDate)   (where.criadoEm as any).lte = filters.endDate;
-  }
-  if (filters.status)        where.status        = filters.status;
-  if (filters.prioridade)    where.prioridade    = filters.prioridade;
-  if (filters.principioAtivo)
-    where.principioAtivo = { contains: filters.principioAtivo, mode: "insensitive" };
-  if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
-  if (filtroCatmat) where.AND = [whereDemandaPorCatmat(filtroCatmat)];
-
-  // WHERE clause para raw SQL
-  const sqlConditions: Prisma.Sql[] = [];
-  if (filtroCatmat) sqlConditions.push(sqlDemandaPorCatmat(filtroCatmat));
-  if (filters.startDate)     sqlConditions.push(Prisma.sql`"criadoEm" >= ${filters.startDate}`);
-  if (filters.endDate)       sqlConditions.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
-  if (filters.status)        sqlConditions.push(Prisma.sql`status = ${filters.status}`);
-  if (filters.prioridade)    sqlConditions.push(Prisma.sql`prioridade = ${filters.prioridade}`);
-  if (filters.principioAtivo) sqlConditions.push(Prisma.sql`"principioAtivo" ILIKE ${`%${filters.principioAtivo}%`}`);
-  if (filters.organizacaoId) sqlConditions.push(Prisma.sql`"organizacaoId" = ${filters.organizacaoId}`);
-
-  const whereRaw = sqlConditions.length > 0
-    ? Prisma.sql`WHERE ${Prisma.join(sqlConditions, " AND ")}`
-    : Prisma.sql``;
+  const where = whereDemandas(aplicado);
+  const e = (extra: Prisma.DemandaWhereInput): Prisma.DemandaWhereInput => ({ AND: [where, extra] });
+  const cond = sqlDemandas(aplicado);
+  const whereRaw = Prisma.sql`WHERE ${cond}`;
 
   // WHERE específicos para as novas séries.
   // TRF válido = 1..6 (TRF1 a TRF6); valores fora disso são erros de digitação na base.
-  const condTrfValido = Prisma.sql`"trfRegiao" BETWEEN 1 AND 6`;
-  const whereTribunal = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, condTrfValido], " AND ")}`;
-  const whereFornecedor = Prisma.sql`WHERE ${Prisma.join([...sqlConditions, Prisma.sql`"fornecedor" IS NOT NULL`], " AND ")}`;
+  const whereTribunal = Prisma.sql`WHERE ${cond} AND "trfRegiao" BETWEEN 1 AND 6`;
+  const whereFornecedor = Prisma.sql`WHERE ${cond} AND "fornecedor" IS NOT NULL`;
 
   // Condições com alias "d." para queries com JOIN sismat."SiafiPagamento"
-  const sqlConditionsD: Prisma.Sql[] = [Prisma.sql`d."deletedAt" IS NULL`];
-  if (filters.startDate)     sqlConditionsD.push(Prisma.sql`d."criadoEm" >= ${filters.startDate}`);
-  if (filters.endDate)       sqlConditionsD.push(Prisma.sql`d."criadoEm" <= ${filters.endDate}`);
-  if (filters.status)        sqlConditionsD.push(Prisma.sql`d.status = ${filters.status}`);
-  if (filters.prioridade)    sqlConditionsD.push(Prisma.sql`d.prioridade = ${filters.prioridade}`);
-  if (filters.principioAtivo)
-    sqlConditionsD.push(Prisma.sql`d."principioAtivo" ILIKE ${"%%" + filters.principioAtivo + "%%"}`);
-  if (filters.organizacaoId) sqlConditionsD.push(Prisma.sql`d."organizacaoId" = ${filters.organizacaoId}`);
+  const condD = sqlDemandas(aplicado, "d");
 
   // JOIN SIAFI — cruza pelo nº do processo (dígitos puros)
   const SIAFI_JOIN = Prisma.sql`
     JOIN sismat."SiafiPagamento" p
       ON p."numeroProcesso" = regexp_replace(COALESCE(d."numeroProcesso", ''), '\\D', '', 'g')
   `;
-  const whereSiafiBase = Prisma.sql`WHERE ${Prisma.join(sqlConditionsD, " AND ")}`;
-  const whereSiafiTribunal = Prisma.sql`WHERE ${Prisma.join(
-    [...sqlConditionsD, Prisma.sql`d."trfRegiao" BETWEEN 1 AND 6`],
-    " AND "
-  )}`;
+  const whereSiafiBase = Prisma.sql`WHERE ${condD}`;
+  const whereSiafiTribunal = Prisma.sql`WHERE ${condD} AND d."trfRegiao" BETWEEN 1 AND 6`;
 
   // ── Todas as queries em paralelo — ZERO findMany ────────────────────────────
   const [
@@ -234,13 +206,13 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     db.demanda.count({ where }),
 
     // Resolvidos
-    db.demanda.count({ where: { ...where, status: { in: STATUS_RESOLVIDOS } } }),
+    db.demanda.count({ where: e({ status: { in: STATUS_RESOLVIDOS } }) }),
 
-    // Passivo ativo (não resolvidos)
-    db.demanda.count({ where: { ...where, status: { notIn: STATUS_RESOLVIDOS } } }),
+    // Passivo ativo (não resolvidos) — o mesmo critério do atalho "Ativos" do filtro.
+    db.demanda.count({ where: e(whereSelecao("status", { incluir: [], excluir: STATUS_RESOLVIDOS })) }),
 
     // Demandas críticas (risco elevado)
-    db.demanda.count({ where: { ...where, prioridade: { in: PRIORIDADES_RISCO } } }),
+    db.demanda.count({ where: e({ prioridade: { in: PRIORIDADES_RISCO } }) }),
 
     // Valor pago total — via SIAFI (soma dos Valores OB por processo)
     db.$queryRaw<Array<{ valor: number }>>`
@@ -279,7 +251,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Top 15 UFs de residência
     db.demanda.groupBy({
       by: ["ufResidencia"],
-      where: { ...where, ufResidencia: { not: null } },
+      where: e({ ufResidencia: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 15,
@@ -291,7 +263,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Grupo Temático — top 10
     db.demanda.groupBy({
       by: ["areaTematica"],
-      where: { ...where, areaTematica: { not: null } },
+      where: e({ areaTematica: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 10,
@@ -303,7 +275,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Região do Brasil
     db.demanda.groupBy({
       by: ["regiaoBrasil"],
-      where: { ...where, regiaoBrasil: { not: null } },
+      where: e({ regiaoBrasil: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
     }),
@@ -311,7 +283,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Top 10 responsáveis
     db.demanda.groupBy({
       by: ["responsavelId"],
-      where: { ...where, responsavelId: { not: null } },
+      where: e({ responsavelId: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 10,
@@ -321,13 +293,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // Pilar de dimensionamento: quais medicamentos e em qual volume
     db.demanda.groupBy({
       by: ["principioAtivo"],
-      where: {
-        ...where,
-        // Mantém o filtro de busca (contains) quando ativo; caso contrário apenas exclui nulos
-        principioAtivo: filters.principioAtivo
-          ? { contains: filters.principioAtivo, mode: "insensitive" }
-          : { not: null },
-      },
+      where: e({ principioAtivo: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 15,
@@ -336,7 +302,7 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     // ── NOVO: Objeto da Ação (tipo de medicamento) ────────────────────────────
     db.demanda.groupBy({
       by: ["objetoAcao"],
-      where: { ...where, objetoAcao: { not: null } },
+      where: e({ objetoAcao: { not: null } }),
       _count: { id: true },
       orderBy: { _count: { id: "desc" } },
       take: 10,
@@ -460,6 +426,20 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
       GROUP BY d.status
       ORDER BY valor DESC
     `,
+  ]);
+
+  // Resumo do recorte (B3): primeira e última entrada e Cessar Atos — este é
+  // item do Ponto de Controle, não status (diagnóstico 3.1).
+  const [datasEntrada, cessarAtosCount, apresentacoesRaw, semApresentacao] = await Promise.all([
+    db.demanda.aggregate({ where, _min: { dataEntradaDJUD: true }, _max: { dataEntradaDJUD: true } }),
+    db.demanda.count({ where: e(whereSelecao("pontoControle", { incluir: ["Cessar Atos"], excluir: [] })) }),
+    db.$queryRaw<Array<{ catmat: string; descricao: string | null; count: bigint }>>`
+      SELECT t.c AS catmat, MAX(ci."descricaoItem") AS descricao, COUNT(*) AS count
+      FROM (SELECT unnest("catmatsDerivados") AS c FROM "Demanda" ${whereRaw}) t
+      LEFT JOIN "CatmatItem" ci ON ci."codigoItem" = t.c
+      GROUP BY t.c ORDER BY count DESC LIMIT 10
+    `,
+    db.demanda.count({ where: e({ catmatsDerivados: { isEmpty: true } }) }),
   ]);
 
   // Buscar nomes dos top responsáveis
@@ -598,6 +578,19 @@ export async function getMetricsData(filters: MetricsFilterInput): Promise<Metri
     valorPorTrf:    valorPorTrfRaw.map((r)    => ({ trf: r.trf,       valor: Number(r.valor) || 0 })),
     valorPorStatus: valorPorStatusRaw.map((r) => ({ status: r.status, valor: Number(r.valor) || 0 })),
 
-    filtroCatmat,
+    filtroCatmat: aplicado.catmat,
+    medicamento: aplicado.medicamento,
+    demandasEncerradas: resolvedCount,
+    apresentacaoDistribution: [
+      ...apresentacoesRaw.map((r) => ({
+        catmat: r.catmat,
+        rotulo: `CATMAT ${r.catmat}${r.descricao ? ` — ${r.descricao}` : ""}`,
+        count: Number(r.count),
+      })),
+      { catmat: null, rotulo: "apresentação não identificada", count: semApresentacao },
+    ],
+    demandasCessarAtos: cessarAtosCount,
+    primeiraEntrada: datasEntrada._min.dataEntradaDJUD,
+    ultimaEntrada: datasEntrada._max.dataEntradaDJUD,
   };
 }

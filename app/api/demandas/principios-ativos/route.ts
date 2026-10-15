@@ -4,7 +4,19 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { jsonComVersao } from "@/lib/data-version";
 import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
+import { limparSubstancia, radicalSubstancia } from "@/lib/substancia";
+import { SEPARADOR_MULTIVALOR } from "@/lib/demandas-filtro-tipos";
 import { NextResponse } from "next/server";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/demandas/principios-ativos — sugestões do campo "Medicamento" (B3).
+//
+// Substância CANÔNICA: as grafias do Redmine ("Eltrombopag", "Eltrombopague",
+// "ELTROMBOPAGUE OLAMINA") viram uma entrada só, pelo mesmo radical que o
+// filtro de medicamento procura (lib/substancia.ts). O rótulo é a grafia mais
+// frequente; a contagem é de demandas (fora da lixeira) — uma demanda com
+// "A | B" conta uma vez em A e uma em B.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function GET(request: Request) {
   try {
@@ -13,41 +25,43 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
     }
 
-    // Agrupa por princípio ativo com a contagem de demandas de cada um
-    const grupos = await db.demanda.groupBy({
-      by: ["principioAtivo"],
-      where: { principioAtivo: { not: null } },
-      _count: { id: true },
-    });
+    return jsonComVersao(request, ["demanda"], async () => {
+      const grupos = await db.demanda.groupBy({
+        by: ["principioAtivo"],
+        where: { principioAtivo: { not: null }, deletedAt: null },
+        _count: { id: true },
+      });
 
-    // Limpa, mescla formas equivalentes (case-insensitive) e soma as contagens
-    const mapa = new Map<string, { value: string; count: number }>();
-
-    for (const g of grupos) {
-      const limpo = normalizarPrincipioAtivo(g.principioAtivo);
-      if (!limpo) continue;
-
-      const chave = limpo.toLowerCase();
-      const atual = mapa.get(chave);
-      const n = g._count.id;
-
-      if (atual) {
-        atual.count += n;
-      } else {
-        mapa.set(chave, { value: limpo, count: n });
+      const porRadical = new Map<string, { count: number; grafias: Map<string, number> }>();
+      for (const g of grupos) {
+        const limpo = normalizarPrincipioAtivo(g.principioAtivo);
+        if (!limpo) continue;
+        // Os itens de uma mesma demanda podem cair no mesmo radical ("A | A sódica").
+        const radicais = new Map<string, string>();
+        for (const item of limpo.split(SEPARADOR_MULTIVALOR)) {
+          const nome = limparSubstancia(item.trim());
+          const r = radicalSubstancia(nome);
+          if (r && !radicais.has(r)) radicais.set(r, nome);
+        }
+        for (const [r, nome] of radicais) {
+          const atual = porRadical.get(r) ?? { count: 0, grafias: new Map<string, number>() };
+          atual.count += g._count.id;
+          atual.grafias.set(nome, (atual.grafias.get(nome) ?? 0) + g._count.id);
+          porRadical.set(r, atual);
+        }
       }
-    }
 
-    // Ordena por frequência (desc) e, em empate, alfabético
-    const items = Array.from(mapa.values()).sort(
-      (a, b) => b.count - a.count || a.value.localeCompare(b.value, "pt-BR"),
-    );
-
-    return jsonComVersao(request, ["demanda"], async () => ({ items }));
+      const items = Array.from(porRadical.entries())
+        .map(([radical, d]) => ({
+          value: Array.from(d.grafias.entries()).sort((a, b) => b[1] - a[1])[0][0],
+          count: d.count,
+          radical,
+        }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, "pt-BR"));
+      return { items };
+    });
   } catch (error) {
     console.error("[principios-ativos] Erro:", error);
-    const message =
-      error instanceof Error ? error.message : "Erro ao listar princípios ativos";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Erro ao listar os medicamentos" }, { status: 500 });
   }
 }

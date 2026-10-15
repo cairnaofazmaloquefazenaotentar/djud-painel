@@ -1,5 +1,20 @@
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
-import { NOME_FONTE_CURADA } from "@/lib/pesquisa-preco-curadoria";
+import { descreverListaCmed, rotuloCap } from "@/lib/cmed-competencia";
+import { rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
+import {
+  NOME_FONTE_CURADA,
+  ORDEM_TIPOS_INFORMADOS,
+  TIPOS_PRECO_INFORMADO,
+  type OrcamentoFornecedor,
+} from "@/lib/pesquisa-preco-curadoria";
+import { INFO_FONTE, ORDEM_FONTES, ROTULO_BASE, corrigidoPeloIpca } from "@/lib/pesquisa-preco-fontes";
+import { descricaoPeriodo } from "@/lib/pesquisa-preco-periodo";
+import {
+  ROTULO_METODO,
+  rotuloRegraTeto,
+  rotuloRegraTetoCurto,
+  type TetoCmed,
+} from "@/lib/pesquisa-preco-metodo";
 import type {
   Estatisticas,
   FonteMercadoResultado,
@@ -43,12 +58,32 @@ export function fmtInt(n: number): string {
   return n.toLocaleString("pt-BR");
 }
 
+/**
+ * Data de calendário (meia-noite UTC: "2026-03-10", data da compra, da
+ * proposta) sai como foi gravada; instante (data e hora: emissão, coleta), no
+ * fuso de Brasília. Sem isso, o mesmo relatório mudava de dia conforme o fuso
+ * do servidor.
+ */
+function fusoDe(d: Date): string {
+  const meiaNoiteUtc =
+    d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+  return meiaNoiteUtc ? "UTC" : "America/Sao_Paulo";
+}
+
 export function fmtDate(d: Date | string): string {
-  return new Date(d).toLocaleDateString("pt-BR");
+  const dt = new Date(d);
+  return dt.toLocaleDateString("pt-BR", { timeZone: fusoDe(dt) });
 }
 
 export function fmtDateLong(d: Date | string): string {
-  return new Date(d).toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric" });
+  const dt = new Date(d);
+  return dt.toLocaleDateString("pt-BR", { day: "numeric", month: "long", year: "numeric", timeZone: fusoDe(dt) });
+}
+
+/** "2026-09" → "09/2026". */
+export function fmtMes(mes: string | null | undefined): string {
+  if (!mes) return "—";
+  return `${mes.slice(5, 7)}/${mes.slice(0, 4)}`;
 }
 
 export function slug(s: string): string {
@@ -174,16 +209,35 @@ export function conteudoEspecificacao(resultado: ResultadoPesquisa, especificaca
       </table>`;
 }
 
-export function conteudoMetodo(): string {
+/**
+ * `metodoUnico`/`tetoUnico`: o método e a regra do teto quando valem para o
+ * documento inteiro (relatório de um item, ou cesta com a mesma escolha em
+ * todos os itens); ausentes, o texto remete ao detalhamento de cada item.
+ */
+export function conteudoMetodo(
+  metodoUnico?: keyof typeof ROTULO_METODO | null,
+  tetoUnico?: string | null
+): string {
   return `<p style="font-size:11px;margin-bottom:6px;">A pesquisa foi realizada em conformidade com o art. 5º da IN SEGES/ME nº 65/2021, a partir do código CATMAT e da unidade de fornecimento do item, consultando as seguintes bases de dados oficiais:</p>
       <ul style="padding-left:18px;font-size:11px;line-height:1.8;">
         <li><strong>CMED/ANVISA</strong> — Câmara de Regulação do Mercado de Medicamentos: preço máximo de venda ao governo (PMVG) como teto regulatório obrigatório, convertido da embalagem para a unidade de fornecimento pela quantidade por embalagem (Qt_Embal) do registro ANVISA.</li>
-        <li><strong>BPS</strong> — Banco de Preços em Saúde (DATASUS/MS): registros de compras hospitalares públicas 2020–2025, por código CATMAT.</li>
-        <li><strong>SIASG/Comprasnet</strong> — Sistema Integrado de Administração de Serviços Gerais: compras públicas com ação judicial, anos 2002–2021, por código CATMAT.</li>
-        <li><strong>PNCP</strong> — Portal Nacional de Contratações Públicas: contratos de materiais homologados, 2024–2025, por código do item de catálogo (CATMAT).</li>
-        <li><strong>Orçamento direto de fornecedor</strong> (art. 5º, IV) — propostas apresentadas diretamente ao órgão, quando juntadas ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
+        <li><strong>Compras.gov.br</strong> (inciso I): preços praticados nas compras públicas por código CATMAT, reunindo três bases — a API de dados abertos do Painel de Preços (compras dos últimos 36 meses, com o número da compra, a UASG e o item), o SIASG/Comprasnet judicial (2002–2021) e a base de contratos do PNCP carregada no painel (2024–2025). O PNCP é também o portal da contratação de cada compra: o link vai em cada registro.</li>
+        <li><strong>BPS</strong> — Banco de Preços em Saúde (Ministério da Saúde): compras hospitalares públicas por código CATMAT, coletadas da API de dados abertos (com nº do processo, da ata e registro ANVISA) ou, sem coleta, da base histórica carregada no painel (2020–2025).</li>
+        <li><strong>Atas de registro de preços</strong> (inciso II): itens de atas com vigência iniciada nos últimos 12 meses, por código CATMAT, coletados da API de dados abertos, com o link da ata no PNCP.</li>
+        <li><strong>Preços informados pelo responsável</strong> (art. 5º, II a V) — contratação similar fora das bases, mídia especializada ou sítio eletrônico, cotação com fornecedor e nota fiscal eletrônica, quando juntados ao processo. Fonte especialmente relevante em medicamentos importados, cujas aquisições nem sempre têm contratações públicas comparáveis nas bases acima.</li>
       </ul>
-      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. O preço de referência adotado é a mediana das medianas apuradas por fonte, critério que impede que a base com mais registros determine sozinha o resultado. Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º).</p>`;
+      <p style="font-size:11px;margin-top:6px;">Cada fonte é consultada no período do art. 5º — bases e contratações similares, 12 meses antes da data de referência, salvo ampliação justificada; mídia e cotação, 6 meses — e, por padrão, o valor de cada registro de compra dos incisos I e II é atualizado pelo IPCA, da data da compra até o último índice publicado; o PMVG da CMED (teto) não é atualizado. A data de referência, o período e a atualização aplicados constam da seção própria.</p>
+      <p style="font-size:11px;margin-top:6px;">Para cada fonte, aplicou-se o método de remoção de outliers pelo intervalo interquartil (IQR) e apuraram-se os três métodos admitidos pelo art. 6º da IN 65/2021 — média, mediana e menor valor —, apresentados também de forma consolidada. ${
+        metodoUnico
+          ? `O preço de referência adotado é o seguinte: <strong>${esc(ROTULO_METODO[metodoUnico].longo.toLowerCase())}</strong>${
+              metodoUnico === "mediana_medianas"
+                ? ", critério que impede que a base com mais registros determine sozinha o resultado"
+                : ""
+            }.`
+          : "O método de cada item consta do respectivo detalhamento."
+      } Quando o preço de mercado supera o PMVG unitário vigente, este último é adotado como teto obrigatório (Lei nº 10.742/2003, art. 3º, §2º)${
+        tetoUnico ? `, pela regra do <strong>${esc(tetoUnico)}</strong>` : ""
+      }.</p>`;
 }
 
 /** "EMS — Genérico" / "—" quando a base não registra marca nem fabricante. */
@@ -203,18 +257,43 @@ export function marcaFabricante(r: {
  * ela é filtro obrigatório da pesquisa, então é a mesma em todas as linhas.
  * Empresa vencedora e marca/fabricante são obrigatórias no relatório.
  */
+/** "Pregão 90041/2026 · UASG 120195 · item 122 · PNCP ↗" (obs. 7 e 8 da DLOG). */
+export function contratacaoHtml(r: RegistroMercado): string {
+  const c = r.contratacao;
+  if (!c) return "—";
+  const partes = [
+    [c.tipo, c.numero].filter(Boolean).join(" "),
+    c.uasg ? `UASG ${c.uasg}` : null,
+    c.numeroItem ? `item ${c.numeroItem}` : null,
+    c.processo && !c.numero?.includes(c.processo) ? `proc. ${c.processo}` : null,
+    c.referencia,
+    c.situacao,
+  ].filter(Boolean) as string[];
+  const link = c.url ? ` <a href="${esc(c.url)}" style="color:#1a56db;">PNCP&nbsp;↗</a>` : "";
+  const texto = partes.length ? esc(partes.join(" · ")) : esc(c.indisponivel ?? "—");
+  return `${texto}${link}`;
+}
+
 function colunasMercado(ultima: Coluna<RegistroMercado>): Coluna<RegistroMercado>[] {
   return [
-    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 45)) },
+    { label: "Descrição", fn: (r) => esc((r.descricao || "").substring(0, 38)) },
+    { label: "Contratação de referência", fn: contratacaoHtml },
     {
       // Um valor descartado pelo IQR continua na amostra impressa, mas riscado:
       // sem a marca, quem lê vê um preço dez vezes menor que a mediana ao lado
       // dela e não tem como saber que ele ficou fora do cálculo.
       label: "Preço",
-      fn: (r) =>
-        r.outlierIqr
+      fn: (r) => {
+        const preco = r.outlierIqr
           ? `<span style="text-decoration:line-through;color:#c0392b;">${fmtBRL(r.preco)}</span> <sup>*</sup>`
-          : fmtBRL(r.preco),
+          : fmtBRL(r.preco);
+        // Com o IPCA, o publicado (nominal) aparece sempre ao lado (P10).
+        return r.fatorIpca != null && r.fatorIpca !== 1 && r.precoNominal != null
+          ? `${preco}<br/><span style="font-size:8px;color:#666;">${fmtBRL(r.precoNominal)} × ${r.fatorIpca
+              .toFixed(4)
+              .replace(".", ",")}</span>`
+          : preco;
+      },
       right: true,
     },
     { label: "Data", fn: (r) => (r.data ? fmtDate(r.data) : "—") },
@@ -236,6 +315,33 @@ function boxesEstatisticas(e: Estatisticas): string {
       </div>`;
 }
 
+/**
+ * Janela do art. 5º aplicada à fonte (D1): " Período considerado: 12 meses (de
+ * 15/10/2025 a 15/10/2026), art. 5º, inciso I. Fora do período: 3 registro(s),
+ * o mais recente em 02/09/2025 — não entram na apuração."
+ */
+export function textoPeriodoFonte(f: FonteMercadoResultado): string {
+  const p = f.periodo;
+  if (!p) return "";
+  const janela = p.personalizado && p.inicio
+    ? `intervalo de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)}`
+    : p.inicio
+      ? `${p.meses} meses (de ${fmtDate(p.inicio)} a ${fmtDate(p.fim)})`
+      : `todo o período disponível até ${fmtDate(p.fim)}`;
+  // Base: o que está fora da janela nem é lido. Preço informado: fica listado e
+  // sai do cálculo, salvo justificativa do responsável (coluna "No cálculo").
+  const fora = p.foraDoPeriodo
+    ? ` Fora do período: <strong>${fmtInt(p.foraDoPeriodo)}</strong> ${
+        f.origemDados === "INFORMADO" ? "preço(s)" : "registro(s)"
+      }${p.maisRecenteFora ? `, o mais recente em ${fmtDate(p.maisRecenteFora)}` : ""} — ${
+        f.origemDados === "INFORMADO"
+          ? "fora do cálculo, salvo justificativa do responsável (ver a coluna “No cálculo”)."
+          : "não entram na apuração."
+      }`
+    : "";
+  return ` Período considerado: ${janela}, art. 5º, inciso ${p.inciso}.${fora}`;
+}
+
 function conteudoMercado(
   fonte: FonteMercadoResultado,
   vazio: string,
@@ -247,12 +353,14 @@ function conteudoMercado(
     return `<p style="color:#666;font-style:italic;font-size:11px;">Esta base não registra ${esc(campos)}. Com esse filtro ativo, a fonte foi excluída da apuração do preço de referência.</p>`;
   }
   if (fonte.total === 0) {
-    return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}</p>`;
+    // Vazia na janela, mas com registros fora dela: diz quantos e de quando
+    // (art. 5º, §1º — priorizar os incisos I e II e justificar).
+    return `<p style="color:#666;font-style:italic;font-size:11px;">${vazio}${textoPeriodoFonte(fonte)}</p>`;
   }
   const considerados = fonte.registros.filter((r) => r.excluidoPor === null);
   const exibidos = considerados.slice(0, 10);
   return `
-      <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes. ${
+      <p style="font-size:11px;margin-bottom:8px;">${intro(fonte)}${textoPeriodoFonte(fonte)} Analisada amostra de <strong>${fonte.amostra}</strong> registros mais recentes do período. ${
         fonte.outliersRemovidos > 0
           ? `Removidos <strong>${fonte.outliersRemovidos}</strong> outliers pelo método IQR.`
           : "Nenhum outlier identificado."
@@ -274,12 +382,16 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
   const { item, unidade, resultados } = resultado;
   const cmed = resultados.cmed;
   if (cmed.total === 0) {
-    return `<p style="color:#c0392b;font-style:italic;font-size:11px;">Nenhum registro ANVISA com preço CMED vigente para este código na unidade de fornecimento selecionada. Não há preço-teto regulado pela ANVISA para este item.</p>`;
+    return `<p style="color:#c0392b;font-style:italic;font-size:11px;">Nenhum registro ANVISA com preço ${
+      cmed.lista ? `na ${esc(descreverListaCmed(cmed.lista))}` : "CMED vigente"
+    } para este código na unidade de fornecimento selecionada. Não há preço-teto regulado pela ANVISA para este item.</p>`;
   }
   const capAplica = cmed.registros.some((r) => r.cap);
   const considerados = cmed.registros.filter((r) => r.excluidoPor === null);
   return `
-      <p style="font-size:11px;margin-bottom:8px;">Foram encontrados <strong>${cmed.total}</strong> registro(s) ANVISA com preço na tabela CMED vigente (Câmara de Regulação do Mercado de Medicamentos — ANVISA) para ${item.tipo === "CATMAT" ? `o CATMAT ${esc(item.catmat)}` : `o registro ${esc(item.registro)}`}, na unidade de fornecimento <strong>${esc(unidade)}</strong>. O PMVG da tabela CMED é expresso por embalagem; o valor unitário abaixo corresponde ao PMVG dividido pela quantidade de unidades por embalagem (Qt_Embal).${
+      <p style="font-size:11px;margin-bottom:8px;">Foram encontrados <strong>${cmed.total}</strong> registro(s) ANVISA com preço na ${
+        cmed.lista ? esc(descreverListaCmed(cmed.lista)) : "tabela CMED vigente"
+      } (Câmara de Regulação do Mercado de Medicamentos — ANVISA) para ${item.tipo === "CATMAT" ? `o CATMAT ${esc(item.catmat)}` : `o registro ${esc(item.registro)}`}, na unidade de fornecimento <strong>${esc(unidade)}</strong>. O PMVG da tabela CMED é expresso por embalagem; o valor unitário abaixo corresponde ao PMVG dividido pela quantidade de unidades por embalagem (Qt_Embal).${
         cmed.semQtEmbalagem > 0
           ? ` <strong>${cmed.semQtEmbalagem}</strong> registro(s) sem quantidade por embalagem informada aparecem apenas com o preço por embalagem e não compõem o teto.`
           : ""
@@ -289,16 +401,26 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
           : ""
       }</p>
       <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-        ${estatBox("PMVG unitário mínimo (sem impostos)", fmtBRL(cmed.pmvgUnitMin), true)}
-        ${estatBox("PMVG unitário máximo (sem impostos)", fmtBRL(cmed.pmvgUnitMax))}
-        ${capAplica ? estatBox("Desconto CAP obrigatório", "21,53% sobre PF", true) : ""}
+        ${estatBox(`Menor ${rotuloPmvg(cmed.aliquota)} unitário`, fmtBRL(cmed.pmvgUnitMin), resultado.recomendacao.escolha.regraTeto === "menor_pmvg_sem_impostos")}
+        ${estatBox(
+          `${rotuloPmvg(resultado.recomendacao.escolha.aliquota)} do medicamento de referência (unit.)`,
+          fmtBRL(resultado.recomendacao.tetos.referencia?.valorUnitario ?? null),
+          resultado.recomendacao.escolha.regraTeto === "pmvg_referencia"
+        )}
+        ${estatBox(`Maior ${rotuloPmvg(cmed.aliquota)} unitário`, fmtBRL(cmed.pmvgUnitMax))}
+        ${capAplica ? estatBox("Desconto CAP obrigatório", `${rotuloCap(cmed.lista?.capPercentual)} sobre PF`, true) : ""}
       </div>
+      <p style="font-size:10px;color:#444;margin-bottom:8px;">Teto adotado neste item: <strong>${esc(
+        rotuloRegraTeto(resultado.recomendacao.escolha.regraTeto, resultado.recomendacao.escolha.aliquota)
+      )}</strong>${descricaoTeto(resultado.recomendacao.teto)}. O outro teto aparece acima para comparação (destaque = regra adotada). Alíquota de ICMS do teto: <strong>${esc(rotuloAliquota(cmed.aliquota))}</strong>${
+        cmed.isentosAZero > 0 ? `; ${cmed.isentosAZero} registro(s) isento(s) de ICMS entram com o PMVG a 0%` : ""
+      }.</p>
       ${tabela(considerados.slice(0, 10), [
         { label: "Registro", fn: (r) => esc(r.registro) },
         { label: "Produto / Apresentação", fn: (r) => `${esc(r.produto || "—")} / ${esc(r.apresentacao || "—")}` },
         { label: "Laboratório", fn: (r) => esc((r.laboratorio || "—").substring(0, 30)) },
         { label: "Qt/emb.", fn: (r) => (r.qtEmbalagem ? String(r.qtEmbalagem) : "—"), right: true },
-        { label: "PMVG emb.", fn: (r) => fmtBRL(r.pmvgEmbalagem), right: true },
+        { label: `PMVG emb. (${esc(rotuloAliquota(cmed.aliquota))})`, fn: (r) => `${fmtBRL(r.pmvgAliquotaEmbalagem)}${r.isentoAZero ? " (isento: 0%)" : ""}`, right: true },
         { label: "PMVG unit.", fn: (r) => `<strong>${fmtBRL(r.pmvgUnitario)}</strong>`, right: true },
         { label: "PF 0% unit.", fn: (r) => fmtBRL(r.pfUnitario), right: true },
         { label: "CAP", fn: (r) => (r.cap ? "Sim" : "Não") },
@@ -307,35 +429,74 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
 
 export function conteudoBps(resultado: ResultadoPesquisa): string {
   const { item, unidade, uf, resultados } = resultado;
+  const daApi = resultados.bps.origemDados === "API";
   return conteudoMercado(
     resultados.bps,
     "Nenhum registro encontrado no BPS para este código e unidade de fornecimento.",
     (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no BPS (anos 2020–2025) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
+      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no BPS (${
+        daApi ? "API de dados abertos do Ministério da Saúde, compras dos últimos 36 meses" : "base histórica carregada no painel, anos 2020–2025"
+      }) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
     { label: "Instituição", fn: (r) => esc((r.orgao || "—").substring(0, 40)) }
   );
 }
 
-export function conteudoSiasg(resultado: ResultadoPesquisa): string {
+/** Data da coleta da API, para o texto da fonte. */
+function textoColeta(f: FonteMercadoResultado): string {
+  if (!f.coleta?.coletadoEm) return "";
+  return ` Dados coletados em ${fmtDate(f.coleta.coletadoEm)}${f.coleta.valida ? "" : " (há mais de 7 dias)"}.`;
+}
+
+/** Quanto veio de cada base da fonte Compras.gov.br (API, SIASG judicial, base PNCP). */
+function textoComposicao(f: FonteMercadoResultado): string {
+  if (!f.composicao?.length) return "";
+  const partes = f.composicao.map(
+    (c) =>
+      `${ROTULO_BASE[c.base]}: ${fmtInt(c.total)}${c.semCampo.length ? " (fora do filtro adicional)" : ""}`
+  );
+  return ` Composição: ${partes.join("; ")}.`;
+}
+
+/**
+ * Compras.gov.br: uma fonte, três bases (pedido da DLOG) — a API de dados
+ * abertos (Painel de Preços), o SIASG judicial e a base PNCP carregados no
+ * painel. O PNCP não é fonte de preço à parte: é onde a contratação de cada
+ * compra é publicada, e o link vai em cada registro.
+ */
+export function conteudoComprasGov(resultado: ResultadoPesquisa): string {
   const { item, unidade, uf, resultados } = resultado;
-  return conteudoMercado(
-    resultados.siasg,
-    "Nenhum registro encontrado no SIASG para compras judiciais deste código e unidade de fornecimento.",
+  const fonte = resultados.comprasgov;
+  if (!fonte) return `<p style="color:#666;font-style:italic;font-size:11px;">Fonte não consultada nesta pesquisa.</p>`;
+  const pncp = `<p style="font-size:10px;color:#444;margin-top:4px;"><strong>PNCP:</strong> o Portal Nacional de Contratações Públicas não entra como fonte de preço separada — é onde a contratação de cada compra do Compras.gov.br é publicada. A coluna "Contratação de referência" traz o nº da compra, a UASG, o item e o link da contratação no PNCP (quando publicada).</p>`;
+  return `${conteudoMercado(
+    fonte,
+    `Nenhuma compra no Compras.gov.br para este código e unidade de fornecimento${fonte.coleta?.coletadoEm ? "" : " — o CATMAT ainda não foi coletado da API de dados abertos"}.${textoComposicao(fonte)}`,
     (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros de compras com ação judicial no SIASG (2002–2021) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
-    { label: "Órgão", fn: (r) => esc((r.orgao || "—").substring(0, 40)) }
+      `Foram identificadas <strong>${fmtInt(f.total)}</strong> compras no Compras.gov.br para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.${textoComposicao(f)}${textoColeta(f)}`,
+    { label: "UASG / Órgão", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
+  )}${pncp}`;
+}
+
+export function conteudoArp(resultado: ResultadoPesquisa): string {
+  const { item, unidade, resultados } = resultado;
+  const fonte = resultados.arp;
+  if (!fonte) return `<p style="color:#666;font-style:italic;font-size:11px;">Fonte não consultada nesta pesquisa.</p>`;
+  return conteudoMercado(
+    fonte,
+    "Nenhum item de ata de registro de preços com vigência iniciada nos últimos 12 meses para este código e unidade de fornecimento.",
+    (f) =>
+      `Foram identificados <strong>${fmtInt(f.total)}</strong> itens de atas de registro de preços (vigência iniciada nos últimos 12 meses) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>.${textoColeta(f)}`,
+    { label: "Gerenciadora", fn: (r) => esc((r.contratacao?.nomeUasg || r.orgao || "—").substring(0, 40)) }
   );
 }
 
-export function conteudoPncp(resultado: ResultadoPesquisa): string {
-  const { item, unidade, uf, resultados } = resultado;
-  return conteudoMercado(
-    resultados.pncp,
-    "Nenhum registro encontrado no PNCP para este código e unidade de fornecimento.",
-    (f) =>
-      `Foram identificados <strong>${fmtInt(f.total)}</strong> registros no PNCP (materiais, 2024–2025) para o CATMAT ${esc(item.catmat)} na unidade <strong>${esc(unidade)}</strong>${uf ? `, UF ${esc(uf)}` : ""}.`,
-    { label: "Fornecedor", fn: (r) => esc((r.fornecedor || "—").substring(0, 40)) }
-  );
+/** ": REVOLADE (reg. 1006811320035), Novartis — R$ 4.094,06 ÷ 14". */
+export function descricaoTeto(t: TetoCmed | null): string {
+  if (!t) return " (não há PMVG vigente para formar o teto)";
+  return ` — ${esc(t.produto)} (reg. ${esc(t.registro)})${t.laboratorio ? `, ${esc(t.laboratorio)}` : ""}: ${fmtBRL(
+    t.valorEmbalagem,
+    2
+  )} ÷ ${t.qtEmbalagem} = ${fmtBRL(t.valorUnitario)} por unidade`;
 }
 
 /** true quando o preço de mercado ficou acima do teto PMVG e o teto prevaleceu. */
@@ -360,6 +521,8 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
   const linhas = consolidado.fontes;
   const pmvgAplicado = pmvgFoiAplicado(resultado);
   const { porFonte, porRegistro } = consolidado;
+  const metodo = recomendacao.escolha.metodo;
+  const porFonteAdotado = metodo === "mediana_medianas";
 
   const linhaConsolidada = (
     rotulo: string,
@@ -419,24 +582,28 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           "CONSOLIDADO POR FONTE",
           `cada fonte pesa igual — cálculo sobre as ${porFonte.n} mediana(s) apurada(s) acima`,
           porFonte,
-          true
+          porFonteAdotado
         )}
         ${linhaConsolidada(
           "CONSOLIDADO POR REGISTRO",
           "cada compra pesa igual — todos os registros depurados reunidos num conjunto único",
           porRegistro,
-          false
+          !porFonteAdotado
         )}
       </tbody>
     </table>
     <p style="font-size:10px;color:#444;margin-bottom:12px;">
-      <strong>Como ler os consolidados.</strong> O <strong>consolidado por fonte</strong> trata cada base como um voto: as estatísticas incidem sobre as medianas apuradas em cada fonte, de modo que uma base com milhares de registros não sobrepuja outra com poucos. É dele que sai o preço adotado — a <strong>mediana das medianas, ${fmtBRL(recomendacao.precoReferencia)}</strong>. O <strong>consolidado por registro</strong> reúne todos os registros depurados num conjunto único, em que cada compra pesa igual; serve de contraprova da ordem de grandeza, e não como preço de referência, porque a base mais numerosa domina o resultado. Os três métodos do art. 6º estão apresentados em ambos.
+      <strong>Como ler os consolidados.</strong> O <strong>consolidado por fonte</strong> trata cada base como um voto: as estatísticas incidem sobre as medianas apuradas em cada fonte, de modo que uma base com milhares de registros não sobrepuja outra com poucos. O <strong>consolidado por registro</strong> reúne todos os registros depurados num conjunto único, em que cada compra pesa igual; nele, a base mais numerosa domina o resultado. ${
+        porFonteAdotado
+          ? `O preço adotado sai do consolidado por fonte — a <strong>mediana das medianas, ${fmtBRL(recomendacao.precoReferencia)}</strong> —, e o consolidado por registro serve de contraprova da ordem de grandeza.`
+          : `Neste item, o preço adotado sai do consolidado por registro — <strong>${esc(ROTULO_METODO[metodo].longo.toLowerCase())}, ${fmtBRL(recomendacao.precoReferencia)}</strong> —, e o consolidado por fonte serve de contraprova.`
+      } Os três métodos do art. 6º estão apresentados em ambos.
     </p>
     <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
       <tbody>
         <tr style="background:#eef2f7;">
           ${td(
-            `<strong>Preço de referência adotado</strong> — mediana das medianas por fonte (art. 6º, caput)`
+            `<strong>Preço de referência adotado</strong> — ${esc(ROTULO_METODO[metodo].longo.toLowerCase())} (art. 6º)`
           )}
           ${td(
             `<strong style="color:${AZUL};font-size:13px;">${fmtBRL(recomendacao.precoReferencia)}</strong>`,
@@ -448,7 +615,9 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
             ? `
         <tr style="background:#fef3cd;">
           ${td(
-            "⚠ Preço de mercado superior ao PMVG unitário — aplicado PMVG sem impostos ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)"
+            `⚠ Preço de mercado superior ao teto CMED — aplicado o ${esc(
+              rotuloRegraTetoCurto(recomendacao.escolha.regraTeto, recomendacao.escolha.aliquota)
+            )} ÷ Qt_Embal como teto (art. 3º, §2º, Lei nº 10.742/2003)`
           )}
           ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
@@ -458,7 +627,11 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
           recomendacao.precoReferencia === null && recomendacao.limitePmvg !== null
             ? `
         <tr style="background:#fef3cd;">
-          ${td("Sem preço apurado nas fontes consultadas — adotado o menor PMVG unitário sem impostos (CMED)")}
+          ${td(
+            `Sem preço apurado nas fontes consultadas — adotado o teto CMED (${esc(
+              rotuloRegraTetoCurto(recomendacao.escolha.regraTeto, recomendacao.escolha.aliquota)
+            )} por unidade)`
+          )}
           ${td(`<strong style="color:#c0392b;">${fmtBRL(recomendacao.limitePmvg)}</strong>`, true)}
         </tr>`
             : ""
@@ -474,30 +647,90 @@ export function conteudoAnalise(resultado: ResultadoPesquisa, comMetodologia = t
 
 // ── Orçamentos diretos de fornecedor (art. 5º, IV) ───────────────────────────
 
-export function conteudoOrcamentos(resultado: ResultadoPesquisa): string {
-  const { orcamentos, resultados, unidade } = resultado;
-  if (!orcamentos.length) return "";
-  const noCalculo = resultados.orcamentos?.estatisticas.n ?? 0;
+/** Situação de um preço informado no cálculo: considerado, fora do período justificado ou fora. */
+function situacaoInformado(o: OrcamentoFornecedor, resultado: ResultadoPesquisa): string {
+  const fonte = TIPOS_PRECO_INFORMADO[o.tipo ?? "IV"].fonte;
+  const descarte = resultado.descartes.find((d) => d.fonte === fonte && d.id === o.id);
+  if (descarte) return `<span style="color:#c0392b;">Não — ${esc(descarte.motivo)}</span>`;
+  const per = resultado.resultados[fonte as keyof ResultadoPesquisa["resultados"]] as FonteMercadoResultado | null | undefined;
+  const dia = o.dataOrcamento.slice(0, 10);
+  const fora = per?.periodo && ((per.periodo.inicio !== null && dia < per.periodo.inicio) || dia > per.periodo.fim);
+  if (fora && o.justificativaForaPeriodo) {
+    return `Sim — fora do período do inciso, mantido com justificativa: ${esc(o.justificativaForaPeriodo)}`;
+  }
+  return "Sim";
+}
 
-  return `
-    <p style="font-size:11px;margin-bottom:8px;">Foram juntadas ao processo <strong>${orcamentos.length}</strong> proposta(s) apresentada(s) diretamente por fornecedor, nos termos do art. 5º, IV da IN SEGES/ME nº 65/2021. ${
-      noCalculo > 0
-        ? `<strong>${noCalculo}</strong> compõe(m) a apuração do preço de referência como fonte adicional; a(s) demais permanece(m) registrada(s) apenas para instrução do processo.`
-        : "Nenhuma foi considerada no cálculo do preço de referência — todas constam apenas para instrução do processo."
-    } Esta fonte não passa pela remoção automática de outliers (IQR): as propostas foram selecionadas pelo responsável, e descartá-las automaticamente contrariaria a própria juntada.</p>
-    ${tabela(orcamentos, [
-      { label: "Fornecedor", fn: (o) => esc(o.fornecedor.substring(0, 38)) },
+/** Identificação do documento de cada tipo: proposta, página consultada, NF-e ou contrato. */
+function identificacaoInformado(o: OrcamentoFornecedor): string {
+  const partes: string[] = [];
+  if (o.documento) partes.push(esc(o.documento));
+  if (o.chaveNfe) partes.push(`chave NF-e ${esc(o.chaveNfe)}`);
+  if (o.url) {
+    partes.push(
+      `<a href="${esc(o.url)}" style="color:#1a56db;word-break:break-all;">${esc(o.url.substring(0, 60))}</a>${
+        o.acessadoEm ? ` (acesso em ${esc(new Date(o.acessadoEm).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }))})` : ""
+      }`
+    );
+  }
+  return partes.length ? partes.join("<br/>") : "—";
+}
+
+/**
+ * Preços informados pelo responsável (P13): cotação com fornecedor (IV), mídia
+ * especializada ou sítio (III), nota fiscal (V) e contratação similar fora das
+ * bases (II). Cada tipo é uma fonte própria no consolidado; nenhum passa por
+ * IQR; fora da janela do seu inciso sai do cálculo, salvo justificativa.
+ */
+export function conteudoPrecosInformados(resultado: ResultadoPesquisa): string {
+  const { orcamentos, unidade } = resultado;
+  if (!orcamentos.length) return "";
+  const considerados = orcamentos.filter((o) => situacaoInformado(o, resultado).startsWith("Sim")).length;
+
+  const grupos = ORDEM_TIPOS_INFORMADOS.map((tipo) => {
+    const doTipo = orcamentos.filter((o) => (o.tipo ?? "IV") === tipo);
+    if (!doTipo.length) return "";
+    const { fonte, rotulo } = TIPOS_PRECO_INFORMADO[tipo];
+    const dados = resultado.resultados[fonte as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    const registro = (id: string) => dados?.registros.find((r) => r.id === id);
+    return `
+    <div style="margin-top:8px;"><strong style="font-size:10px;">${esc(rotulo)}</strong>${
+      dados ? `<span style="font-size:10px;color:#444;">${textoPeriodoFonte(dados)}</span>` : ""
+    }</div>
+    ${tabela(doTipo, [
+      { label: tipo === "III" ? "Fonte / Fornecedor" : "Fornecedor", fn: (o) => esc(o.fornecedor.substring(0, 38)) },
       { label: "CNPJ", fn: (o) => esc(o.cnpj || "—") },
       { label: "Marca / Fabricante", fn: (o) => esc(marcaFabricante(o).substring(0, 30)) },
-      { label: `Valor por ${unidade}`, fn: (o) => `<strong>${fmtBRL(o.valorUnitario)}</strong>`, right: true },
-      { label: "Data", fn: (o) => fmtDate(o.dataOrcamento) },
-      { label: "Validade", fn: (o) => (o.validade ? fmtDate(o.validade) : "—") },
-      { label: "Documento", fn: (o) => esc((o.documento || "—").substring(0, 24)) },
       {
-        label: "No cálculo",
-        fn: (o) => (o.considerarNoCalculo ? "Sim" : "<span style='color:#c0392b;'>Não</span>"),
+        label: `Valor por ${unidade}`,
+        fn: (o) => {
+          const r = registro(o.id);
+          // A contratação similar (II) é atualizada pelo IPCA como as bases.
+          return r && r.fatorIpca != null && r.fatorIpca !== 1
+            ? `<strong>${fmtBRL(r.preco)}</strong><br/><span style="font-size:8px;color:#666;">${fmtBRL(o.valorUnitario)} × ${r.fatorIpca
+                .toFixed(4)
+                .replace(".", ",")}</span>`
+            : `<strong>${fmtBRL(o.valorUnitario)}</strong>`;
+        },
+        right: true,
       },
-    ])}
+      { label: tipo === "V" ? "Emissão" : "Data", fn: (o) => fmtDate(o.dataOrcamento) },
+      ...(tipo === "IV" ? [{ label: "Validade", fn: (o: OrcamentoFornecedor) => (o.validade ? fmtDate(o.validade) : "—") }] : []),
+      { label: TIPOS_PRECO_INFORMADO[tipo].documento, fn: identificacaoInformado },
+      { label: "No cálculo", fn: (o) => situacaoInformado(o, resultado) },
+    ])}`;
+  }).join("");
+
+  return `
+    <p style="font-size:11px;margin-bottom:8px;">Foram juntados ao processo <strong>${orcamentos.length}</strong> preço(s) informado(s) pelo responsável pela pesquisa (art. 5º, incisos II a V da IN SEGES/ME nº 65/2021). ${
+      considerados > 0
+        ? `<strong>${considerados}</strong> compõe(m) a apuração do preço de referência — cada tipo como uma fonte própria no consolidado; os demais permanecem registrados apenas para instrução do processo, com o motivo.`
+        : "Nenhum foi considerado no cálculo do preço de referência — todos constam apenas para instrução do processo, com o motivo."
+    } Estes preços não passam pela remoção automática de outliers (IQR): foram selecionados pelo responsável, e descartá-los automaticamente contrariaria a própria juntada. Janelas do art. 5º: contratação similar (II) e nota fiscal (V), 12 meses; mídia especializada (III) e cotação com fornecedor (IV), 6 meses — fora delas, o preço sai do cálculo, salvo justificativa.</p>
+    ${grupos}
     ${
       orcamentos.some((o) => o.observacao)
         ? `<ul style="margin-top:6px;padding-left:18px;">${orcamentos
@@ -507,6 +740,82 @@ export function conteudoOrcamentos(resultado: ResultadoPesquisa): string {
                 `<li style="font-size:10px;margin-bottom:2px;"><strong>${esc(o.fornecedor)}:</strong> ${esc(o.observacao)}</li>`
             )
             .join("")}</ul>`
+        : ""
+    }`;
+}
+
+// ── Período e atualização monetária (D1/D2) ──────────────────────────────────
+
+/** Data de referência, período das bases e janelas dos preços informados (D1). */
+export function conteudoPeriodo(resultado: ResultadoPesquisa): string {
+  const p = resultado.periodo;
+  const vazias = ORDEM_FONTES.filter((f) => !INFO_FONTE[f].informado).flatMap((f) => {
+    const dados = resultado.resultados[f as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    return dados && dados.total === 0 && (dados.periodo?.foraDoPeriodo ?? 0) > 0 ? [INFO_FONTE[f].nome] : [];
+  });
+  return `<p style="font-size:11px;margin-bottom:6px;">${esc(descricaoPeriodo(p))}</p>
+    <p style="font-size:10px;color:#444;margin-bottom:6px;">A janela de cada fonte e os registros que ficaram fora dela constam do resultado da respectiva fonte. Não há ampliação automática: ampliar o período das bases exige justificativa do responsável, impressa acima.</p>${
+      vazias.length
+        ? `<p style="font-size:10px;color:#c0392b;margin-bottom:6px;">Sem preço no período, mas com registros mais antigos: ${esc(vazias.join(", "))}. Art. 5º, §1º: priorizam-se os incisos I e II; a ausência de preços no período deve ser considerada na justificativa do preço adotado.</p>`
+        : ""
+    }`;
+}
+
+/**
+ * Atualização monetária (D2): mês-base, convenção, fontes corrigidas e o
+ * intervalo dos fatores. O preço publicado aparece ao lado do atualizado em
+ * cada registro; o teto CMED nunca é corrigido.
+ */
+export function conteudoAtualizacaoMonetaria(resultado: ResultadoPesquisa): string {
+  const { ipca } = resultado;
+  if (!ipca.pedido) {
+    return `<p style="font-size:11px;">Atualização monetária não aplicada por opção do responsável: os preços estão em valores nominais, como publicados nas bases.</p>`;
+  }
+  if (!ipca.ligado || !ipca.mesBase) {
+    return `<p style="font-size:11px;color:#c0392b;">Atualização pelo IPCA pedida, mas a tabela de números-índices não estava disponível na emissão: os preços estão em valores nominais, como publicados.</p>`;
+  }
+  const linhas = ORDEM_FONTES.filter(corrigidoPeloIpca).flatMap((f) => {
+    const dados = resultado.resultados[f as keyof ResultadoPesquisa["resultados"]] as
+      | FonteMercadoResultado
+      | null
+      | undefined;
+    const corrigidos = (dados?.registros ?? []).filter((r) => r.fatorIpca != null && r.fatorIpca !== 1);
+    if (!dados || !dados.registros.length) return [];
+    const fatores = corrigidos.map((r) => r.fatorIpca as number);
+    const meses = dados.registros.map((r) => r.mesIndice).filter(Boolean) as string[];
+    return [
+      {
+        fonte: INFO_FONTE[f].nome,
+        registros: dados.registros.length,
+        corrigidos: corrigidos.length,
+        menor: fatores.length ? Math.min(...fatores) : null,
+        maior: fatores.length ? Math.max(...fatores) : null,
+        maisAntigo: meses.length ? meses.reduce((a, b) => (a < b ? a : b)) : null,
+      },
+    ];
+  });
+  const fator = (v: number | null) => (v === null ? "—" : v.toFixed(4).replace(".", ","));
+  return `<p style="font-size:11px;margin-bottom:6px;">O valor de cada registro de compra das bases de compras públicas, das atas e das contratações similares (art. 5º, incisos I e II) foi atualizado pelo IPCA (IBGE), da data da compra até <strong>${fmtMes(
+    ipca.mesBase
+  )}</strong> — o último número-índice publicado até a data de referência (${fmtDate(
+    resultado.periodo.dataReferencia
+  )}). ${esc(ipca.convencao)} O fator é composto (razão entre números-índices), e não a soma das variações mensais. O preço publicado (nominal) consta ao lado do atualizado em cada registro. Mídia especializada, cotação com fornecedor e nota fiscal (incisos III a V) ficam no valor informado, e o PMVG da CMED (teto) não é atualizado pelo IPCA: vale a lista CMED usada no item.${
+    ipca.semIndice
+      ? ` <span style="color:#c0392b;">${fmtInt(ipca.semIndice)} registro(s) sem número-índice para o mês do preço ficaram sem correção (fator 1).</span>`
+      : ""
+  }</p>
+    ${
+      linhas.length
+        ? tabela(linhas, [
+            { label: "Fonte", fn: (l) => esc(l.fonte) },
+            { label: "Registros", fn: (l) => fmtInt(l.registros), right: true },
+            { label: "Atualizados", fn: (l) => fmtInt(l.corrigidos), right: true },
+            { label: "Fator (menor – maior)", fn: (l) => (l.menor === null ? "—" : `${fator(l.menor)} – ${fator(l.maior)}`), right: true },
+            { label: "Mês do preço mais antigo", fn: (l) => fmtMes(l.maisAntigo) },
+          ])
         : ""
     }`;
 }

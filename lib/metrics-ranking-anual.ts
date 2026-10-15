@@ -1,9 +1,6 @@
 import { db } from "@/lib/db";
-import {
-  resolverFiltroCatmat,
-  sqlDemandaPorCatmat,
-  type FiltroCatmat,
-} from "@/lib/demandas-catmat";
+import type { FiltroCatmat } from "@/lib/demandas-catmat";
+import { aplicarFiltro, sqlDemandas } from "@/lib/demandas-filtro";
 import type { MetricsFilterInput } from "@/lib/metrics";
 import { Prisma } from "@prisma/client";
 
@@ -95,21 +92,6 @@ interface LinhaBruta {
   total: number | null;
 }
 
-/** Condições comuns a todas as agregações, na mesma ordem de lib/metrics.ts. */
-function condicoes(filters: MetricsFilterInput, filtroCatmat: FiltroCatmat | null): Prisma.Sql[] {
-  const cond: Prisma.Sql[] = [];
-  if (filtroCatmat) cond.push(sqlDemandaPorCatmat(filtroCatmat));
-  if (filters.startDate) cond.push(Prisma.sql`"criadoEm" >= ${filters.startDate}`);
-  if (filters.endDate) cond.push(Prisma.sql`"criadoEm" <= ${filters.endDate}`);
-  if (filters.status) cond.push(Prisma.sql`status = ${filters.status}`);
-  if (filters.prioridade) cond.push(Prisma.sql`prioridade = ${filters.prioridade}`);
-  if (filters.principioAtivo) {
-    cond.push(Prisma.sql`"principioAtivo" ILIKE ${`%${filters.principioAtivo}%`}`);
-  }
-  if (filters.organizacaoId) cond.push(Prisma.sql`"organizacaoId" = ${filters.organizacaoId}`);
-  return cond;
-}
-
 function montarRanking(dimensao: DimensaoRanking, linhas: LinhaBruta[]): RankingAnual {
   const porCategoria = new Map<string, { total: number; porAno: Record<number, number> }>();
 
@@ -149,13 +131,15 @@ function montarRanking(dimensao: DimensaoRanking, linhas: LinhaBruta[]): Ranking
 }
 
 export async function getRankingAnual(filters: MetricsFilterInput): Promise<RankingAnualData> {
-  const codigo = filters.catmat?.trim() ?? "";
-  const filtroCatmat = codigo ? await resolverFiltroCatmat(codigo) : null;
-  if (filtroCatmat && !filtroCatmat.encontrado) {
+  // O mesmo filtro único da lista e do painel (lib/demandas-filtro.ts), com a
+  // lixeira fora — antes o ranking a contava.
+  const aplicado = await aplicarFiltro(filters.filtro);
+  const filtroCatmat = aplicado.catmat;
+  if (aplicado.vazio) {
     return { anos: [], rankings: [], filtroCatmat };
   }
 
-  const base = condicoes(filters, filtroCatmat);
+  const base = [sqlDemandas(aplicado)];
 
   const consultar = async (dimensao: DimensaoRanking): Promise<LinhaBruta[]> => {
     const coluna = COLUNA[dimensao];

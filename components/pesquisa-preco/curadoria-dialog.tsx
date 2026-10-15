@@ -7,7 +7,6 @@ import {
   Check,
   FileText,
   Loader2,
-  Plus,
   RotateCcw,
   Trash2,
   TrendingUp,
@@ -15,8 +14,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -28,8 +25,9 @@ import {
   type FonteCurada,
   type OrcamentoFornecedor,
 } from "@/lib/pesquisa-preco-curadoria";
-import { formatarCnpj } from "@/lib/pesquisa-preco-filtros";
-import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
+import { FormularioPrecoInformado } from "@/components/pesquisa-preco/formulario-preco-informado";
+import { ROTULO_BASE, fontesDoResultado, type FonteMercadoChave } from "@/lib/pesquisa-preco-fontes";
+import type { FonteMercadoResultado, RegistroMercado, ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { apiPath } from "@/lib/url";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,10 +58,21 @@ const fmt = (v: number | null | undefined, dec = 4) => {
 
 const fmtData = (d: string | null) => (d ? new Date(d).toLocaleDateString("pt-BR") : "—");
 
-const hoje = () => new Date().toISOString().slice(0, 10);
+/** Fonte com registros individuais a curar nesta aba. */
+type FonteRegistros = FonteMercadoChave | "cmed";
 
-/** Fontes com registros individuais a curar — orçamentos têm aba própria. */
-const FONTES_REGISTROS: Exclude<FonteCurada, "orcamentos">[] = ["bps", "siasg", "pncp", "cmed"];
+/**
+ * Fontes consultadas em base que vieram na pesquisa, mais a CMED. Os preços
+ * informados pelo responsável (orçamentos e afins) têm aba própria.
+ */
+function fontesRegistros(base: ResultadoPesquisa): FonteRegistros[] {
+  return [
+    ...fontesDoResultado(base)
+      .filter((f) => !f.info.informado)
+      .map((f) => f.fonte),
+    "cmed",
+  ];
+}
 
 /** Linha exibida na curadoria, no formato comum às quatro fontes. */
 interface LinhaCuradoria {
@@ -76,12 +85,13 @@ interface LinhaCuradoria {
   outlierIqr: boolean;
   /** Distância relativa da mediana da fonte, em % — ordena a lista. */
   desvio: number | null;
+  /** Cópia de uma compra de outra base (P18): "duplicado de Compras.gov.br". */
+  duplicata: { texto: string; provavel: boolean } | null;
+  /** Preço publicado e fator do IPCA quando o preço foi atualizado (D2). */
+  ipca: { nominal: number; fator: number } | null;
 }
 
-function linhasDaFonte(
-  base: ResultadoPesquisa,
-  fonte: Exclude<FonteCurada, "orcamentos">
-): LinhaCuradoria[] {
+function linhasDaFonte(base: ResultadoPesquisa, fonte: FonteRegistros): LinhaCuradoria[] {
   const relativo = (preco: number, mediana: number | null) =>
     mediana && mediana > 0 ? ((preco - mediana) / mediana) * 100 : null;
 
@@ -101,19 +111,32 @@ function linhasDaFonte(
       uf: null,
       outlierIqr: false,
       desvio: relativo(r.pmvgUnitario ?? r.pmvgEmbalagem, ref),
+      duplicata: null,
+      ipca: null,
     }));
   }
 
-  const dados = base.resultados[fonte];
+  const dados = (base.resultados as Partial<Record<FonteMercadoChave, FonteMercadoResultado | null>>)[fonte];
+  if (!dados) return [];
   const mediana = dados.estatisticas.mediana;
-  return dados.registros.map((r) => ({
+  return dados.registros.map((r: RegistroMercado) => ({
     id: r.id,
     titulo: r.descricao || "Sem descrição",
     detalhe: [
+      // Compras.gov.br reúne três bases: diz de qual veio o registro.
+      r.base ? ROTULO_BASE[r.base] : null,
       r.fornecedor ? `Vencedora: ${r.fornecedor}` : null,
       r.marca || r.fabricante ? `Marca/fabr.: ${[r.marca, r.fabricante].filter(Boolean).join(" / ")}` : null,
       r.orgao,
       r.modalidade,
+      // Contratação de origem (obs. 7 da DLOG): nº da compra, UASG e item.
+      r.contratacao?.numero
+        ? [r.contratacao.numero, r.contratacao.uasg ? `UASG ${r.contratacao.uasg}` : null, r.contratacao.numeroItem ? `item ${r.contratacao.numeroItem}` : null]
+            .filter(Boolean)
+            .join(" · ")
+        : null,
+      r.contratacao?.situacao,
+      r.registroAnvisa ? `Reg. ANVISA ${r.registroAnvisa}` : null,
     ]
       .filter(Boolean)
       .join(" · "),
@@ -122,6 +145,16 @@ function linhasDaFonte(
     uf: r.uf,
     outlierIqr: r.outlierIqr,
     desvio: relativo(r.preco, mediana),
+    duplicata: r.duplicadoDe
+      ? {
+          texto: `${r.duplicadoDe.provavel ? "provável duplicata de" : "duplicado de"} ${NOME_FONTE_CURADA[r.duplicadoDe.fonte]}`,
+          provavel: r.duplicadoDe.provavel,
+        }
+      : null,
+    ipca:
+      r.fatorIpca != null && r.fatorIpca !== 1 && r.precoNominal != null
+        ? { nominal: r.precoNominal, fator: r.fatorIpca }
+        : null,
   }));
 }
 
@@ -132,12 +165,17 @@ function LinhaRegistro({
   motivo,
   onAlternar,
   onMotivo,
+  revertida,
+  onReverter,
 }: {
   linha: LinhaCuradoria;
   /** null = considerado; string = desconsiderado com esta justificativa. */
   motivo: string | null;
   onAlternar: () => void;
   onMotivo: (v: string) => void;
+  /** A provável duplicata foi mantida no conjunto único pelo responsável. */
+  revertida: boolean;
+  onReverter: () => void;
 }) {
   const excluido = motivo !== null;
   const motivoCurto = excluido && !motivoValido(motivo);
@@ -156,6 +194,11 @@ function LinhaRegistro({
           {linha.detalhe && <p className="text-muted-foreground leading-snug">{linha.detalhe}</p>}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-muted-foreground">
             <span className="font-semibold text-foreground">{fmt(linha.preco)}</span>
+            {linha.ipca && (
+              <span title="Preço publicado × fator do IPCA = preço atualizado">
+                ({fmt(linha.ipca.nominal)} × {linha.ipca.fator.toFixed(4).replace(".", ",")} IPCA)
+              </span>
+            )}
             {linha.data && <span>{fmtData(linha.data)}</span>}
             {linha.uf && <span>{linha.uf}</span>}
             {linha.desvio !== null && (
@@ -172,6 +215,22 @@ function LinhaRegistro({
               <Badge variant="secondary" className="h-4 text-[10px]">
                 fora do IQR
               </Badge>
+            )}
+            {(linha.duplicata || revertida) && (
+              <span className="inline-flex items-center gap-1">
+                <Badge variant="outline" className="h-4 text-[10px]">
+                  {revertida ? "mantida no conjunto único" : linha.duplicata?.texto}
+                </Badge>
+                {(revertida || linha.duplicata?.provavel) && (
+                  <button
+                    type="button"
+                    className="text-[10px] underline underline-offset-2 hover:text-foreground"
+                    onClick={onReverter}
+                  >
+                    {revertida ? "tratar como duplicata" : "não é a mesma compra"}
+                  </button>
+                )}
+              </span>
             )}
           </div>
         </div>
@@ -223,16 +282,20 @@ function AbaRegistros({
   base,
   exclusoes,
   setExclusoes,
+  revertidas,
+  setRevertidas,
 }: {
   base: ResultadoPesquisa;
   exclusoes: Map<string, string>;
   setExclusoes: (fn: (m: Map<string, string>) => Map<string, string>) => void;
+  revertidas: Set<string>;
+  setRevertidas: (fn: (s: Set<string>) => Set<string>) => void;
 }) {
   const [soDestoantes, setSoDestoantes] = useState(false);
 
   const porFonte = useMemo(
     () =>
-      FONTES_REGISTROS.map((fonte) => ({
+      fontesRegistros(base).map((fonte) => ({
         fonte,
         // Maior desvio primeiro: é o que a IN manda examinar, e evita rolar
         // uma lista de 150 linhas atrás do valor que destoa.
@@ -318,6 +381,15 @@ function AbaRegistros({
                       motivo={exclusoes.get(chave) ?? null}
                       onAlternar={() => alternar(chave)}
                       onMotivo={(v) => definirMotivo(chave, v)}
+                      revertida={revertidas.has(l.id)}
+                      onReverter={() =>
+                        setRevertidas((atual) => {
+                          const novo = new Set(atual);
+                          if (novo.has(l.id)) novo.delete(l.id);
+                          else novo.add(l.id);
+                          return novo;
+                        })
+                      }
                     />
                   );
                 })}
@@ -330,32 +402,7 @@ function AbaRegistros({
   );
 }
 
-// ── Aba: orçamentos ──────────────────────────────────────────────────────────
-
-/** Campos do formulário de orçamento — todos texto até a validação. */
-type FormOrcamento = {
-  fornecedor: string;
-  cnpj: string;
-  marca: string;
-  fabricante: string;
-  valorUnitario: string;
-  dataOrcamento: string;
-  validade: string;
-  documento: string;
-  observacao: string;
-};
-
-const ORCAMENTO_VAZIO: FormOrcamento = {
-  fornecedor: "",
-  cnpj: "",
-  marca: "",
-  fabricante: "",
-  valorUnitario: "",
-  dataOrcamento: hoje(),
-  validade: "",
-  documento: "",
-  observacao: "",
-};
+// ── Aba: preços informados (art. 5º, II a V) ─────────────────────────────────
 
 function AbaOrcamentos({
   unidade,
@@ -366,59 +413,13 @@ function AbaOrcamentos({
   orcamentos: OrcamentoFornecedor[];
   setOrcamentos: (fn: (o: OrcamentoFornecedor[]) => OrcamentoFornecedor[]) => void;
 }) {
-  const [form, setForm] = useState<FormOrcamento>(ORCAMENTO_VAZIO);
-  const [erro, setErro] = useState<string | null>(null);
-
-  const campo = (k: keyof FormOrcamento) => (v: string) =>
-    setForm((f) => ({ ...f, [k]: v }));
-
-  const adicionar = () => {
-    const valor = Number(form.valorUnitario.replace(/\./g, "").replace(",", "."));
-    if (form.fornecedor.trim().length < 2) {
-      setErro("Informe a empresa que apresentou a proposta.");
-      return;
-    }
-    if (!Number.isFinite(valor) || valor <= 0) {
-      setErro(`Informe o valor da proposta por ${unidade}.`);
-      return;
-    }
-    if (!form.dataOrcamento) {
-      setErro("Informe a data da proposta.");
-      return;
-    }
-    if (orcamentos.length >= MAX_ORCAMENTOS) {
-      setErro(`Máximo de ${MAX_ORCAMENTOS} orçamentos por item.`);
-      return;
-    }
-    setErro(null);
-    setOrcamentos((lista) => [
-      ...lista,
-      {
-        // id local: o banco gera o definitivo ao gravar; aqui ele só precisa
-        // ser estável dentro da sessão para casar exclusões e remoções.
-        id: `novo-${Date.now()}-${lista.length}`,
-        fornecedor: form.fornecedor.trim(),
-        cnpj: form.cnpj.trim() || null,
-        marca: form.marca.trim() || null,
-        fabricante: form.fabricante.trim() || null,
-        valorUnitario: valor,
-        dataOrcamento: new Date(`${form.dataOrcamento}T00:00:00`).toISOString(),
-        validade: form.validade ? new Date(`${form.validade}T00:00:00`).toISOString() : null,
-        documento: form.documento.trim() || null,
-        observacao: form.observacao.trim() || null,
-        considerarNoCalculo: true,
-      },
-    ]);
-    setForm({ ...ORCAMENTO_VAZIO, dataOrcamento: form.dataOrcamento });
-  };
-
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Proposta apresentada diretamente por fornecedor — fonte admitida pelo art. 5º, IV da IN
-        65/2021 e frequentemente a única disponível em medicamentos importados. O valor deve ser
-        por <strong>{unidade}</strong>, a mesma unidade de fornecimento da pesquisa. Cada orçamento
-        entra na apuração como uma fonte a mais, sem passar pela remoção automática de outliers.
+        Preços que o responsável junta ao processo, fora das bases consultadas. Cada tipo é uma fonte
+        própria no consolidado, sem a remoção automática de outliers, e só entra no cálculo dentro da
+        janela do seu inciso — fora dela, exige justificativa. O valor deve ser por{" "}
+        <strong>{unidade}</strong>, a unidade de fornecimento da pesquisa.
       </p>
 
       {orcamentos.length > 0 && (
@@ -427,16 +428,27 @@ function AbaOrcamentos({
             <div key={o.id} className="rounded-md border bg-card p-2.5 text-xs space-y-1">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="font-medium">{o.fornecedor}</p>
+                  <p className="font-medium">
+                    <Badge variant="outline" className="mr-1.5 h-4 text-[10px]">
+                      {o.tipo}
+                    </Badge>
+                    {o.fornecedor}
+                  </p>
                   <p className="text-muted-foreground">
-                    {[o.cnpj, o.marca, o.fabricante].filter(Boolean).join(" · ") || "—"}
+                    {[o.cnpj, o.marca, o.fabricante, o.chaveNfe ? `NF-e ${o.chaveNfe}` : null].filter(Boolean).join(" · ") || "—"}
                   </p>
                   <div className="flex flex-wrap items-center gap-x-2 text-muted-foreground">
                     <span className="font-semibold text-foreground">{fmt(o.valorUnitario)}</span>
                     <span>por {unidade}</span>
-                    <span>proposta {fmtData(o.dataOrcamento)}</span>
+                    <span>{fmtData(o.dataOrcamento)}</span>
                     {o.validade && <span>validade {fmtData(o.validade)}</span>}
                     {o.documento && <span>{o.documento}</span>}
+                    {o.url && (
+                      <a href={o.url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">
+                        link
+                      </a>
+                    )}
+                    {o.acessadoEm && <span>acesso {new Date(o.acessadoEm).toLocaleString("pt-BR")}</span>}
                   </div>
                 </div>
                 <Button
@@ -444,7 +456,7 @@ function AbaOrcamentos({
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label="Remover orçamento"
+                  aria-label="Remover preço informado"
                   onClick={() => setOrcamentos((l) => l.filter((x) => x.id !== o.id))}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -473,107 +485,29 @@ function AbaOrcamentos({
                   )}
                 </span>
               </label>
+              <Input
+                className="h-7 text-[11px]"
+                placeholder="Justificativa para manter no cálculo se estiver fora do período do inciso (opcional)"
+                value={o.justificativaForaPeriodo ?? ""}
+                onChange={(e) =>
+                  setOrcamentos((l) =>
+                    l.map((x) => (x.id === o.id ? { ...x, justificativaForaPeriodo: e.target.value || null } : x))
+                  )
+                }
+              />
             </div>
           ))}
         </div>
       )}
 
-      <div className="rounded-md border bg-muted/30 p-3 space-y-3">
-        <p className="text-xs font-medium">Juntar orçamento</p>
-        <div className="grid gap-2.5 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label className="text-[11px]">Empresa / fornecedor *</Label>
-            <Input
-              className="h-8 text-xs"
-              placeholder="Razão social de quem apresentou a proposta"
-              value={form.fornecedor}
-              onChange={(e) => campo("fornecedor")(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">CNPJ</Label>
-            <Input
-              className="h-8 text-xs"
-              inputMode="numeric"
-              placeholder="00.000.000/0000-00"
-              value={form.cnpj}
-              onChange={(e) => campo("cnpj")(formatarCnpj(e.target.value))}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Marca ofertada</Label>
-            <Input
-              className="h-8 text-xs"
-              value={form.marca}
-              onChange={(e) => campo("marca")(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Fabricante</Label>
-            <Input
-              className="h-8 text-xs"
-              value={form.fabricante}
-              onChange={(e) => campo("fabricante")(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Valor por {unidade} (R$) *</Label>
-            <Input
-              className="h-8 text-xs"
-              inputMode="decimal"
-              placeholder="0,0000"
-              value={form.valorUnitario}
-              onChange={(e) => campo("valorUnitario")(e.target.value.replace(/[^\d.,]/g, ""))}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Documento / nº da proposta</Label>
-            <Input
-              className="h-8 text-xs"
-              placeholder="Ex.: Proposta 123/2026 — SEI 25000.000000/2026-00"
-              value={form.documento}
-              onChange={(e) => campo("documento")(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Data da proposta *</Label>
-            <Input
-              type="date"
-              className="h-8 text-xs"
-              value={form.dataOrcamento}
-              onChange={(e) => campo("dataOrcamento")(e.target.value)}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-[11px]">Validade da proposta</Label>
-            <Input
-              type="date"
-              className="h-8 text-xs"
-              value={form.validade}
-              onChange={(e) => campo("validade")(e.target.value)}
-            />
-          </div>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-[11px]">Observação</Label>
-          <Textarea
-            className="min-h-14 text-xs"
-            placeholder="Ex.: condição de pagamento, prazo de entrega, incoterm, cotação em moeda estrangeira convertida em…"
-            value={form.observacao}
-            onChange={(e) => campo("observacao")(e.target.value)}
-          />
-        </div>
-        {erro && (
-          <p className="flex items-start gap-1.5 text-xs text-destructive">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            {erro}
-          </p>
-        )}
-        <Button type="button" size="sm" className="h-8" onClick={adicionar}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" />
-          Adicionar à pesquisa
-        </Button>
-      </div>
+      <FormularioPrecoInformado
+        unidade={unidade}
+        desabilitado={orcamentos.length >= MAX_ORCAMENTOS}
+        onAdicionar={(o) => {
+          if (orcamentos.length >= MAX_ORCAMENTOS) throw new Error(`Máximo de ${MAX_ORCAMENTOS} preços informados por item.`);
+          setOrcamentos((lista) => [...lista, { ...o, id: `${o.id}-${lista.length}` }]);
+        }}
+      />
     </div>
   );
 }
@@ -586,7 +520,7 @@ export interface CuradoriaDialogProps {
   titulo: string;
   /** Resultado da pesquisa deste item — de onde saem os registros a conferir. */
   base: ResultadoPesquisa | null;
-  /** Parâmetros para o recálculo no servidor. */
+  /** Parâmetros para o recálculo no servidor (os mesmos da pesquisa: período e IPCA inclusive). */
   parametros: {
     codigo: string;
     unidade: string;
@@ -594,14 +528,26 @@ export interface CuradoriaDialogProps {
     fornecedor?: string | null;
     fabricante?: string | null;
     cnpjComprador?: string | null;
+    periodo?: {
+      dataReferencia: string;
+      mesesMercado: 12 | 24 | 36 | null;
+      justificativaAmpliacao: string | null;
+      inicio?: string | null;
+    } | null;
+    corrigirIpca?: boolean;
+    /** Lista CMED consultada na tela; ausente = a última publicada (a do relatório). */
+    competenciaCmed?: string | null;
   } | null;
   exclusoesIniciais: ExclusaoRegistro[];
   orcamentosIniciais: OrcamentoFornecedor[];
+  /** Prováveis duplicatas mantidas no conjunto único (P18). */
+  duplicidadesIniciais?: string[];
   /** Rótulo do botão de confirmação (varia entre pesquisa e cesta). */
   rotuloConfirmar: string;
   onConfirmar: (dados: {
     exclusoes: ExclusaoRegistro[];
     orcamentos: OrcamentoFornecedor[];
+    duplicidadesRevertidas: string[];
   }) => Promise<void> | void;
 }
 
@@ -613,11 +559,13 @@ export function CuradoriaDialog({
   parametros,
   exclusoesIniciais,
   orcamentosIniciais,
+  duplicidadesIniciais,
   rotuloConfirmar,
   onConfirmar,
 }: CuradoriaDialogProps) {
   const [exclusoes, setExclusoes] = useState<Map<string, string>>(new Map());
   const [orcamentos, setOrcamentos] = useState<OrcamentoFornecedor[]>([]);
+  const [revertidas, setRevertidas] = useState<Set<string>>(new Set());
   const [previa, setPrevia] = useState<ResultadoPesquisa | null>(null);
   const [calculando, setCalculando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -628,9 +576,11 @@ export function CuradoriaDialog({
     if (!aberto) return;
     setExclusoes(new Map(exclusoesIniciais.map((e) => [`${e.fonte}:${e.id}`, e.motivo])));
     setOrcamentos(orcamentosIniciais);
+    setRevertidas(new Set(duplicidadesIniciais ?? []));
     setPrevia(null);
     setErro(null);
-  }, [aberto, exclusoesIniciais, orcamentosIniciais]);
+  }, [aberto, exclusoesIniciais, orcamentosIniciais, duplicidadesIniciais]);
+  const listaRevertidas = useMemo(() => Array.from(revertidas).sort(), [revertidas]);
 
   const listaExclusoes = useMemo<ExclusaoRegistro[]>(
     () =>
@@ -652,8 +602,8 @@ export function CuradoriaDialog({
   // Recalcula no servidor com um respiro, para não disparar uma consulta a
   // cada tecla da justificativa.
   const assinatura = useMemo(
-    () => JSON.stringify({ e: listaExclusoes, o: orcamentos }),
-    [listaExclusoes, orcamentos]
+    () => JSON.stringify({ e: listaExclusoes, o: orcamentos, d: listaRevertidas }),
+    [listaExclusoes, orcamentos, listaRevertidas]
   );
   // Chave por VALOR, não por identidade: um chamador que monte `parametros`
   // como objeto literal criaria uma referência nova a cada render e o efeito
@@ -662,7 +612,7 @@ export function CuradoriaDialog({
 
   useEffect(() => {
     if (!aberto || !parametros) return;
-    if (listaExclusoes.length === 0 && orcamentos.length === 0) {
+    if (listaExclusoes.length === 0 && orcamentos.length === 0 && listaRevertidas.length === 0) {
       setPrevia(null);
       return;
     }
@@ -674,7 +624,12 @@ export function CuradoriaDialog({
         const res = await fetch(apiPath("/api/precos/buscar"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...parametros, exclusoes: listaExclusoes, orcamentos }),
+          body: JSON.stringify({
+            ...parametros,
+            exclusoes: listaExclusoes,
+            orcamentos,
+            duplicidadesRevertidas: listaRevertidas,
+          }),
           signal: ctrl.signal,
         });
         if (!res.ok) {
@@ -702,7 +657,7 @@ export function CuradoriaDialog({
     setSalvando(true);
     setErro(null);
     try {
-      await onConfirmar({ exclusoes: listaExclusoes, orcamentos });
+      await onConfirmar({ exclusoes: listaExclusoes, orcamentos, duplicidadesRevertidas: listaRevertidas });
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao salvar a curadoria");
     } finally {
@@ -772,8 +727,9 @@ export function CuradoriaDialog({
                 ))}
               </div>
               <p className="mt-2 text-[11px] text-muted-foreground">
-                Cada fonte pesa igual: o cálculo incide sobre as medianas apuradas em BPS, SIASG,
-                PNCP e nos orçamentos diretos. O preço adotado pelo painel é a mediana.
+                Cada fonte pesa igual: o cálculo incide sobre as medianas apuradas em cada base
+                consultada e em cada tipo de preço informado. No padrão do painel, o preço adotado é
+                a mediana; o método e o teto podem ser escolhidos na emissão.
               </p>
             </div>
 
@@ -788,7 +744,7 @@ export function CuradoriaDialog({
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="orcamentos">
-                  Orçamentos de fornecedor
+                  Preços informados
                   {orcamentos.length > 0 && (
                     <Badge variant="secondary" className="ml-1.5 h-4 px-1.5 text-[10px]">
                       {orcamentos.length}
@@ -798,7 +754,13 @@ export function CuradoriaDialog({
               </TabsList>
 
               <TabsContent value="registros">
-                <AbaRegistros base={base} exclusoes={exclusoes} setExclusoes={setExclusoes} />
+                <AbaRegistros
+                  base={base}
+                  exclusoes={exclusoes}
+                  setExclusoes={setExclusoes}
+                  revertidas={revertidas}
+                  setRevertidas={setRevertidas}
+                />
               </TabsContent>
 
               <TabsContent value="orcamentos">

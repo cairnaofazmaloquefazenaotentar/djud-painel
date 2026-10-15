@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { getMetricsData } from "@/lib/metrics";
-import { filterMetricsSchema } from "@/lib/schemas";
+import { lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { jsonComVersao } from "@/lib/data-version";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -14,35 +14,17 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
+    // Filtro único (lib/demandas-filtro-tipos.ts): os mesmos parâmetros da
+    // lista de Demandas — e os nomes antigos do painel continuam valendo.
+    const filtro = lerFiltroDemandas(searchParams);
+    const eixo = searchParams.get("eixoDataValor");
+    const eixoDataValor = eixo === "processo" ? "processo" : eixo === "pagamento" ? "pagamento" : undefined;
 
-    // Parse and validate filters — usar ?? undefined para converter null em undefined (Zod não aceita null)
-    const filters = filterMetricsSchema.parse({
-      startDate:     searchParams.get("startDate")     ?? undefined,
-      endDate:       searchParams.get("endDate")       ?? undefined,
-      status:        searchParams.get("status")        ?? undefined,
-      prioridade:    searchParams.get("prioridade")    ?? undefined,
-      principioAtivo: searchParams.get("principioAtivo") ?? undefined,
-      organizacaoId: searchParams.get("organizacaoId") ?? undefined,
-      catmat:        searchParams.get("catmat")         ?? undefined,
-      eixoDataValor: (searchParams.get("eixoDataValor") as "pagamento" | "processo" | null) ?? undefined,
-    });
-
-    // Convert date strings to Date objects
-    const metricsFilters = {
-      startDate: filters.startDate ? new Date(filters.startDate) : undefined,
-      endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-      status: filters.status,
-      prioridade: filters.prioridade,
-      principioAtivo: filters.principioAtivo,
-      organizacaoId: filters.organizacaoId,
-      catmat: filters.catmat,
-      eixoDataValor: filters.eixoDataValor,
-    };
-
-    return jsonComVersao(request, ["demanda"], () => getMetricsData(metricsFilters));
+    // As séries de valor leem o SIAFI: sem ele na versão, uma carga nova do
+    // SIAFI não invalidava o cache do painel (B2).
+    return jsonComVersao(request, ["demanda", "siafiPagamento"], () => getMetricsData({ filtro, eixoDataValor }));
   } catch (error) {
     console.error("[metrics] Erro:", error);
-    const message = error instanceof Error ? error.message : "Erro ao obter métricas";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "Não foi possível carregar as métricas agora" }, { status: 500 });
   }
 }

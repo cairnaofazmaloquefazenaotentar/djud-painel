@@ -31,19 +31,26 @@ interface DataTableProps<TData> {
   loading?: boolean;
   onRowClick?: (row: TData) => void;
   renderEmptyState?: () => React.ReactNode;
+  /**
+   * false quando a lista já chega paginada do servidor: a tabela mostra todas
+   * as linhas recebidas e não desenha a própria paginação (que contaria só a
+   * página atual — "Página 1 de 1").
+   */
+  paginacaoInterna?: boolean;
 }
 
 // ── Spell: skeleton com shimmer sweep ──────────────────────────────────────────
 
-function ShimmerSkeleton({ cols }: { cols: number; idx: number }) {
+function ShimmerSkeleton({ cols, idx }: { cols: number; idx: number }) {
   return (
     <TableRow>
       {Array.from({ length: cols }).map((_, j) => (
         <TableCell key={j} className="px-4 py-3">
           <div className="relative overflow-hidden rounded-md">
+            {/* Opacidade variada mas determinística (render puro, sem Math.random). */}
             <Skeleton
               className="h-4 w-full"
-              style={{ opacity: 0.6 + Math.random() * 0.4 }}
+              style={{ opacity: 0.6 + (((idx * 7 + j * 3) % 5) * 0.1) }}
             />
             {/* Shimmer sweep */}
             <motion.div
@@ -74,6 +81,7 @@ export function DataTable<TData>({
   loading,
   onRowClick,
   renderEmptyState,
+  paginacaoInterna = true,
 }: DataTableProps<TData>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
 
@@ -81,7 +89,7 @@ export function DataTable<TData>({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    ...(paginacaoInterna ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     getSortedRowModel: getSortedRowModel(),
     state: { sorting },
     onSortingChange: setSorting,
@@ -160,7 +168,7 @@ export function DataTable<TData>({
       </div>
 
       {/* ── Paginação ──────────────────────────────────────────────────────── */}
-      {!isEmpty && !loading && (
+      {paginacaoInterna && !isEmpty && !loading && (
         <div className="flex items-center justify-between px-1">
           <p className="text-xs text-muted-foreground">
             Página{" "}

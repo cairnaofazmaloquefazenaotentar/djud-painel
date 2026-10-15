@@ -1,8 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  FileSpreadsheet,
   FileText,
   ListChecks,
   Loader2,
@@ -15,6 +18,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -47,6 +58,24 @@ import {
 } from "@/hooks/useCesta";
 import { MAX_ITENS_CESTA } from "@/lib/cesta-schemas";
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
+import { CamposEscolhaPreco } from "@/components/pesquisa-preco/escolha-preco";
+import {
+  ALIQUOTAS_TETO,
+  ALIQUOTA_PADRAO,
+  ESCOLHA_PADRAO_MAPA,
+  escolhaGravada,
+  normalizarEscolha,
+  type AliquotaTeto,
+  type EscolhaPreco,
+} from "@/lib/pesquisa-preco-metodo";
+import { rotuloAliquota } from "@/lib/cmed-aliquotas";
+import {
+  JUSTIFICATIVA_PERIODO_MIN,
+  OPCOES_MESES,
+  hojeBrasilia,
+  periodoAmpliado as ehAmpliado,
+  type MesesMercado,
+} from "@/lib/pesquisa-preco-periodo";
 import type { CestaItemDTO } from "@/lib/cesta";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import { apiPath } from "@/lib/url";
@@ -67,6 +96,161 @@ const fmt = (v: number | null | undefined, decimals = 4) => {
 
 const fmtInt = (n: number) => n.toLocaleString("pt-BR");
 
+/** periodoMeses gravado (0 = todo o período, null = padrão) → valor da pesquisa. */
+function mesesDoItem(item: CestaItemDTO): MesesMercado {
+  if (item.periodoMeses === 0) return null;
+  return item.periodoMeses === 24 || item.periodoMeses === 36 ? item.periodoMeses : 12;
+}
+
+function rotuloPeriodo(meses: MesesMercado): string {
+  return meses === null ? "todo o período" : `${meses} meses`;
+}
+
+// ── Período e IPCA do item (D1/D2) ───────────────────────────────────────────
+
+function PeriodoDoItem({ item, ocupado }: { item: CestaItemDTO; ocupado: boolean }) {
+  const atualizar = useAtualizarItemCesta();
+  const [aberto, setAberto] = useState(false);
+  const [meses, setMeses] = useState<MesesMercado>(mesesDoItem(item));
+  const [inicio, setInicio] = useState(item.periodoInicio ?? "");
+  const [intervalo, setIntervalo] = useState(!!item.periodoInicio);
+  const [justificativa, setJustificativa] = useState(item.justificativaPeriodo ?? "");
+  const [ipca, setIpca] = useState(item.corrigirIpca);
+
+  // Ao abrir, parte do que está gravado (outra aba pode ter mudado o item).
+  const alternar = () => {
+    if (!aberto) {
+      setMeses(mesesDoItem(item));
+      setInicio(item.periodoInicio ?? "");
+      setIntervalo(!!item.periodoInicio);
+      setJustificativa(item.justificativaPeriodo ?? "");
+      setIpca(item.corrigirIpca);
+    }
+    setAberto((v) => !v);
+  };
+
+  // A data de referência da cesta é a da emissão: o intervalo vale até "hoje".
+  const inicioEscolhido = intervalo && inicio ? inicio : null;
+  const ampliado = ehAmpliado({ dataReferencia: hojeBrasilia(), mesesMercado: meses, justificativaAmpliacao: null, inicio: inicioEscolhido });
+  const semJustificativa = ampliado && justificativa.trim().length < JUSTIFICATIVA_PERIODO_MIN;
+  const intervaloIncompleto = intervalo && (!inicio || inicio > hojeBrasilia());
+  const mudou =
+    meses !== mesesDoItem(item) ||
+    inicioEscolhido !== (item.periodoInicio ?? null) ||
+    ipca !== item.corrigirIpca ||
+    (ampliado && justificativa.trim() !== (item.justificativaPeriodo ?? ""));
+
+  const salvar = async () => {
+    await atualizar.mutateAsync({
+      id: item.id,
+      periodoMeses: meses === null ? 0 : meses,
+      periodoInicio: inicioEscolhido,
+      justificativaPeriodo: ampliado ? justificativa.trim() : null,
+      corrigirIpca: ipca,
+    });
+    setAberto(false);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+        <span>
+          Período:{" "}
+          {item.periodoInicio
+            ? `desde ${item.periodoInicio.split("-").reverse().join("/")}`
+            : `${rotuloPeriodo(mesesDoItem(item))}${mesesDoItem(item) !== 12 ? " (ampliado)" : ""}`}{" "}
+          · IPCA {item.corrigirIpca ? "ligado" : "desligado"}
+        </span>
+        <button
+          type="button"
+          className="underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+          disabled={ocupado}
+          onClick={alternar}
+          aria-expanded={aberto}
+        >
+          {aberto ? "fechar" : "alterar"}
+        </button>
+      </div>
+      {aberto && (
+        <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+          <Select
+            value={intervalo ? "intervalo" : meses === null ? "todos" : String(meses)}
+            onValueChange={(v) => {
+              setIntervalo(v === "intervalo");
+              if (v !== "intervalo") setMeses(v === "todos" ? null : (Number(v) as 12 | 24 | 36));
+            }}
+          >
+            <SelectTrigger className="h-7 w-full text-xs" aria-label="Período das bases">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {OPCOES_MESES.map((o) => (
+                <SelectItem key={String(o.valor)} value={o.valor === null ? "todos" : String(o.valor)}>
+                  {o.rotulo}
+                </SelectItem>
+              ))}
+              <SelectItem value="intervalo">Intervalo de datas…</SelectItem>
+            </SelectContent>
+          </Select>
+          {intervalo && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  className="h-7 text-xs"
+                  aria-label="Início do intervalo das bases"
+                  max={hojeBrasilia()}
+                  value={inicio}
+                  onChange={(e) => setInicio(e.target.value)}
+                />
+                <span className="shrink-0 text-[11px] text-muted-foreground">até a data da emissão</span>
+              </div>
+              {intervaloIncompleto && <p className="text-[11px] text-destructive">Informe a data inicial.</p>}
+            </div>
+          )}
+          {ampliado && (
+            <div className="space-y-1">
+              <Input
+                className="h-7 text-xs"
+                placeholder="Justificativa da ampliação do período (vai impressa no relatório)"
+                value={justificativa}
+                onChange={(e) => setJustificativa(e.target.value)}
+              />
+              {semJustificativa && (
+                <p className="text-[11px] text-destructive">
+                  Ampliar além de 12 meses exige justificativa de ao menos {JUSTIFICATIVA_PERIODO_MIN} caracteres.
+                </p>
+              )}
+            </div>
+          )}
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-primary"
+              checked={ipca}
+              onChange={(e) => setIpca(e.target.checked)}
+            />
+            Atualizar pelo IPCA (incisos I e II) até o mês anterior à emissão
+          </label>
+          <div className="flex items-center justify-end gap-2">
+            {atualizar.isError && <span className="text-[11px] text-destructive">{atualizar.error.message}</span>}
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={!mudou || semJustificativa || intervaloIncompleto || atualizar.isPending}
+              onClick={salvar}
+            >
+              {atualizar.isPending && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+              Salvar
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Linha da cesta ────────────────────────────────────────────────────────────
 
 function LinhaItem({ item }: { item: CestaItemDTO }) {
@@ -77,27 +261,40 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
   const [obs, setObs] = useState(item.observacao ?? "");
 
   // Curadoria do item: a pesquisa é refeita sob demanda ao abrir o diálogo,
-  // porque a cesta só guarda código/unidade/UF — os registros a conferir são
-  // os da data de hoje, os mesmos que o relatório vai usar.
+  // porque a cesta não guarda registros — os registros a conferir são os da
+  // data de hoje, com o período, o IPCA e as duplicatas do item: os mesmos que
+  // o relatório vai usar.
   const [curadoriaOpen, setCuradoriaOpen] = useState(false);
   const [base, setBase] = useState<ResultadoPesquisa | null>(null);
   const [erroBase, setErroBase] = useState<string | null>(null);
+
+  const parametros = useMemo(
+    () => ({
+      codigo: item.codigo,
+      unidade: item.unidade,
+      uf: item.uf,
+      periodo: {
+        dataReferencia: hojeBrasilia(),
+        mesesMercado: mesesDoItem(item),
+        justificativaAmpliacao: item.justificativaPeriodo,
+        inicio: item.periodoInicio,
+      },
+      corrigirIpca: item.corrigirIpca,
+    }),
+    [item]
+  );
 
   const abrirCuradoria = useCallback(async () => {
     setCuradoriaOpen(true);
     setBase(null);
     setErroBase(null);
     try {
+      // A base da conferência vem SEM as duplicatas mantidas: a curadoria
+      // mostra a marca e o responsável decide de novo.
       const res = await fetch(apiPath("/api/precos/buscar"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          codigo: item.codigo,
-          unidade: item.unidade,
-          uf: item.uf,
-          exclusoes: item.exclusoes,
-          orcamentos: item.orcamentos,
-        }),
+        body: JSON.stringify({ ...parametros, exclusoes: item.exclusoes, orcamentos: item.orcamentos }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -107,9 +304,9 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
     } catch (e) {
       setErroBase(e instanceof Error ? e.message : "Erro ao carregar a pesquisa");
     }
-  }, [item.codigo, item.exclusoes, item.orcamentos, item.uf, item.unidade]);
+  }, [item.exclusoes, item.orcamentos, parametros]);
 
-  const curadoriaAtiva = item.exclusoes.length + item.orcamentos.length;
+  const curadoriaAtiva = item.exclusoes.length + item.orcamentos.length + item.duplicidadesRevertidas.length;
 
   // Reflete mudanças vindas do servidor (ex.: item adicionado de novo somou qtd).
   useEffect(() => setQtd(String(item.quantidade)), [item.quantidade]);
@@ -240,12 +437,20 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
         </Button>
         {curadoriaAtiva > 0 && (
           <span className="text-[11px] text-muted-foreground">
-            {item.exclusoes.length > 0 && `${item.exclusoes.length} descarte(s)`}
-            {item.exclusoes.length > 0 && item.orcamentos.length > 0 && " · "}
-            {item.orcamentos.length > 0 && `${item.orcamentos.length} orçamento(s)`}
+            {[
+              item.exclusoes.length > 0 ? `${item.exclusoes.length} descarte(s)` : null,
+              item.orcamentos.length > 0 ? `${item.orcamentos.length} preço(s) informado(s)` : null,
+              item.duplicidadesRevertidas.length > 0
+                ? `${item.duplicidadesRevertidas.length} duplicata(s) mantida(s)`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         )}
       </div>
+
+      <PeriodoDoItem item={item} ocupado={ocupado} />
 
       {atualizar.isError && (
         <p className="text-[11px] text-destructive">{atualizar.error.message}</p>
@@ -260,15 +465,108 @@ function LinhaItem({ item }: { item: CestaItemDTO }) {
         onOpenChange={setCuradoriaOpen}
         titulo={`Conferir valores — ${item.descricao.substring(0, 70)}`}
         base={base}
-        parametros={{ codigo: item.codigo, unidade: item.unidade, uf: item.uf }}
+        parametros={parametros}
         exclusoesIniciais={item.exclusoes}
         orcamentosIniciais={item.orcamentos}
+        duplicidadesIniciais={item.duplicidadesRevertidas}
         rotuloConfirmar="Salvar na cesta"
-        onConfirmar={async ({ exclusoes, orcamentos }) => {
-          await atualizar.mutateAsync({ id: item.id, exclusoes, orcamentos });
+        onConfirmar={async ({ exclusoes, orcamentos, duplicidadesRevertidas }) => {
+          await atualizar.mutateAsync({ id: item.id, exclusoes, orcamentos, duplicidadesRevertidas });
           setCuradoriaOpen(false);
         }}
       />
+    </div>
+  );
+}
+
+// ── Escolha por item na emissão ──────────────────────────────────────────────
+
+/** Ajuste de um item na modal: escolha própria e/ou justificativa editada. */
+interface AjusteItem {
+  escolha: EscolhaPreco | null;
+  justificativa: string;
+}
+
+/** Alíquota de ICMS do teto do item: a gravada da pesquisa; sem ela, o padrão (17%). */
+function aliquotaDoItem(item: CestaItemDTO): AliquotaTeto {
+  return ALIQUOTAS_TETO.includes(item.aliquotaTeto as AliquotaTeto) ? (item.aliquotaTeto as AliquotaTeto) : ALIQUOTA_PADRAO;
+}
+
+/**
+ * O que o item já tem gravado vira o ajuste inicial na modal. Só método e
+ * regra do teto fazem um ajuste próprio: a alíquota todo item tem (a da
+ * pesquisa), e sozinha não deve desligar a escolha geral.
+ */
+function ajusteGravado(item: CestaItemDTO): AjusteItem | null {
+  const gravada = item.metodoPreco || item.regraTeto ? escolhaGravada(item) : null;
+  if (!gravada && !item.justificativa) return null;
+  return {
+    escolha: gravada ? normalizarEscolha(gravada, ESCOLHA_PADRAO_MAPA) : null,
+    justificativa: item.justificativa ?? "",
+  };
+}
+
+function AjusteDoItem({
+  item,
+  escolhaGeral,
+  ajuste,
+  onChange,
+}: {
+  item: CestaItemDTO;
+  escolhaGeral: EscolhaPreco;
+  ajuste: AjusteItem | undefined;
+  onChange: (a: AjusteItem) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const atual: AjusteItem = ajuste ?? { escolha: null, justificativa: "" };
+  const personalizado = atual.escolha !== null || atual.justificativa.trim() !== "";
+  return (
+    <div className="rounded-md border p-2 space-y-2">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-2 text-left text-xs"
+        onClick={() => setAberto((v) => !v)}
+        aria-expanded={aberto}
+      >
+        <span className="min-w-0 truncate font-medium">{item.descricao}</span>
+        <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
+          <Badge variant="outline" className="h-4 text-[10px] font-normal">
+            ICMS {rotuloAliquota(atual.escolha?.aliquota ?? aliquotaDoItem(item))}
+          </Badge>
+          {personalizado && <Badge variant="secondary" className="h-4 text-[10px]">ajustado</Badge>}
+          {aberto ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {aberto && (
+        <div className="space-y-2">
+          <CamposEscolhaPreco
+            valor={atual.escolha ?? { ...escolhaGeral, aliquota: aliquotaDoItem(item) }}
+            onChange={(e) => onChange({ ...atual, escolha: e })}
+            idPrefixo={`cesta-${item.id}`}
+          />
+          <Textarea
+            className="min-h-16 text-xs"
+            placeholder="Justificativa do preço adotado — em branco, o painel gera o texto com os números da emissão."
+            value={atual.justificativa}
+            onChange={(e) => onChange({ ...atual, justificativa: e.target.value })}
+          />
+          {item.justificativa && atual.justificativa === item.justificativa && (
+            <p className="text-[11px] text-muted-foreground">
+              Texto gravado numa emissão anterior: confira se os números ainda conferem, ou apague para o
+              painel gerar o texto com os números de agora.
+            </p>
+          )}
+          {atual.escolha && (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => onChange({ ...atual, escolha: null })}
+            >
+              usar a escolha geral
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -288,12 +586,76 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
     processo: "",
     limparCesta: true,
   });
+  // Método e teto (P11/P12): uma escolha geral e ajustes por item. O HTML e o
+  // mapa XLSX emitidos por esta modal mandam a mesma escolha.
+  const [escolhaGeral, setEscolhaGeral] = useState<EscolhaPreco>(ESCOLHA_PADRAO_MAPA);
+  const [ajustes, setAjustes] = useState<Record<string, AjusteItem>>({});
+  const [gerandoXlsx, setGerandoXlsx] = useState(false);
 
   const { data: cesta, isLoading, error } = useCesta();
   const esvaziar = useEsvaziarCesta();
 
-  const itens = cesta?.itens ?? [];
+  const itens = useMemo(() => cesta?.itens ?? [], [cesta?.itens]);
   const total = cesta?.total ?? 0;
+
+  // Ao abrir a modal, cada item parte da escolha e da justificativa que já
+  // tem gravadas (emissão anterior): sem isso, reemitir com "manter a cesta"
+  // trocaria em silêncio a escolha do item pela geral.
+  const abrirModalRelatorio = useCallback(() => {
+    setAjustes(
+      Object.fromEntries(
+        itens.flatMap((i) => {
+          const a = ajusteGravado(i);
+          return a ? [[i.id, a]] : [];
+        })
+      )
+    );
+    setModalRelatorio(true);
+  }, [itens]);
+
+  const corpoEmissao = useCallback(
+    () => ({
+      ...meta,
+      escolhas: Object.fromEntries(
+        itens.map((i) => {
+          const a = ajustes[i.id];
+          // Sem ajuste próprio, a escolha geral com a alíquota do próprio item.
+          const escolhaItem = a?.escolha ?? { ...escolhaGeral, aliquota: aliquotaDoItem(i) };
+          return [i.id, { ...escolhaItem, justificativa: a?.justificativa.trim() || null }];
+        })
+      ),
+    }),
+    [ajustes, escolhaGeral, itens, meta]
+  );
+
+  const gerarXlsx = useCallback(async () => {
+    setGerandoXlsx(true);
+    setErroRelatorio(null);
+    try {
+      const res = await fetch(apiPath("/api/relatorios/cesta/xlsx"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(corpoEmissao()),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || "Erro ao gerar o mapa comparativo da cesta");
+      }
+      const nome =
+        /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ??
+        `Mapa_comparativo_de_Precos_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const url = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = nome;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErroRelatorio(e instanceof Error ? e.message : "Erro ao gerar o mapa comparativo");
+    } finally {
+      setGerandoXlsx(false);
+    }
+  }, [corpoEmissao]);
 
   const gerarRelatorio = useCallback(async () => {
     // Abre a janela antes do await para o bloqueador de pop-up não interferir.
@@ -304,7 +666,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
       const res = await fetch(apiPath("/api/relatorios/cesta"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(meta),
+        body: JSON.stringify(corpoEmissao()),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -324,7 +686,7 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
     } finally {
       setGerando(false);
     }
-  }, [meta]);
+  }, [corpoEmissao, meta.limparCesta]);
 
   return (
     <>
@@ -406,14 +768,14 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                   {(cesta?.itensCurados ?? 0) > 0 && (
                     <p className="text-[11px] text-muted-foreground">
                       {cesta?.itensCurados} item(ns) com curadoria registrada — descartes
-                      justificados e/ou orçamentos de fornecedor serão reaplicados no relatório.
+                      justificados e/ou preços informados serão reaplicados no relatório.
                     </p>
                   )}
                 </div>
 
                 <div className="flex flex-col gap-2">
                   {podeGerarRelatorio ? (
-                    <Button onClick={() => setModalRelatorio(true)}>
+                    <Button onClick={abrirModalRelatorio}>
                       <FileText className="h-4 w-4 mr-2" />
                       Gerar relatório da cesta
                     </Button>
@@ -468,15 +830,15 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
 
       {/* Metadados do relatório consolidado */}
       <Dialog open={modalRelatorio} onOpenChange={setModalRelatorio}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto pb-6 [&>*:not(:first-child)]:mx-6">
           <DialogHeader>
             <DialogTitle>Relatório consolidado da cesta</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground -mt-2">
-            {fmtInt(total)} item(ns) serão pesquisados novamente para que o documento traga os
-            preços da data de emissão. Os registros desconsiderados e os orçamentos de
-            fornecedor salvos em cada item são reaplicados na nova apuração. Os campos
-            institucionais são opcionais.
+          <p className="mt-4 text-sm text-muted-foreground">
+            {fmtInt(total)} item(ns) serão pesquisados novamente, com a data de hoje como data de
+            referência, para que o documento traga os preços da emissão. O período, o IPCA, os
+            registros desconsiderados e os preços informados salvos em cada item são reaplicados na
+            nova apuração. Os campos institucionais são opcionais.
           </p>
           <div className="grid gap-3 py-1">
             <div className="grid grid-cols-2 gap-3">
@@ -513,6 +875,26 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                 onChange={(e) => setMeta((m) => ({ ...m, processo: e.target.value }))}
               />
             </div>
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs font-medium">Preço adotado — todos os itens</p>
+              <CamposEscolhaPreco valor={escolhaGeral} onChange={setEscolhaGeral} idPrefixo="cesta-geral" semAliquota />
+              <p className="text-[11px] text-muted-foreground">
+                A alíquota de ICMS do teto é a de cada item — a escolhida na pesquisa (padrão 17%). Para
+                mudar o método, o teto, a alíquota ou escrever a justificativa de um item, abra-o abaixo.
+                Sem justificativa escrita, o painel gera o texto com os números da emissão.
+              </p>
+              <div className="space-y-1.5">
+                {itens.map((i) => (
+                  <AjusteDoItem
+                    key={i.id}
+                    item={i}
+                    escolhaGeral={escolhaGeral}
+                    ajuste={ajustes[i.id]}
+                    onChange={(a) => setAjustes((atual) => ({ ...atual, [i.id]: a }))}
+                  />
+                ))}
+              </div>
+            </div>
             <label className="flex items-start gap-2 rounded-md border bg-muted/30 p-2.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -521,9 +903,10 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
                 onChange={(e) => setMeta((m) => ({ ...m, limparCesta: e.target.checked }))}
               />
               <span className="text-xs">
-                <span className="font-medium">Esvaziar a cesta depois de gerar</span>
+                <span className="font-medium">Esvaziar a cesta depois de gerar o PDF</span>
                 <span className="block text-muted-foreground">
-                  Desmarque para manter os itens e gerar o relatório outra vez mais tarde.
+                  Desmarque para manter os itens e gerar o relatório outra vez mais tarde. O mapa
+                  comparativo (XLSX) nunca esvazia a cesta: gere-o antes do PDF.
                 </span>
               </span>
             </label>
@@ -536,11 +919,24 @@ export function CestaSheet({ podeGerarRelatorio }: { podeGerarRelatorio: boolean
             </p>
           )}
 
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={() => setModalRelatorio(false)} disabled={gerando}>
+          <div className="flex flex-wrap justify-end gap-2 pt-1">
+            <Button variant="outline" onClick={() => setModalRelatorio(false)} disabled={gerando || gerandoXlsx}>
               Cancelar
             </Button>
-            <Button onClick={gerarRelatorio} disabled={gerando || total === 0}>
+            <Button variant="outline" onClick={gerarXlsx} disabled={gerando || gerandoXlsx || total === 0}>
+              {gerandoXlsx ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Gerando…
+                </>
+              ) : (
+                <>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Mapa comparativo (XLSX)
+                </>
+              )}
+            </Button>
+            <Button onClick={gerarRelatorio} disabled={gerando || gerandoXlsx || total === 0}>
               {gerando ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />

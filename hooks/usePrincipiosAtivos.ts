@@ -4,14 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import { apiPath } from "@/lib/url";
 
 export interface PrincipioAtivoOption {
+  /** Nome da substância como mais aparece nas demandas ("Eltrombopague"). */
   value: string;
+  /** Demandas que citam a substância (uma demanda conta uma vez por substância). */
   count: number;
+  /** Radical que o filtro de medicamento procura ("ELTROMBOPAG"). */
+  radical: string;
 }
 
 /**
- * Carrega a lista de princípios ativos disponíveis (com contagem de demandas),
- * já limpa e ordenada por frequência. Usada para popular o combobox de filtro.
- * A lista muda pouco, então fica em cache por bastante tempo.
+ * Sugestões do campo "Medicamento" (B3): substâncias canônicas — as grafias do
+ * Redmine agrupadas pelo radical — com a contagem de demandas, ordenadas por
+ * frequência. A lista muda pouco, então fica em cache por bastante tempo.
  */
 export function usePrincipiosAtivos() {
   return useQuery<PrincipioAtivoOption[]>({

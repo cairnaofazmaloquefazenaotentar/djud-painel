@@ -2,7 +2,10 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
-import { classificarCodigo, pesquisarPrecos } from "@/lib/pesquisa-preco";
+import { classificarCodigo, normalizarPeriodo, pesquisarPrecos, validarPeriodo } from "@/lib/pesquisa-preco";
+import { listarCompetencias } from "@/lib/cmed";
+import { ALIQUOTAS_TETO, type AliquotaTeto } from "@/lib/pesquisa-preco-metodo";
+import { rotuloCompetencia } from "@/lib/cmed-aliquotas";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -39,6 +42,12 @@ export async function POST(request: NextRequest) {
     },
     exclusoes: body?.exclusoes ?? [],
     orcamentos: body?.orcamentos ?? [],
+    duplicidadesRevertidas: body?.duplicidadesRevertidas ?? [],
+    periodo: body?.periodo ?? null,
+    corrigirIpca: body?.corrigirIpca !== false,
+    // "competencia" na query; a curadoria repassa os parâmetros da tela, que a chamam "competenciaCmed".
+    competenciaCmed: body?.competencia || body?.competenciaCmed ? String(body.competencia || body.competenciaCmed) : null,
+    ...escolhaDaAliquota(body?.aliquota ?? body?.aliquotaIcms),
   });
 }
 
@@ -53,7 +62,24 @@ export async function GET(request: NextRequest) {
       fabricante: sp.get("fabricante"),
       cnpjComprador: sp.get("cnpjComprador"),
     },
+    periodo: {
+      dataReferencia: sp.get("dataReferencia") ?? undefined,
+      mesesMercado: sp.get("meses") === "todos" ? null : (Number(sp.get("meses")) as 12 | 24 | 36) || 12,
+      justificativaAmpliacao: sp.get("justificativaPeriodo"),
+      inicio: sp.get("inicio"),
+    },
+    corrigirIpca: sp.get("ipca") !== "0",
+    competenciaCmed: sp.get("competencia") || null,
+    ...escolhaDaAliquota(sp.get("aliquota")),
   });
+}
+
+/**
+ * Alíquota de ICMS do teto (filtro da pesquisa; padrão 17%). Vai na escolha do
+ * preço — método e regra do teto seguem o padrão do painel na tela.
+ */
+function escolhaDaAliquota(bruto: unknown): { escolha?: { aliquota: AliquotaTeto } } {
+  return typeof bruto === "string" && bruto ? { escolha: { aliquota: bruto as AliquotaTeto } } : {};
 }
 
 async function responder(p: Parameters<typeof pesquisarPrecos>[0]): Promise<NextResponse> {
@@ -77,6 +103,23 @@ async function responder(p: Parameters<typeof pesquisarPrecos>[0]): Promise<Next
     }
     if (p.uf && !/^[A-Z]{2}$/.test(p.uf)) {
       return NextResponse.json({ error: "UF inválida" }, { status: 400 });
+    }
+    // Ampliar o período sem justificativa é recusado, não corrigido em silêncio (D1).
+    const erroPeriodo = validarPeriodo(normalizarPeriodo(p.periodo));
+    if (erroPeriodo) return NextResponse.json({ error: erroPeriodo }, { status: 400 });
+    const aliquota = p.escolha?.aliquota;
+    if (aliquota && !ALIQUOTAS_TETO.includes(aliquota)) {
+      return NextResponse.json({ error: "Alíquota de ICMS inválida" }, { status: 400 });
+    }
+    // Lista CMED consultada (só a tela): tem de ser uma das carregadas.
+    if (p.competenciaCmed) {
+      const carregadas = await listarCompetencias();
+      if (!/^\d{4}-\d{2}$/.test(p.competenciaCmed) || !carregadas.some((c) => c.competencia === p.competenciaCmed)) {
+        return NextResponse.json(
+          { error: `Lista CMED de ${rotuloCompetencia(p.competenciaCmed)} não está carregada no painel.` },
+          { status: 400 }
+        );
+      }
     }
 
     const resultado = await pesquisarPrecos(p);

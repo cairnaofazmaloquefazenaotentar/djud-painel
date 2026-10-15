@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { paramsDeMetrics, type UseMetricsOptions } from "@/hooks/useMetrics";
+import { paramsDeMetrics } from "@/hooks/useMetrics";
+import type { FiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import type { RankingAnualData } from "@/lib/metrics-ranking-anual";
 import { apiPath } from "@/lib/url";
 
@@ -10,23 +11,12 @@ import { apiPath } from "@/lib/url";
  * porque são sete agregações a mais: só dispara quando a tela liga o modo de
  * comparação (`enabled`).
  */
-export function useRankingAnual(options: UseMetricsOptions = {}, enabled = true) {
+export function useRankingAnual(filtro: FiltroDemandas, enabled = true) {
+  const chave = paramsDeMetrics(filtro).toString();
   return useQuery<RankingAnualData>({
-    queryKey: [
-      "metrics-ranking-anual",
-      {
-        startDate: options.startDate?.toISOString(),
-        endDate: options.endDate?.toISOString(),
-        status: options.status,
-        prioridade: options.prioridade,
-        principioAtivo: options.principioAtivo,
-        organizacaoId: options.organizacaoId,
-        catmat: options.catmat,
-      },
-    ],
-    queryFn: async () => {
-      const params = paramsDeMetrics(options);
-      const res = await fetch(apiPath(`/api/demandas/metrics/ranking-anual?${params.toString()}`));
+    queryKey: ["metrics-ranking-anual", chave],
+    queryFn: async ({ signal }) => {
+      const res = await fetch(apiPath(`/api/demandas/metrics/ranking-anual?${chave}`), { signal });
       if (!res.ok) throw new Error("Erro ao carregar o ranking anual");
       return res.json();
     },

@@ -1,0 +1,44 @@
+{
+  "_comentario": "Contrato entre lib/demandas-filtro-tipos.ts + lib/substancia.ts (TS) e scripts/demandas_busca.py + scripts/substancia.py (Python). Conferido por scripts/autoteste-pesquisa-preco.ts e por `python scripts/demandas_busca.py` / `python scripts/substancia.py`.",
+  "nupSei": [
+    ["25000.123456/2021-11", "25000.123456/2021-11"],
+    ["25000123456202111", "25000.123456/2021-11"],
+    ["25000 190442/2013-92", "25000.190442/2013-92"],
+    ["SEI 00737.01234/2020-1 (lateral)", "00737.01234/2020-1"],
+    ["sem número", null],
+    ["", null]
+  ],
+  "buscaNorm": [
+    [
+      {
+        "numero": "245678",
+        "numeroProcesso": "5000904-02.2021.4.03.6006",
+        "nupSei": "25000.123456/2021-11",
+        "titulo": "Fornecimento de ELTROMBOPAGUE 50 mg",
+        "principioAtivo": "Eltrombopague",
+        "medicamento": null,
+        "descricao": "Paciente com PTI — usar Revolade®."
+      },
+      "245678 5000904-02 2021 4 03 6006 50009040220214036006 25000 123456 2021-11 25000123456202111 fornecimento de eltrombopague 50 mg eltrombopague paciente com pti usar revolade"
+    ],
+    [
+      { "numero": "1", "titulo": "Ácido Fólico", "descricao": "" },
+      "1 acido folico"
+    ]
+  ],
+  "radicalSubstancia": [
+    ["ELTROMBOPAGUE OLAMINA", "ELTROMBOPAG"],
+    ["NUSINERSENA", "NUSINERSEN"],
+    ["SUCCINATO DE RIBOCICLIBE", "RIBOCICLIB"],
+    ["ÁCIDO ZOLEDRÔNICO", "ZOLEDRÔNIC"],
+    ["ENOXAPARINA SÓDICA", "ENOXAPARIN"],
+    ["TRASTUZUMABE", "TRASTUZUMAB"],
+    ["AAS", null]
+  ],
+  "grupoDeSubstancia": [
+    ["CANABIDIOL;TETRAIDROCANABINOL", { "rotulo": "CANABIDIOL + TETRAIDROCANABINOL", "termos": ["CANABIDIOL", "TETRAIDROCANABINOL"] }],
+    ["Elexacaftor / Ivacaftor / Tezacaftor", { "rotulo": "Elexacaftor + Ivacaftor + Tezacaftor", "termos": ["ELEXACAFTOR", "IVACAFTOR", "TEZACAFTOR"] }],
+    ["Eltrombopag", { "rotulo": "Eltrombopag", "termos": ["ELTROMBOPAG"] }],
+    ["(x)", null]
+  ]
+}

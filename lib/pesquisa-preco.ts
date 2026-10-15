@@ -13,8 +13,9 @@ import {
 } from "@/lib/pesquisa-preco-filtros";
 import {
   ESTATISTICAS_VAZIAS,
-  METODO_ADOTADO,
   NOME_FONTE_CURADA,
+  ORDEM_TIPOS_INFORMADOS,
+  TIPOS_PRECO_INFORMADO,
   calcularEstatisticas,
   limitesIqr,
   mapaExclusoes,
@@ -27,8 +28,64 @@ import {
   type RegistroDescartado,
 } from "@/lib/pesquisa-preco-curadoria";
 
+import {
+  BASE_DA_CHAVE,
+  INFO_FONTE,
+  ROTULO_BASE,
+  corrigidoPeloIpca,
+  type BaseCompras,
+  type ContratacaoRef,
+  type DuplicidadeRef,
+  type FonteMercadoChave,
+  type Inciso,
+} from "@/lib/pesquisa-preco-fontes";
+import {
+  descricaoPeriodo,
+  hojeBrasilia,
+  janelaDaFonte,
+  normalizarPeriodo,
+  validarPeriodo,
+  type JanelaFonte,
+  type PeriodoPesquisa,
+} from "@/lib/pesquisa-preco-periodo";
+import { CONVENCAO_IPCA, fatorIpca, mesBaseIpca } from "@/lib/ipca";
+import { normalizarTexto } from "@/lib/texto-norm";
+import { radicalPalavra } from "@/lib/substancia";
+import { carregarIpca } from "@/lib/ipca-indices";
+import { marcarDuplicidades } from "@/lib/pesquisa-preco-duplicidade";
+import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
+import { situacaoColetas, type OrigemColeta, type SituacaoColeta } from "@/lib/dados-abertos/situacao";
+import { urlPncp } from "@/lib/pncp";
+import {
+  escolherLista,
+  linhasDaCompetencia,
+  listarCompetencias,
+  registrosComPrecoNaCompetencia,
+  traduzirExclusoesLegadas,
+  type LinhaCmed,
+} from "@/lib/cmed";
+import { rotuloCap, type ListaCmedUsada } from "@/lib/cmed-competencia";
+import { ALIQUOTAS_ICMS, rotuloAliquota, rotuloPmvg } from "@/lib/cmed-aliquotas";
+import {
+  ESCOLHA_PADRAO,
+  ROTULO_METODO,
+  camposDoPreco,
+  isentoAZero,
+  normalizarEscolha,
+  pmvgNaAliquota,
+  rotuloRegraTeto,
+  rotuloRegraTetoCurto,
+  type AliquotaTeto,
+  type EscolhaPreco,
+  type TetoCmed,
+  type TetosCmed,
+} from "@/lib/pesquisa-preco-metodo";
+
 export * from "@/lib/pesquisa-preco-filtros";
 export * from "@/lib/pesquisa-preco-curadoria";
+export * from "@/lib/pesquisa-preco-metodo";
+export * from "@/lib/pesquisa-preco-fontes";
+export * from "@/lib/pesquisa-preco-periodo";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pesquisa de Preços — lógica compartilhada pela rota de busca
@@ -55,8 +112,10 @@ export * from "@/lib/pesquisa-preco-curadoria";
 //
 // Metodologia (IN SEGES/ME nº 65/2021): por fonte, remoção de outliers (IQR) e
 // apuração dos três métodos do art. 6º — média, mediana e menor valor. O preço
-// de referência adotado é a mediana das medianas (BPS, SIASG, PNCP e orçamentos
-// diretos); o menor PMVG unitário sem impostos (CMED) é aplicado como teto.
+// adotado e a regra do teto saem de lib/pesquisa-preco-metodo.ts (P11/P12):
+// no padrão do painel, a mediana das medianas por fonte limitada ao menor PMVG
+// unitário sem impostos (CMED); no mapa da DLOG, o teto padrão é o PMVG 17% do
+// medicamento de referência.
 //
 // Além dos números por fonte, a pesquisa devolve dois consolidados (art. 6º,
 // "inclusive de forma consolidada"), que respondem a perguntas diferentes:
@@ -94,16 +153,8 @@ export const UNIDADE_EMBALAGEM = "EMBALAGEM";
 
 // ── Normalização (espelhada em scripts/precos_norm.py — manter em sincronia) ──
 
-/** Texto de busca: sem acentos, minúsculas, só [a-z0-9 ,-]. Mesma regra das rotas de preços. */
-export function normalizarTexto(texto: string): string {
-  return String(texto ?? "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9\s,\-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+/** Texto de busca: sem acentos, minúsculas, só [a-z0-9 ,-] (módulo puro lib/texto-norm.ts). */
+export { normalizarTexto };
 
 /**
  * Unidade de fornecimento comparável entre fontes. Idempotente.
@@ -244,11 +295,56 @@ export interface RegistroMercado {
   outlierIqr: boolean;
   /** Justificativa do descarte manual; null quando o registro foi considerado. */
   excluidoPor: string | null;
+  /** Contratação de origem (nº da compra, UASG, item, link PNCP); D3. */
+  contratacao?: ContratacaoRef | null;
+  /** Data/hora da coleta na API ou do acesso à fonte (ISO). */
+  coletadoEm?: string | null;
+  /** Preço como publicado; `preco` é o corrigido quando o IPCA está ligado (D2). */
+  precoNominal?: number;
+  /** Fator do IPCA aplicado (1 = sem correção); null/ausente = IPCA desligado. */
+  fatorIpca?: number | null;
+  /** Mês do preço na tabela de índices ("2026-03"). */
+  mesIndice?: string | null;
+  /** Registro ANVISA do produto comprado (BPS pela API). */
+  registroAnvisa?: string | null;
+  /** Cópia do mesmo registro numa fonte que prevalece (P18). */
+  duplicadoDe?: DuplicidadeRef | null;
+  /** Fonte Compras.gov.br: de qual base veio o registro (API, SIASG judicial ou base PNCP). */
+  base?: BaseCompras | null;
+  /** idCompra (17) + nº do item (5): identifica a mesma compra em bases diferentes. */
+  chaveItemCompra22?: string | null;
 }
 
 export interface FonteMercadoResultado {
   /** Filtros opcionais que esta base não possui como campo — ver FONTE_SEM_CAMPO. */
   filtrosNaoSuportados: CampoFiltro[];
+  /** Base carregada no painel, coleta das APIs de dados abertos ou preço informado. */
+  origemDados?: "BASE_PAINEL" | "API" | "INFORMADO";
+  /** Situação da coleta (fontes de dados abertos): quando e se ainda vale (P19). */
+  coleta?: { coletadoEm: string | null; valida: boolean; origemCarga: string | null } | null;
+  /**
+   * Janela do art. 5º aplicada à fonte (D1) e o que ficou de fora — para o
+   * aviso "fora do período: m (mais recente em …)".
+   */
+  periodo?: {
+    inicio: string | null;
+    fim: string;
+    meses: number | null;
+    inciso: Inciso;
+    foraDoPeriodo: number;
+    maisRecenteFora: string | null;
+    /** Intervalo de datas escolhido pelo responsável (em vez de N meses). */
+    personalizado?: boolean;
+  } | null;
+  /** Fonte Compras.gov.br: quanto veio de cada base (API, SIASG judicial, base PNCP). */
+  composicao?: Array<{
+    base: BaseCompras;
+    total: number;
+    foraDoPeriodo: number;
+    maisRecenteFora: string | null;
+    /** Filtro opcional que a base não tem: ela ficou de fora enquanto ele está ativo. */
+    semCampo: CampoFiltro[];
+  }> | null;
   total: number;
   amostra: number;
   /** Média, mediana e menor valor (art. 6º) sobre a amostra já depurada. */
@@ -282,12 +378,32 @@ export interface RegistroCmedPreco {
   produto: string;
   apresentacao: string;
   laboratorio: string | null;
+  cnpj: string | null;
+  /** EAN 1 da lista mensal (CmedPrecoVersao); só no modo `registrosCompletos`. */
+  ean: string | null;
+  classeTerapeutica: string | null;
+  /** "Novo", "Genérico", "Similar", "Biológico"… — define o medicamento de referência. */
+  tipoProduto: string | null;
+  regimePreco: string | null;
   unidadeFornecimento: string | null;
   qtEmbalagem: number | null;
-  /** PMVG sem impostos por EMBALAGEM (como consta na tabela CMED). */
+  /** PMVG sem impostos por EMBALAGEM (como consta na tabela CMED; coluna do mapa da DLOG). */
   pmvgEmbalagem: number;
-  /** PMVG sem impostos por UNIDADE de fornecimento (÷ Qt_Embal). */
+  /** PMVG da embalagem em algumas alíquotas — colunas fixas do mapa da DLOG. */
+  pmvg0: number | null;
+  pmvg12: number | null;
+  pmvg17: number | null;
+  pmvg18: number | null;
+  /** PMVG da embalagem em todas as alíquotas da lista, alinhado a ALIQUOTAS_ICMS. */
+  pmvgAliquotas: (number | null)[];
+  /** Isento de ICMS: numa alíquota sem preço, vale o PMVG a 0% (P4). */
+  isentoIcms: boolean;
+  /** PMVG da embalagem na alíquota do teto (`CmedResultado.aliquota`). */
+  pmvgAliquotaEmbalagem: number | null;
+  /** PMVG por UNIDADE de fornecimento na alíquota do teto (÷ Qt_Embal). */
   pmvgUnitario: number | null;
+  /** Na alíquota do teto, o preço veio do PMVG a 0% por isenção de ICMS. */
+  isentoAZero: boolean;
   pfEmbalagem: number | null;
   pfUnitario: number | null;
   cap: boolean;
@@ -305,16 +421,36 @@ export interface CmedResultado {
   semQtEmbalagem: number;
   /** Registros de teto desconsiderados manualmente. */
   excluidosManualmente: number;
+  /** Lista mensal usada no teto; null sem as listas mensais (PrecoCmed). */
+  lista: ListaCmedUsada | null;
+  /** Alíquota de ICMS do PMVG do teto (filtro da pesquisa; padrão 17%). Mín./máx. e unitários estão nela. */
+  aliquota: AliquotaTeto;
+  /** Registros isentos de ICMS que entraram com o PMVG a 0%. */
+  isentosAZero: number;
 }
 
 export interface Recomendacao {
-  /** Mediana das medianas por fonte — o método adotado (art. 6º, caput). */
+  /** Método e regra do teto que formaram o preço (P11/P12). */
+  escolha: EscolhaPreco;
+  /**
+   * Preço pelo método escolhido, antes do teto. No padrão do painel é a
+   * mediana das medianas por fonte (art. 6º, caput).
+   */
   precoReferencia: number | null;
-  /** Os outros dois métodos do art. 6º, para conferência no relatório. */
+  /** Os outros dois métodos do art. 6º sobre as medianas, para conferência no relatório. */
   mediaConsolidada: number | null;
   menorConsolidado: number | null;
+  /** Teto pela regra escolhida (PMVG por unidade). */
   limitePmvg: number | null;
+  /** Registro CMED que forma o teto escolhido. */
+  teto: TetoCmed | null;
+  /** Os dois tetos (menor PMVG sem impostos e PMVG do medicamento de referência). */
+  tetos: TetosCmed;
+  /** O preço do método superou o teto e o teto prevaleceu. */
+  tetoAplicado: boolean;
   precoFinal: number | null;
+  /** "Mediana das medianas", "Teto CMED — … acima do teto" — coluna Método do mapa. */
+  descricaoMetodo: string;
   metodologia: string;
   fontes: string[];
   observacoes: string[];
@@ -328,11 +464,21 @@ export interface ResultadoPesquisa {
   filtros: FiltrosOpcionais;
   resultados: {
     cmed: CmedResultado;
+    /**
+     * Compras.gov.br: a API de dados abertos, o SIASG judicial e a base PNCP
+     * do painel, numa fonte só (pedido da DLOG; `composicao` diz quanto veio
+     * de cada base). O PNCP é o link da contratação em cada registro.
+     */
+    comprasgov?: FonteMercadoResultado | null;
     bps: FonteMercadoResultado;
-    siasg: FonteMercadoResultado;
-    pncp: FonteMercadoResultado;
+    /** Itens de atas de registro de preços — preenchida quando há coleta da API. */
+    arp?: FonteMercadoResultado | null;
+    /** Preços informados pelo responsável (P13), um tipo por fonte; null quando não há. */
+    similar?: FonteMercadoResultado | null;
+    midia?: FonteMercadoResultado | null;
     /** Cotações diretas informadas pelo usuário; null quando não há nenhuma. */
     orcamentos: FonteMercadoResultado | null;
+    notaFiscal?: FonteMercadoResultado | null;
   };
   consolidado: Consolidado;
   /** Orçamentos diretos como foram informados (inclusive os fora do cálculo). */
@@ -340,6 +486,24 @@ export interface ResultadoPesquisa {
   /** Registros desconsiderados e o motivo — rastreabilidade do descarte. */
   descartes: RegistroDescartado[];
   recomendacao: Recomendacao;
+  /** Data de referência e período aplicados (D1). */
+  periodo: PeriodoPesquisa;
+  /** Atualização monetária (D2): ligada, disponível, mês-base e convenção. */
+  ipca: {
+    /** O responsável pediu a atualização (padrão: sim, P10). */
+    pedido: boolean;
+    /** Pedida E aplicada (havia índice para o mês-base). */
+    ligado: boolean;
+    /** A tabela IndiceIpca existe e tem índices. */
+    disponivel: boolean;
+    /** "AAAA-MM"; null quando a correção não foi aplicada. */
+    mesBase: string | null;
+    convencao: string;
+    /** Registros sem número-índice para o mês do preço (fator 1). */
+    semIndice: number;
+  };
+  /** Registros que saíram do conjunto único por serem a mesma compra de outra base (P18). */
+  duplicidades: number;
 }
 
 export interface ParametrosPesquisa {
@@ -351,6 +515,25 @@ export interface ParametrosPesquisa {
   exclusoes?: ExclusaoRegistro[] | unknown;
   /** Orçamentos diretos de fornecedor (art. 5º, IV). */
   orcamentos?: OrcamentoFornecedor[] | unknown;
+  /** Método do preço e regra do teto (P11/P12); o que faltar segue ESCOLHA_PADRAO. */
+  escolha?: Partial<EscolhaPreco> | null;
+  /** Data de referência e período do art. 5º (D1); ausente = hoje, 12 meses. */
+  periodo?: Partial<PeriodoPesquisa> | null;
+  /** Atualização pelo IPCA dos incisos I e II (D2); ausente = ligada (P10). */
+  corrigirIpca?: boolean;
+  /** ids de prováveis duplicatas que o responsável manteve no conjunto único (P18). */
+  duplicidadesRevertidas?: string[] | unknown;
+  /**
+   * Lista CMED consultada ("AAAA-MM"). Só a tela a envia: sem ela — e sempre
+   * nos relatórios — vale a última publicada até a data de referência.
+   */
+  competenciaCmed?: string | null;
+  /**
+   * Devolve TODOS os registros da amostra de cada fonte, e não só os
+   * REGISTROS_ANALISE mais recentes, além do EAN da CMED. É o modo do mapa
+   * XLSX: a planilha lista a amostra inteira que entrou no cálculo.
+   */
+  registrosCompletos?: boolean;
 }
 
 /** Comparação tolerante a acento/caixa, usada nos filtros feitos em memória. */
@@ -366,6 +549,12 @@ function contemTexto(valor: string | null | undefined, termo: string): boolean {
 
 interface OpcoesConsolidacao {
   fonte: FonteCurada;
+  origemDados?: FonteMercadoResultado["origemDados"];
+  coleta?: FonteMercadoResultado["coleta"];
+  periodo?: FonteMercadoResultado["periodo"];
+  composicao?: FonteMercadoResultado["composicao"];
+  /** Lista a amostra inteira (mapa XLSX), sem o recorte de REGISTROS_ANALISE. */
+  completos?: boolean;
   filtrosNaoSuportados?: CampoFiltro[];
   /** Exclusões manuais desta fonte: id do registro → justificativa. */
   excluidos?: Map<string, string>;
@@ -378,8 +567,13 @@ interface OpcoesConsolidacao {
 
 interface AnaliseFonte {
   resultado: FonteMercadoResultado;
-  /** Preços que compõem a estatística — alimentam o consolidado por registro. */
+  /** Preços que compõem a estatística da fonte. */
   precos: number[];
+  /**
+   * Os mesmos, menos as cópias de compras de outra base (P18): alimentam o
+   * consolidado por registro, em que cada compra conta uma vez.
+   */
+  precosConjunto: number[];
   descartes: RegistroDescartado[];
 }
 
@@ -401,7 +595,10 @@ function consolidar(
   const excluidos = opcoes.excluidos ?? new Map<string, string>();
 
   const marcados = registros.map((r) => ({ ...r, excluidoPor: excluidos.get(r.id) ?? null }));
-  const considerados = marcados.filter((r) => r.excluidoPor === null && r.preco > 0);
+  // A cópia de uma compra da MESMA fonte (base PNCP do painel × API, ambas
+  // Compras.gov.br) não conta duas vezes nem na estatística da própria fonte.
+  const copiaNaFonte = (r: { duplicadoDe?: DuplicidadeRef | null }) => r.duplicadoDe?.fonte === opcoes.fonte;
+  const considerados = marcados.filter((r) => r.excluidoPor === null && r.preco > 0 && !copiaNaFonte(r));
 
   const descartes: RegistroDescartado[] = marcados
     .filter((r) => r.excluidoPor !== null)
@@ -425,19 +622,28 @@ function consolidar(
     outlierIqr:
       r.excluidoPor === null &&
       r.preco > 0 &&
+      !copiaNaFonte(r) &&
       limites !== null &&
       (r.preco < limites.lo || r.preco > limites.hi),
   }));
 
+  const precosConjunto = comOutlier
+    .filter((r) => r.excluidoPor === null && r.preco > 0 && !r.outlierIqr && !r.duplicadoDe)
+    .map((r) => r.preco);
+
   // A curadoria precisa ver todos os destoantes, mesmo os que caíram fora dos
   // REGISTROS_ANALISE mais recentes — são exatamente os candidatos a exclusão.
-  const recentes = comOutlier.slice(0, REGISTROS_ANALISE);
+  const recentes = opcoes.completos ? comOutlier : comOutlier.slice(0, REGISTROS_ANALISE);
   const jaListados = new Set(recentes.map((r) => r.id));
   const destoantes = comOutlier.filter((r) => r.outlierIqr && !jaListados.has(r.id));
 
   return {
     resultado: {
       filtrosNaoSuportados: opcoes.filtrosNaoSuportados ?? [],
+      ...(opcoes.origemDados ? { origemDados: opcoes.origemDados } : {}),
+      ...(opcoes.coleta !== undefined ? { coleta: opcoes.coleta } : {}),
+      ...(opcoes.periodo !== undefined ? { periodo: opcoes.periodo } : {}),
+      ...(opcoes.composicao ? { composicao: opcoes.composicao } : {}),
       total,
       amostra,
       estatisticas: calcularEstatisticas(dentro),
@@ -446,6 +652,7 @@ function consolidar(
       registros: [...recentes, ...destoantes],
     },
     precos: dentro,
+    precosConjunto,
     descartes,
   };
 }
@@ -585,37 +792,55 @@ export async function sugerirMateriais(q: string): Promise<Sugestoes> {
 
   // Descrição: todas as palavras precisam ocorrer, em qualquer ordem — no
   // catálogo "insulina glargina" está como "INSULINA, TIPO: GLARGINA, …".
+  // Palavra de 6 letras ou mais vai pelo radical (lib/substancia.ts): quem
+  // digita "eltrombopague" (como o Redmine e a CMED escrevem) acha o catálogo,
+  // que escreve "ELTROMBOPAG OLAMINA".
   const palavras = normalizarTexto(termo)
     .split(" ")
     .map((p) => p.replace(/^[,\-]+|[,\-]+$/g, ""))
-    .filter((p) => p.length >= 2);
+    .filter((p) => p.length >= 2)
+    .map((p) => (/^[a-z]+$/.test(p) ? radicalPalavra(p).toLowerCase() : p));
   if (palavras.length === 0) return { itens: [], registros: [] };
 
-  const itensPromise = db.catmatItem.findMany({
+  const itens = await db.catmatItem.findMany({
     where: { AND: palavras.map((p) => ({ descricaoNorm: { contains: p } })) },
     orderBy: [{ codigoClasse: "asc" }, { descricaoItem: "asc" }],
     take: 30,
   });
-  const registrosPromise = db.cmedRegistro.findMany({
+  // Registros ANVISA: pela marca ou substância (com e sem acento, já que a
+  // CMED acentua e quem digita nem sempre) e pelos CATMATs achados acima.
+  const variantes = (p: string) => Array.from(new Set([p, p.toUpperCase()]));
+  const registros = await db.cmedRegistro.findMany({
     where: {
       OR: [
-        { produto: { contains: termo, mode: "insensitive" } },
-        { substancia: { contains: termo, mode: "insensitive" } },
+        {
+          AND: palavras.map((p) => ({
+            OR: variantes(p).flatMap((v) => [
+              { produto: { contains: v, mode: "insensitive" as const } },
+              { substancia: { contains: v, mode: "insensitive" as const } },
+            ]),
+          })),
+        },
+        ...(itens.length ? [{ catmat: { in: itens.map((i) => i.codigoItem) } }] : []),
       ],
     },
     orderBy: [{ substancia: "asc" }, { produto: "asc" }],
     take: 10,
   });
-  const [itens, registros] = await Promise.all([itensPromise, registrosPromise]);
   return { itens: itens.map(sugestaoItem), registros: registros.map(sugestaoRegistro) };
 }
 
 // ── Unidades de fornecimento disponíveis ─────────────────────────────────────
 
+/** Fontes cujas unidades vêm brutas da base (as de dados abertos já gravam a normalizada). */
+type FonteComUnidadeBruta = "bps" | "siasg" | "pncp";
+
 interface MapaUnidades {
   opcoes: UnidadeOpcao[];
   /** unidade normalizada → valores brutos por fonte (filtro por igualdade no banco). */
-  brutas: Record<FonteMercado, Map<string, string[]>>;
+  brutas: Record<FonteComUnidadeBruta, Map<string, string[]>>;
+  /** O BPS desta pesquisa vem da coleta da API (P21), e não de PrecoBps. */
+  bpsDaApi: boolean;
 }
 
 interface GrupoUnidade {
@@ -656,19 +881,39 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
   };
   const registrosComPreco = async (): Promise<string[]> => {
     if (!registrosIds.length) return [];
+    // A contagem "CMED" das unidades é a da lista vigente hoje — a do relatório.
+    const lista = escolherLista(await listarCompetencias(), hojeBrasilia(), null);
+    if (lista) return registrosComPrecoNaCompetencia(registrosIds, lista.competencia);
     const rows = await db.precoCmed.findMany({
       where: { registro: { in: registrosIds } },
       select: { registro: true },
     });
     return rows.map((r) => r.registro).filter((r): r is string => r != null);
   };
+  // Dados abertos (Compras.gov.br, BPS pela API, atas): unidade já normalizada.
+  const gruposDadosAbertos = async (): Promise<Array<{ origem: string; unidadeNorm: string | null; n: number }>> => {
+    if (!item.catmat) return [];
+    try {
+      const grupos = await db.dadosAbertosPreco.groupBy({
+        by: ["origem", "unidadeNorm"],
+        where: { codigoCatmat: item.catmat },
+        _count: { _all: true },
+      });
+      return grupos.map((g) => ({ origem: g.origem, unidadeNorm: g.unidadeNorm, n: g._count._all }));
+    } catch {
+      // Tabela ainda não criada (scripts/create_dadosabertos_tables.py).
+      return [];
+    }
+  };
 
-  const [bps, siasg, pncp, cmedComPreco] = await Promise.all([
+  const [bps, siasg, pncp, cmedComPreco, dadosAbertos] = await Promise.all([
     gruposBps(),
     gruposSiasg(),
     gruposPncp(),
     registrosComPreco(),
+    gruposDadosAbertos(),
   ]);
+  const bpsDaApi = dadosAbertos.some((g) => g.origem === "BPS");
 
   const brutas: MapaUnidades["brutas"] = {
     bps: new Map(),
@@ -682,14 +927,14 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     const atual = opcoes.get(unidadeNorm) ?? {
       unidade: unidadeNorm,
       total: 0,
-      fontes: { cmed: 0, bps: 0, siasg: 0, pncp: 0 },
+      fontes: { cmed: 0, comprasgov: 0, bps: 0, siasg: 0, pncp: 0, arp: 0 },
     };
     atual.total += n;
     atual.fontes[fonte] += n;
     opcoes.set(unidadeNorm, atual);
   };
 
-  const registrar = (fonte: FonteMercado, grupos: GrupoUnidade[]) => {
+  const registrar = (fonte: FonteComUnidadeBruta, grupos: GrupoUnidade[]) => {
     for (const g of grupos) {
       if (g.unidade == null) continue;
       const norm = normalizarUnidade(g.unidade);
@@ -701,9 +946,15 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
     }
   };
 
-  registrar("bps", bps);
+  // P21: com coleta do BPS pela API, as unidades do BPS saem dela.
+  if (!bpsDaApi) registrar("bps", bps);
   registrar("siasg", siasg);
   registrar("pncp", pncp);
+  const fonteDaOrigem: Record<string, FonteMercado> = { COMPRASGOV: "comprasgov", BPS: "bps", ARP_ITEM: "arp" };
+  for (const g of dadosAbertos) {
+    const fonte = fonteDaOrigem[g.origem];
+    if (fonte && g.unidadeNorm) somar(fonte, g.unidadeNorm, g.n);
+  }
 
   const comPreco = new Set(cmedComPreco);
   for (const r of item.registros) {
@@ -715,6 +966,7 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
       (a, b) => b.total - a.total || a.unidade.localeCompare(b.unidade, "pt-BR")
     ),
     brutas,
+    bpsDaApi,
   };
 }
 
@@ -764,9 +1016,67 @@ interface LinhaPncp {
   orgao: string | null;
   fornecedor: string | null;
   cnpjFornecedor: string | null;
+  numeroControlePncp: string | null;
 }
 
 const toISO = (d: Date) => d.toISOString();
+
+/** Linha de PrecoCmed (sem listas mensais) no formato das listas mensais. */
+function linhaDePrecoCmed(r: PrecoCmed): LinhaCmed {
+  return {
+    id: r.id,
+    registro: r.registro,
+    codigoGgrem: r.codigoGgrem,
+    ean: null,
+    substancia: r.substancia,
+    produto: r.produto,
+    apresentacao: r.apresentacao,
+    laboratorio: r.laboratorio,
+    cnpj: r.cnpj,
+    classeTerap: r.classeTerap,
+    tipoProduto: r.tipoProduto,
+    regimePreco: r.regimePreco,
+    pmvgSemImpostos: r.pmvgSemImpostos,
+    pmvg0: r.pmvg0,
+    pmvg12: r.pmvg12,
+    pmvg17: r.pmvg17,
+    pmvg18: r.pmvg18,
+    pf0: r.pf0,
+    cap: r.cap,
+    pmvgAliquotas: ALIQUOTAS_ICMS.map((c) =>
+      c === "SEM_IMPOSTOS" ? r.pmvgSemImpostos : c === "0" ? r.pmvg0 : c === "12" ? r.pmvg12 : c === "17" ? r.pmvg17 : c === "18" ? r.pmvg18 : null
+    ),
+    isentoIcms: r.confaz87 || r.icms0,
+  };
+}
+
+/**
+ * EAN 1 de cada apresentação (código GGREM), da versão mais recente na lista
+ * mensal da CMED. A busca vai pelo registro (indexado) e o GGREM separa as
+ * apresentações. Sem a tabela (ambiente sem a carga mensal), segue sem EAN.
+ */
+async function eansPorApresentacao(
+  linhas: Array<{ registro: string | null; codigoGgrem: string | null }>
+): Promise<Map<string, string>> {
+  const registros = Array.from(new Set(linhas.map((l) => l.registro).filter((r): r is string => !!r)));
+  const ggrems = new Set(linhas.map((l) => l.codigoGgrem).filter((g): g is string => !!g));
+  const mapa = new Map<string, string>();
+  if (!registros.length || !ggrems.size) return mapa;
+  try {
+    const versoes = await db.cmedPrecoVersao.findMany({
+      where: { registro: { in: registros } },
+      orderBy: { id: "desc" },
+      select: { codigoGgrem: true, ean: true },
+    });
+    for (const v of versoes) {
+      if (!v.codigoGgrem || !ggrems.has(v.codigoGgrem) || mapa.has(v.codigoGgrem)) continue;
+      if (v.ean.length) mapa.set(v.codigoGgrem, v.ean[0]);
+    }
+  } catch (error) {
+    console.warn("[pesquisa-preco] EAN indisponível:", (error as Error).message);
+  }
+  return mapa;
+}
 
 export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoPesquisa | null> {
   const item = await resolverItem(p.codigo);
@@ -774,7 +1084,23 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
 
   const unidade = normalizarUnidade(p.unidade) || UNIDADE_EMBALAGEM;
   const uf = p.uf ? p.uf.toUpperCase() : null;
-  const { brutas } = await mapearUnidades(item);
+  const escolha = normalizarEscolha(p.escolha, ESCOLHA_PADRAO);
+  const completos = p.registrosCompletos === true;
+  // Período do art. 5º (D1). As rotas recusam ampliação sem justificativa; se
+  // ainda assim chegar aqui, vale o padrão de 12 meses — nunca ampliar calado.
+  let periodo = normalizarPeriodo(p.periodo);
+  const periodoInvalido = validarPeriodo(periodo);
+  if (periodoInvalido) periodo = { ...periodo, mesesMercado: 12, inicio: null, justificativaAmpliacao: null };
+  const janela = (fonte: FonteMercadoChave): JanelaFonte => janelaDaFonte(fonte, periodo);
+  const corrigirIpca = p.corrigirIpca !== false;
+  const [{ brutas, bpsDaApi }, coletas, competenciasCmed] = await Promise.all([
+    mapearUnidades(item),
+    item.catmat ? situacaoColetas(item.catmat) : Promise.resolve(null),
+    listarCompetencias(),
+  ]);
+  // Lista CMED do teto: a consultada na tela, se houver; senão — e sempre nos
+  // relatórios — a última publicada até a data de referência.
+  const listaCmed = escolherLista(competenciasCmed, periodo.dataReferencia, p.competenciaCmed);
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
 
   const brutasBps = brutas.bps.get(unidade) ?? [];
@@ -799,8 +1125,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // da coluna muda (cnpjInstituicao no BPS, cnpjOrgao no PNCP).
   const cnpjVariantes = variantesCnpj(filtros.cnpjComprador);
 
+  // P21: com coleta do BPS pela API, a fonte BPS lê DadosAbertosPreco; sem
+  // coleta, a base carregada no painel (PrecoBps), com aviso.
   const whereBps: Prisma.PrecoBpsWhereInput | null =
-    variantes && brutasBps.length && !semCampo("bps").length
+    !bpsDaApi && variantes && brutasBps.length && !semCampo("bps").length
       ? {
           codigoCatmat: { in: variantes.bps },
           unidade: { in: brutasBps },
@@ -842,10 +1170,20 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     .filter((r) => r.unidadeNorm === unidade)
     .map((r) => r.registro);
 
+  // Janela do art. 5º sobre a data de cada base (D1): o que fica de fora é
+  // contado, para o aviso "fora do período: m (mais recente em …)".
+  const dataInicio = (j: JanelaFonte) => (j.inicio ? new Date(`${j.inicio}T00:00:00Z`) : null);
+  const dataFim = (j: JanelaFonte) => new Date(`${j.fim}T23:59:59.999Z`);
+  const naJanela = (j: JanelaFonte) => ({ ...(dataInicio(j) ? { gte: dataInicio(j) as Date } : {}), lte: dataFim(j) });
+  const foraJanela = (j: JanelaFonte) => (dataInicio(j) ? { lt: dataInicio(j) as Date } : null);
+  const jBps = janela("bps");
+  const jSiasg = janela("siasg");
+  const jPncp = janela("pncp");
+
   const buscarBps = async (): Promise<LinhaBps[]> => {
     if (!whereBps) return [];
     const rows = await db.precoBps.findMany({
-      where: whereBps,
+      where: { AND: [whereBps, { data: naJanela(jBps) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -868,7 +1206,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const buscarSiasg = async (): Promise<LinhaSiasg[]> => {
     if (!whereSiasg) return [];
     const rows = await db.precoSiasg.findMany({
-      where: whereSiasg,
+      where: { AND: [whereSiasg, { data: naJanela(jSiasg) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -893,7 +1231,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   const buscarPncp = async (): Promise<LinhaPncp[]> => {
     if (!wherePncp) return [];
     const rows = await db.precoPncp.findMany({
-      where: wherePncp,
+      where: { AND: [wherePncp, { data: naJanela(jPncp) }] },
       orderBy: { data: "desc" },
       take: AMOSTRA,
       select: {
@@ -908,35 +1246,70 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
         orgao: true,
         fornecedor: true,
         cnpjFornecedor: true,
+        numeroControlePncp: true,
       },
     });
     return rows;
   };
-  const buscarCmed = async (): Promise<PrecoCmed[]> => {
+  const buscarCmed = async (): Promise<LinhaCmed[]> => {
     if (!registrosDaUnidade.length) return [];
+    if (listaCmed) return linhasDaCompetencia(registrosDaUnidade, listaCmed.competencia);
     const rows = await db.precoCmed.findMany({
       where: { registro: { in: registrosDaUnidade } },
       orderBy: [{ substancia: "asc" }, { produto: "asc" }, { apresentacao: "asc" }],
     });
-    return rows;
+    return rows.map(linhaDePrecoCmed);
   };
-  const contarBps = async (): Promise<number> => {
-    if (!whereBps) return 0;
-    const n = await db.precoBps.count({ where: whereBps });
-    return n;
+  type Contagem = { total: number; fora: number; maisRecenteFora: string | null };
+  const SEM_CONTAGEM: Contagem = { total: 0, fora: 0, maisRecenteFora: null };
+  const contarBps = async (): Promise<Contagem> => {
+    if (!whereBps) return SEM_CONTAGEM;
+    const fora = foraJanela(jBps);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoBps.count({ where: { AND: [whereBps, { data: naJanela(jBps) }] } }),
+      fora ? db.precoBps.count({ where: { AND: [whereBps, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoBps.findFirst({ where: { AND: [whereBps, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
-  const contarSiasg = async (): Promise<number> => {
-    if (!whereSiasg) return 0;
-    const n = await db.precoSiasg.count({ where: whereSiasg });
-    return n;
+  const contarSiasg = async (): Promise<Contagem> => {
+    if (!whereSiasg) return SEM_CONTAGEM;
+    const fora = foraJanela(jSiasg);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoSiasg.count({ where: { AND: [whereSiasg, { data: naJanela(jSiasg) }] } }),
+      fora ? db.precoSiasg.count({ where: { AND: [whereSiasg, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoSiasg.findFirst({ where: { AND: [whereSiasg, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
-  const contarPncp = async (): Promise<number> => {
-    if (!wherePncp) return 0;
-    const n = await db.precoPncp.count({ where: wherePncp });
-    return n;
+  const contarPncp = async (): Promise<Contagem> => {
+    if (!wherePncp) return SEM_CONTAGEM;
+    const fora = foraJanela(jPncp);
+    const [total, nFora, ultima] = await Promise.all([
+      db.precoPncp.count({ where: { AND: [wherePncp, { data: naJanela(jPncp) }] } }),
+      fora ? db.precoPncp.count({ where: { AND: [wherePncp, { data: fora }] } }) : Promise.resolve(0),
+      fora ? db.precoPncp.findFirst({ where: { AND: [wherePncp, { data: fora }] }, orderBy: { data: "desc" }, select: { data: true } }) : Promise.resolve(null),
+    ]);
+    return { total, fora: nFora, maisRecenteFora: ultima ? toISO(ultima.data) : null };
   };
 
-  const [bpsRows, siasgRows, pncpRows, cmedRows, totalBps, totalSiasg, totalPncp] =
+  // Fontes de dados abertos (Compras.gov.br, BPS pela API, atas), na janela da fonte.
+  const consultaDA = (origem: OrigemColeta, fonte: FonteMercadoChave & FonteMercado): Promise<ResultadoDadosAbertos | null> => {
+    if (!item.catmat || semCampo(fonte).length) return Promise.resolve(null);
+    const j = janela(fonte);
+    return consultarDadosAbertos({
+      origem,
+      catmat: item.catmat,
+      unidade,
+      uf,
+      filtros,
+      amostra: AMOSTRA,
+      inicio: dataInicio(j),
+      fim: dataFim(j),
+    });
+  };
+
+  const [bpsRows, siasgRows, pncpRows, cmedRows, contBps, contSiasg, contPncp, daComprasGov, daBps, daArp, tabelaIpca] =
     await Promise.all([
       buscarBps(),
       buscarSiasg(),
@@ -945,114 +1318,330 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       contarBps(),
       contarSiasg(),
       contarPncp(),
+      consultaDA("COMPRASGOV", "comprasgov"),
+      bpsDaApi ? consultaDA("BPS", "bps") : Promise.resolve(null),
+      consultaDA("ARP_ITEM", "arp"),
+      corrigirIpca ? carregarIpca() : Promise.resolve(null),
     ]);
+  const coletaDe = (origem: OrigemColeta): FonteMercadoResultado["coleta"] => {
+    const s: SituacaoColeta | undefined = coletas?.porOrigem[origem];
+    return s ? { coletadoEm: s.coletadoEm, valida: s.valida, origemCarga: s.origemCarga } : null;
+  };
 
-  const analiseBps = consolidar(
-    totalBps,
-    bpsRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricao,
-      unidade: r.unidade,
-      preco: r.preco,
-      qtd: r.qtd,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.instituicao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: null,
-      fabricante: r.fabricante,
-    })),
-    bpsRows.length,
-    { fonte: "bps", filtrosNaoSuportados: semCampo("bps"), excluidos: excluidosPorFonte.get("bps") }
-  );
-  const analiseSiasg = consolidar(
-    totalSiasg,
-    siasgRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricao,
-      unidade: r.unidade,
-      preco: r.preco,
-      qtd: r.qtd,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.orgao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: r.marca,
-      fabricante: r.fabricante,
-      esfera: r.esfera,
-    })),
-    siasgRows.length,
-    {
-      fonte: "siasg",
-      filtrosNaoSuportados: semCampo("siasg"),
-      excluidos: excluidosPorFonte.get("siasg"),
-    }
-  );
-  const analisePncp = consolidar(
-    totalPncp,
-    pncpRows.map((r) => ({
-      id: r.id,
-      descricao: r.descricaoResumida,
-      unidade: r.unidade,
-      preco: r.valorUnitResultado,
-      qtd: r.quantidade,
-      data: toISO(r.data),
-      uf: r.uf,
-      modalidade: r.modalidade,
-      orgao: r.orgao,
-      fornecedor: r.fornecedor,
-      cnpjFornecedor: r.cnpjFornecedor,
-      marca: null,
-      fabricante: null,
-    })),
-    pncpRows.length,
-    {
-      fonte: "pncp",
-      filtrosNaoSuportados: semCampo("pncp"),
-      excluidos: excluidosPorFonte.get("pncp"),
-    }
-  );
+  // ── 1. Registros de cada fonte, já na janela do art. 5º ──
+  interface FonteBruta {
+    fonte: FonteMercadoChave;
+    total: number;
+    registros: RegistroBruto[];
+    opcoes: OpcoesConsolidacao;
+  }
+  const periodoDe = (fonte: FonteMercadoChave, fora: number, maisRecenteFora: string | null): FonteMercadoResultado["periodo"] => {
+    const j = janela(fonte);
+    return {
+      inicio: j.inicio,
+      fim: j.fim,
+      meses: j.meses,
+      inciso: j.inciso,
+      foraDoPeriodo: fora,
+      maisRecenteFora,
+      ...(j.personalizado ? { personalizado: true } : {}),
+    };
+  };
+  const daFonte = (
+    fonte: FonteMercadoChave & FonteMercado,
+    origem: OrigemColeta,
+    r: ResultadoDadosAbertos | null
+  ): FonteBruta => ({
+    fonte,
+    total: r?.total ?? 0,
+    registros: r?.registros ?? [],
+    opcoes: {
+      fonte,
+      completos,
+      origemDados: "API",
+      coleta: coletaDe(origem),
+      periodo: periodoDe(fonte, r?.foraDoPeriodo ?? 0, r?.maisRecenteFora ?? null),
+      filtrosNaoSuportados: semCampo(fonte),
+      excluidos: excluidosPorFonte.get(fonte),
+    },
+  });
+  const local = (fonte: "bps" | "siasg" | "pncp", c: Contagem, registros: RegistroBruto[]): FonteBruta => ({
+    fonte,
+    total: c.total,
+    registros,
+    opcoes: {
+      fonte,
+      completos,
+      origemDados: "BASE_PAINEL",
+      periodo: periodoDe(fonte, c.fora, c.maisRecenteFora),
+      filtrosNaoSuportados: semCampo(fonte),
+      excluidos: excluidosPorFonte.get(fonte),
+    },
+  });
 
-  // Orçamentos diretos de fornecedor (art. 5º, IV) — informados pelo usuário,
-  // não consultados em base. Entram como uma fonte a mais, sem IQR.
-  // "Somente registro" é tratado como exclusão com motivo declarado: o
-  // orçamento aparece no relatório, fora do cálculo, como o usuário pediu.
-  const foraDoCalculo = new Map<string, string>(excluidosPorFonte.get("orcamentos"));
-  for (const o of orcamentos) {
-    if (!o.considerarNoCalculo && !foraDoCalculo.has(o.id)) {
-      foraDoCalculo.set(o.id, "Marcado como somente registro pelo responsável pela pesquisa");
+  const fontesBrutas: FonteBruta[] = [
+    daFonte("comprasgov", "COMPRASGOV", daComprasGov),
+    bpsDaApi
+      ? daFonte("bps", "BPS", daBps)
+      : local(
+          "bps",
+          contBps,
+          bpsRows.map((r) => ({
+            id: r.id,
+            descricao: r.descricao,
+            unidade: r.unidade,
+            preco: r.preco,
+            qtd: r.qtd,
+            data: toISO(r.data),
+            uf: r.uf,
+            modalidade: r.modalidade,
+            orgao: r.instituicao,
+            fornecedor: r.fornecedor,
+            cnpjFornecedor: r.cnpjFornecedor,
+            marca: null,
+            fabricante: r.fabricante,
+          }))
+        ),
+    local(
+      "siasg",
+      contSiasg,
+      siasgRows.map((r) => ({
+        id: r.id,
+        descricao: r.descricao,
+        unidade: r.unidade,
+        preco: r.preco,
+        qtd: r.qtd,
+        data: toISO(r.data),
+        uf: r.uf,
+        modalidade: r.modalidade,
+        orgao: r.orgao,
+        fornecedor: r.fornecedor,
+        cnpjFornecedor: r.cnpjFornecedor,
+        marca: r.marca,
+        fabricante: r.fabricante,
+        esfera: r.esfera,
+      }))
+    ),
+    local(
+      "pncp",
+      contPncp,
+      pncpRows.map((r) => ({
+        id: r.id,
+        descricao: r.descricaoResumida,
+        unidade: r.unidade,
+        preco: r.valorUnitResultado,
+        qtd: r.quantidade,
+        data: toISO(r.data),
+        uf: r.uf,
+        modalidade: r.modalidade,
+        orgao: r.orgao,
+        fornecedor: r.fornecedor,
+        cnpjFornecedor: r.cnpjFornecedor,
+        marca: null,
+        fabricante: null,
+        // A base carregada tem a coluna, mas hoje vazia (diagnóstico de out/2026).
+        contratacao: r.numeroControlePncp
+          ? {
+              tipo: r.modalidade,
+              numero: null,
+              uasg: null,
+              nomeUasg: null,
+              numeroItem: null,
+              processo: null,
+              criterioJulgamento: null,
+              situacao: null,
+              numeroControlePncp: r.numeroControlePncp,
+              numeroControlePncpAta: null,
+              url: urlPncp(r.numeroControlePncp),
+              referencia: null,
+              indisponivel: "não disponível na base PNCP do painel",
+            }
+          : null,
+      }))
+    ),
+    daFonte("arp", "ARP_ITEM", daArp),
+  ];
+
+  // Preços informados pelo responsável (P13): um tipo por fonte, com a janela
+  // do seu inciso. "Somente registro" e fora do período viram exclusão com
+  // motivo declarado: o preço continua no relatório, fora do cálculo.
+  for (const tipo of ORDEM_TIPOS_INFORMADOS) {
+    const doTipo = orcamentos.filter((o) => (o.tipo ?? "IV") === tipo);
+    if (!doTipo.length) continue;
+    const { fonte, rotulo } = TIPOS_PRECO_INFORMADO[tipo];
+    const fonteM = fonte as FonteMercadoChave;
+    const j = janela(fonteM);
+    const motivos = new Map<string, string>(excluidosPorFonte.get(fonte));
+    let fora = 0;
+    let maisRecenteFora: string | null = null;
+    for (const o of doTipo) {
+      const dia = o.dataOrcamento.slice(0, 10);
+      const foraDaJanela = (j.inicio !== null && dia < j.inicio) || dia > j.fim;
+      if (foraDaJanela) {
+        fora += 1;
+        if (!maisRecenteFora || o.dataOrcamento > maisRecenteFora) maisRecenteFora = o.dataOrcamento;
+      }
+      if (motivos.has(o.id)) continue;
+      if (!o.considerarNoCalculo) {
+        motivos.set(o.id, "Marcado como somente registro pelo responsável pela pesquisa");
+      } else if (foraDaJanela && !o.justificativaForaPeriodo) {
+        motivos.set(o.id, `Fora do período do inciso ${j.inciso} do art. 5º (${j.meses} meses antes da data de referência)`);
+      }
+    }
+    fontesBrutas.push({
+      fonte: fonteM,
+      total: doTipo.length,
+      registros: doTipo.map((o) => ({
+        id: o.id,
+        descricao: [o.marca, o.fabricante].filter(Boolean).join(" — ") || o.fornecedor,
+        unidade,
+        preco: o.valorUnitario,
+        qtd: null,
+        data: o.dataOrcamento,
+        uf: null,
+        modalidade: rotulo,
+        orgao: null,
+        fornecedor: o.fornecedor,
+        cnpjFornecedor: o.cnpj,
+        marca: o.marca,
+        fabricante: o.fabricante,
+        coletadoEm: o.acessadoEm ?? o.dataOrcamento,
+        contratacao: {
+          tipo: rotulo,
+          numero: o.documento,
+          uasg: null,
+          nomeUasg: null,
+          numeroItem: null,
+          processo: null,
+          criterioJulgamento: null,
+          situacao: null,
+          numeroControlePncp: null,
+          numeroControlePncpAta: null,
+          url: o.url,
+          referencia:
+            [o.documento, o.chaveNfe ? `chave NF-e ${o.chaveNfe}` : null, o.observacao].filter(Boolean).join(" — ") ||
+            "preço informado pelo responsável",
+          indisponivel: null,
+        },
+      })),
+      opcoes: {
+        fonte,
+        completos,
+        origemDados: "INFORMADO",
+        periodo: { inicio: j.inicio, fim: j.fim, meses: j.meses, inciso: j.inciso, foraDoPeriodo: fora, maisRecenteFora },
+        semIqr: true,
+        excluidos: motivos,
+      },
+    });
+  }
+
+  // ── 2. IPCA (D2): só os incisos I e II; o nominal fica guardado ao lado ──
+  const indicesIpca = tabelaIpca?.disponivel ? tabelaIpca.indices : null;
+  const mesBase = indicesIpca ? mesBaseIpca(periodo.dataReferencia, indicesIpca) : null;
+  let semIndice = 0;
+  for (const f of fontesBrutas) {
+    const corrige = mesBase !== null && indicesIpca !== null && corrigidoPeloIpca(f.fonte);
+    for (const r of f.registros) {
+      r.precoNominal = r.preco;
+      r.mesIndice = r.data.slice(0, 7);
+      if (!corrige) {
+        r.fatorIpca = null;
+        continue;
+      }
+      const fator = fatorIpca(r.mesIndice, mesBase as string, indicesIpca as Map<string, number>);
+      if (fator.semIndice) semIndice += 1;
+      r.fatorIpca = fator.fator;
+      r.preco = r.preco * fator.fator;
     }
   }
-  const analiseOrcamentos = orcamentos.length
-    ? consolidar(
-        orcamentos.length,
-        orcamentos.map((o) => ({
-          id: o.id,
-          descricao: [o.marca, o.fabricante].filter(Boolean).join(" — ") || o.fornecedor,
-          unidade,
-          preco: o.valorUnitario,
-          qtd: null,
-          data: o.dataOrcamento,
-          uf: null,
-          modalidade: "Orçamento direto",
-          orgao: null,
-          fornecedor: o.fornecedor,
-          cnpjFornecedor: o.cnpj,
-          marca: o.marca,
-          fabricante: o.fabricante,
-        })),
-        orcamentos.length,
-        { fonte: "orcamentos", semIqr: true, excluidos: foraDoCalculo }
-      )
-    : null;
 
-  const bps = analiseBps.resultado;
-  const siasg = analiseSiasg.resultado;
-  const pncp = analisePncp.resultado;
+  // ── 3. A mesma compra em mais de uma base (P18) ──
+  const revertidas = new Set(
+    Array.isArray(p.duplicidadesRevertidas) ? p.duplicidadesRevertidas.map((x) => String(x)) : []
+  );
+  const marcasDuplicidade = marcarDuplicidades(
+    fontesBrutas
+      .filter((f) => !INFO_FONTE[f.fonte].informado)
+      .flatMap((f) =>
+        f.registros.map((r) => ({
+          id: r.id,
+          fonte: f.fonte,
+          chaveItemCompra22: r.chaveItemCompra22 ?? null,
+          cnpjFornecedor: r.cnpjFornecedor,
+          preco: r.precoNominal ?? r.preco,
+          uf: r.uf,
+          data: r.data,
+          qtd: r.qtd,
+        }))
+      ),
+    revertidas
+  );
+  for (const f of fontesBrutas) {
+    for (const r of f.registros) r.duplicadoDe = marcasDuplicidade.get(r.id) ?? null;
+  }
+
+  // ── 3b. SIASG judicial e a base PNCP do painel entram na fonte Compras.gov.br ──
+  // Uma fonte, três bases (pedido da DLOG). A deduplicação acima já rodou com
+  // as bases separadas (a regra da base PNCP × API precisa disso). Cada
+  // registro guarda a sua base; a fonte guarda a composição.
+  {
+    const partes = fontesBrutas.filter((f) => f.fonte === "comprasgov" || f.fonte === "siasg" || f.fonte === "pncp");
+    const destino = partes.find((f) => f.fonte === "comprasgov");
+    if (destino) {
+      const composicao = partes.map((f) => ({
+        base: BASE_DA_CHAVE[f.fonte as "comprasgov" | "siasg" | "pncp"],
+        total: f.total,
+        foraDoPeriodo: f.opcoes.periodo?.foraDoPeriodo ?? 0,
+        maisRecenteFora: f.opcoes.periodo?.maisRecenteFora ?? null,
+        semCampo: semCampo(f.fonte as FonteMercado),
+      }));
+      const registros = partes.flatMap((f) =>
+        f.registros.map((r) => ({ ...r, base: BASE_DA_CHAVE[f.fonte as "comprasgov" | "siasg" | "pncp"] }))
+      );
+      // Mais recentes primeiro, como cada base já vinha (a amostra exibida corta pelos mais recentes).
+      registros.sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+      const excluidos = new Map<string, string>();
+      for (const f of partes) for (const [id, motivo] of f.opcoes.excluidos ?? []) excluidos.set(id, motivo);
+      const maisRecente = composicao.map((c) => c.maisRecenteFora).filter((d): d is string => !!d).sort().at(-1) ?? null;
+      destino.registros = registros;
+      destino.total = composicao.reduce((soma, c) => soma + c.total, 0);
+      destino.opcoes = {
+        ...destino.opcoes,
+        excluidos,
+        // A fonte só fica de fora de um filtro quando NENHUMA das bases o tem.
+        filtrosNaoSuportados: composicao.reduce<CampoFiltro[]>(
+          (comum, c, i) => (i === 0 ? c.semCampo : comum.filter((x) => c.semCampo.includes(x))),
+          []
+        ),
+        periodo: destino.opcoes.periodo
+          ? {
+              ...destino.opcoes.periodo,
+              foraDoPeriodo: composicao.reduce((soma, c) => soma + c.foraDoPeriodo, 0),
+              maisRecenteFora: maisRecente,
+            }
+          : destino.opcoes.periodo,
+        composicao,
+      };
+      for (let i = fontesBrutas.length - 1; i >= 0; i--) {
+        if (fontesBrutas[i].fonte === "siasg" || fontesBrutas[i].fonte === "pncp") fontesBrutas.splice(i, 1);
+      }
+    }
+  }
+
+  // ── 4. Estatística por fonte ──
+  const analisePorFonte = new Map<FonteMercadoChave, AnaliseFonte>(
+    fontesBrutas.map((f) => [f.fonte, consolidar(f.total, f.registros, f.registros.length, f.opcoes)])
+  );
+  const resultadoDe = (fonte: FonteMercadoChave) => analisePorFonte.get(fonte)?.resultado ?? null;
+  const bps = resultadoDe("bps") as FonteMercadoResultado;
+  const comprasgov = resultadoDe("comprasgov") as FonteMercadoResultado;
+  const arp = resultadoDe("arp") as FonteMercadoResultado;
+
+  // EAN só no modo do mapa: vem da lista mensal (CmedPrecoVersao), uma consulta
+  // a mais que a tela não precisa.
+  // (As listas mensais já trazem o EAN em cada linha.)
+  const eans = completos && !listaCmed ? await eansPorApresentacao(cmedRows) : new Map<string, string>();
+  if (listaCmed) await traduzirExclusoesLegadas(excluidosPorFonte.get("cmed"));
 
   // CMED: preço por embalagem → por unidade de fornecimento (÷ Qt_Embal).
   const cmedTodos: RegistroCmedPreco[] = cmedRows.map((r) => {
@@ -1064,6 +1653,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
           ? meta.qtEmbalagem
           : null;
     const porUnidade = (v: number | null) => (v != null && qt ? v / qt : null);
+    const pmvgs = { pmvgAliquotas: r.pmvgAliquotas, isentoIcms: r.isentoIcms, pmvgEmbalagem: r.pmvgSemImpostos };
     return {
       id: r.id,
       registro: r.registro ?? "",
@@ -1071,10 +1661,23 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       produto: r.produto,
       apresentacao: r.apresentacao,
       laboratorio: r.laboratorio,
+      cnpj: r.cnpj,
+      ean: r.ean ?? (r.codigoGgrem ? eans.get(r.codigoGgrem) : undefined) ?? null,
+      classeTerapeutica: r.classeTerap,
+      tipoProduto: r.tipoProduto,
+      regimePreco: r.regimePreco,
       unidadeFornecimento: meta?.unidadeFornecimento ?? null,
       qtEmbalagem: qt,
       pmvgEmbalagem: r.pmvgSemImpostos,
-      pmvgUnitario: porUnidade(r.pmvgSemImpostos),
+      pmvg0: r.pmvg0,
+      pmvg12: r.pmvg12,
+      pmvg17: r.pmvg17,
+      pmvg18: r.pmvg18,
+      pmvgAliquotas: r.pmvgAliquotas,
+      isentoIcms: r.isentoIcms,
+      pmvgAliquotaEmbalagem: pmvgNaAliquota(pmvgs, escolha.aliquota),
+      pmvgUnitario: porUnidade(pmvgNaAliquota(pmvgs, escolha.aliquota)),
+      isentoAZero: isentoAZero(pmvgs, escolha.aliquota),
       pfEmbalagem: r.pf0,
       pfUnitario: porUnidade(r.pf0),
       cap: r.cap,
@@ -1106,6 +1709,9 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     pmvgUnitMax: pmvgUnitarios.length ? Math.max(...pmvgUnitarios) : null,
     semQtEmbalagem: cmedConsiderados.filter((r) => r.pmvgUnitario == null).length,
     excluidosManualmente: cmedRegistros.length - cmedConsiderados.length,
+    lista: listaCmed,
+    aliquota: escolha.aliquota,
+    isentosAZero: cmedConsiderados.filter((r) => r.isentoAZero).length,
   };
 
   // ── Consolidação (art. 6º — média, mediana e menor valor) ──
@@ -1113,12 +1719,10 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   // Duas leituras, ambas no relatório (ver o cabeçalho do arquivo):
   //   porFonte    — cada base pesa igual; é dela que sai o preço adotado.
   //   porRegistro — cada compra pesa igual; contraprova da anterior.
-  const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = [
-    { fonte: "bps", analise: analiseBps },
-    { fonte: "siasg", analise: analiseSiasg },
-    { fonte: "pncp", analise: analisePncp },
-  ];
-  if (analiseOrcamentos) analises.push({ fonte: "orcamentos", analise: analiseOrcamentos });
+  const analises: Array<{ fonte: FonteCurada; analise: AnaliseFonte }> = fontesBrutas.map((f) => ({
+    fonte: f.fonte,
+    analise: analisePorFonte.get(f.fonte) as AnaliseFonte,
+  }));
 
   const comMediana = analises.filter((a) => a.analise.resultado.estatisticas.mediana !== null);
   const fontes = comMediana.map((a) => NOME_FONTE_CURADA[a.fonte]);
@@ -1132,7 +1736,8 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     })),
     medianasPorFonte: medianas,
     porFonte: medianas.length ? calcularEstatisticas(medianas) : { ...ESTATISTICAS_VAZIAS },
-    porRegistro: calcularEstatisticas(analises.flatMap((a) => a.analise.precos)),
+    // Cada compra uma vez: as cópias entre bases (P18) ficam fora.
+    porRegistro: calcularEstatisticas(analises.flatMap((a) => a.analise.precosConjunto)),
   };
   const descartes = analises.flatMap((a) => a.analise.descartes);
   for (const r of cmedRegistros) {
@@ -1150,27 +1755,62 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
 
   // ── Recomendação (IN 65/2021) ──
-  const precoReferencia = consolidado.porFonte.mediana;
-  const limitePmvg = cmed.pmvgUnitMin;
-  const pmvgAplicado =
-    limitePmvg !== null && precoReferencia !== null && precoReferencia > limitePmvg;
-  const precoFinal = pmvgAplicado ? limitePmvg : (precoReferencia ?? limitePmvg);
+  // Método e teto saem de lib/pesquisa-preco-metodo.ts, o mesmo código que a
+  // tela usa para mostrar o efeito de cada escolha antes da emissão.
+  const preco = camposDoPreco(consolidado, cmed, escolha);
+  const { precoReferencia, limitePmvg } = preco;
+  const pmvgAplicado = preco.tetoAplicado;
   const capAplica = cmedRegistros.some((r) => r.cap);
 
   const observacoes: string[] = [];
+  // Período do art. 5º (D1) e o que cada fonte deixou de fora.
+  observacoes.push(`Período da pesquisa: ${descricaoPeriodo(periodo)}`);
+  if (periodoInvalido) {
+    observacoes.push(`Período ampliado sem justificativa suficiente: aplicado o padrão de 12 meses. ${periodoInvalido}`);
+  }
+  for (const f of fontesBrutas) {
+    const per = analisePorFonte.get(f.fonte)?.resultado.periodo;
+    if (!per || !per.foraDoPeriodo) continue;
+    const vazia = f.total === 0;
+    observacoes.push(
+      `${NOME_FONTE_CURADA[f.fonte]}: ${per.foraDoPeriodo} registro(s) fora do período${
+        per.maisRecenteFora ? ` (o mais recente em ${new Date(per.maisRecenteFora).toLocaleDateString("pt-BR", { timeZone: "UTC" })})` : ""
+      }${vazia ? " — a fonte ficou sem preço no período (art. 5º, §1º: priorizar os incisos I e II e justificar)" : ""}.`
+    );
+  }
+  // IPCA (D2).
+  if (corrigirIpca && mesBase) {
+    observacoes.push(
+      `O IPCA atualiza o valor de cada registro de compra (bases, atas e contratações similares — incisos I e II), da data da compra até ${mesBase.slice(5, 7)}/${mesBase.slice(0, 4)}, o último índice publicado. ${CONVENCAO_IPCA}${
+        semIndice ? ` ${semIndice} registro(s) sem índice para o mês do preço ficaram sem correção.` : ""
+      } O PMVG da CMED (teto) não é atualizado pelo IPCA.`
+    );
+  } else if (corrigirIpca) {
+    observacoes.push("Atualização pelo IPCA pedida, mas a tabela de índices não está carregada (scripts/import_ipca.py): preços em valores nominais.");
+  }
+  // Duplicidade entre bases (P18).
+  if (marcasDuplicidade.size) {
+    const provaveis = Array.from(marcasDuplicidade.values()).filter((m) => m.provavel).length;
+    observacoes.push(
+      `${marcasDuplicidade.size} registro(s) são a mesma compra de outra base e ficaram fora do conjunto único${
+        provaveis ? ` (${provaveis} por regra — prováveis duplicatas do BPS, reversíveis na curadoria)` : ""
+      }; cada base continua com a sua estatística no consolidado por fonte.`
+    );
+  }
   if (ativos.length) {
     observacoes.push(
       `Filtros adicionais aplicados: ${ativos
         .map((c) => `${ROTULO_FILTRO[c]} "${filtros[c]}"`)
         .join("; ")}. Os preços apurados consideram somente os registros que atendem a esses critérios.`
     );
-    for (const fonte of ["bps", "siasg", "pncp"] as FonteMercado[]) {
+    for (const fonte of ["comprasgov", "bps", "siasg", "pncp", "arp"] as FonteMercado[]) {
       const faltando = semCampo(fonte);
       if (!faltando.length) continue;
+      const base = fonte === "siasg" || fonte === "pncp" || fonte === "comprasgov";
       observacoes.push(
-        `${NOME_FONTE[fonte]} não registra ${faltando
+        `${base ? `Compras.gov.br (${ROTULO_BASE[BASE_DA_CHAVE[fonte]]})` : NOME_FONTE[fonte]} não registra ${faltando
           .map((c) => ROTULO_FILTRO[c].toLowerCase())
-          .join(" nem ")}; a fonte foi excluída da apuração enquanto esse filtro estiver ativo.`
+          .join(" nem ")}; ${base ? "essa base ficou" : "a fonte foi"} fora da apuração enquanto esse filtro estiver ativo.`
       );
     }
     if (filtros.fabricante && cmedTodos.length > cmedRegistros.length) {
@@ -1181,17 +1821,41 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   if (item.tipo === "REGISTRO" && !item.catmat) {
     observacoes.push(
-      "Registro ANVISA sem CATMAT associado: as bases de mercado (BPS, SIASG, PNCP) não podem ser consultadas por código. Resultado limitado ao preço CMED."
+      "Registro ANVISA sem CATMAT associado: as bases de mercado (Compras.gov.br, BPS, atas) não podem ser consultadas por código. Resultado limitado ao preço CMED."
     );
   }
   if (pmvgAplicado && precoReferencia !== null && limitePmvg !== null) {
     observacoes.push(
-      `Preço de referência (R$ ${precoReferencia.toFixed(4)}) supera o menor PMVG unitário sem impostos (R$ ${limitePmvg.toFixed(4)}). PMVG aplicado como teto.`
+      `Preço apurado pelo método (${ROTULO_METODO[escolha.metodo].curto.toLowerCase()}, R$ ${precoReferencia.toFixed(4)}) supera o teto CMED (${rotuloRegraTetoCurto(escolha.regraTeto, escolha.aliquota)}, R$ ${limitePmvg.toFixed(4)} por unidade). Teto aplicado.`
+    );
+  }
+  if (escolha.regraTeto === "pmvg_referencia" && preco.teto) {
+    observacoes.push(
+      `Teto pela regra do medicamento de referência: ${preco.teto.produto} (reg. ${preco.teto.registro}) — ${preco.teto.criterio}.`
     );
   }
   if (capAplica) {
     observacoes.push(
-      "Produto sujeito ao desconto CAP de 21,53% sobre o PF nas aquisições não judiciais."
+      `Produto sujeito ao desconto CAP de ${rotuloCap(listaCmed?.capPercentual)} sobre o PF nas aquisições não judiciais.`
+    );
+  }
+  if (listaCmed && listaCmed.competencia !== listaCmed.vigente) {
+    observacoes.push(
+      `Teto consultado na lista CMED de ${listaCmed.rotulo}. O relatório usa a lista de ${listaCmed.rotuloVigente}, a última publicada até a data de referência — o teto impresso pode ser outro.`
+    );
+  }
+  if (listaCmed && escolha.aliquota === "SEM_IMPOSTOS" && !listaCmed.semImpostosPublicado) {
+    observacoes.push(
+      `A lista CMED de ${listaCmed.rotulo} não publica o PMVG sem impostos: o teto usa o PMVG a 0%.`
+    );
+  } else if (listaCmed && escolha.aliquota !== "SEM_IMPOSTOS" && !listaCmed.aliquotas.includes(escolha.aliquota)) {
+    observacoes.push(
+      `A lista CMED de ${listaCmed.rotulo} não publica o ${rotuloPmvg(escolha.aliquota)}: só os registros isentos de ICMS (PMVG a 0%) podem formar o teto.`
+    );
+  }
+  if (cmed.isentosAZero > 0) {
+    observacoes.push(
+      `${cmed.isentosAZero} registro(s) CMED isento(s) de ICMS (Convênio CONFAZ 87/02 ou ICMS 0%) considerado(s) com o PMVG a 0%, por não terem preço publicado na alíquota de ${rotuloAliquota(escolha.aliquota)}.`
     );
   }
   if (cmed.semQtEmbalagem > 0) {
@@ -1204,15 +1868,34 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       `Apenas ${fontes.length} fonte(s) com dados para este item e unidade. Recomenda-se busca adicional ou orçamento direto de fornecedor (art. 5º, IV).`
     );
   }
-  if (bps.total === 0 && siasg.total === 0 && pncp.total === 0) {
+  if (item.catmat && !bpsDaApi && bps.total > 0) {
+    observacoes.push(
+      "BPS de base histórica (carga do painel, sem nº do processo nem da ata). Atualize pela API do BPS para trazer a identificação da compra."
+    );
+  }
+  for (const [origem, nome] of [["COMPRASGOV", "Compras.gov.br"], ["BPS", "BPS"], ["ARP_ITEM", "Atas de registro de preços"]] as const) {
+    const s = coletas?.porOrigem[origem];
+    if (s?.coletadoEm && !s.valida) {
+      observacoes.push(
+        `${nome}: dados coletados em ${new Date(s.coletadoEm).toLocaleDateString("pt-BR")}, há mais de 7 dias — atualize a coleta antes de emitir o relatório.`
+      );
+    }
+  }
+  if (item.catmat && coletas && !coletas.indisponivel && !coletas.porOrigem.COMPRASGOV.registros) {
+    observacoes.push(
+      "Compras.gov.br (Painel de Preços) ainda não coletado para este CATMAT: use \"Coletar dados abertos\" para incluir as compras públicas dos últimos meses."
+    );
+  }
+  if (bps.total === 0 && comprasgov.total === 0 && arp.total === 0) {
     observacoes.push(
       "Nenhum registro encontrado nas bases de mercado para este código e unidade de fornecimento."
     );
   }
-  if (analiseOrcamentos) {
-    const noCalculo = analiseOrcamentos.resultado.estatisticas.n;
+  for (const tipo of ORDEM_TIPOS_INFORMADOS) {
+    const r = resultadoDe(TIPOS_PRECO_INFORMADO[tipo].fonte as FonteMercadoChave);
+    if (!r) continue;
     observacoes.push(
-      `${orcamentos.length} orçamento(s) direto(s) de fornecedor juntado(s) ao processo (art. 5º, IV da IN 65/2021); ${noCalculo} considerado(s) no cálculo do preço de referência.`
+      `${r.total} preço(s) informado(s) — ${TIPOS_PRECO_INFORMADO[tipo].rotulo}; ${r.estatisticas.n} considerado(s) no cálculo.`
     );
   }
   if (descartes.length) {
@@ -1228,23 +1911,34 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     filtros,
     resultados: {
       cmed,
+      comprasgov,
       bps,
-      siasg,
-      pncp,
-      orcamentos: analiseOrcamentos?.resultado ?? null,
+      arp,
+      similar: resultadoDe("similar"),
+      midia: resultadoDe("midia"),
+      orcamentos: resultadoDe("orcamentos"),
+      notaFiscal: resultadoDe("notaFiscal"),
     },
     consolidado,
     orcamentos,
     descartes,
     recomendacao: {
-      precoReferencia,
+      ...preco,
       mediaConsolidada: consolidado.porFonte.media,
       menorConsolidado: consolidado.porFonte.menor,
-      limitePmvg,
-      precoFinal,
-      metodologia: METODO_ADOTADO,
+      metodologia: `${ROTULO_METODO[escolha.metodo].longo} (art. 6º da IN SEGES/ME nº 65/2021); teto = ${rotuloRegraTeto(escolha.regraTeto, escolha.aliquota)} (CMED ÷ Qt_Embal)`,
       fontes,
       observacoes,
     },
+    periodo,
+    ipca: {
+      pedido: corrigirIpca,
+      ligado: corrigirIpca && mesBase !== null,
+      disponivel: !!tabelaIpca?.disponivel,
+      mesBase: corrigirIpca ? mesBase : null,
+      convencao: CONVENCAO_IPCA,
+      semIndice,
+    },
+    duplicidades: marcasDuplicidade.size,
   };
 }

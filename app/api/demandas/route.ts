@@ -4,7 +4,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createDemandaSchema, listDemandaSchema } from "@/lib/schemas";
 import { createAuditLog } from "@/lib/audit";
-import { resolverFiltroCatmat, whereDemandaPorCatmat, type FiltroCatmat } from "@/lib/demandas-catmat";
+import { aplicarFiltro, contarGruposCatmat, whereDemandas } from "@/lib/demandas-filtro";
+import { lerFiltroDemandas, montarBuscaNorm } from "@/lib/demandas-filtro-tipos";
+import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { hasPermission } from "@/lib/permissions";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -16,95 +19,54 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-
-    // Helper: converter null → undefined para Zod .optional()
     const getString = (key: string) => searchParams.get(key) || undefined;
-
     const params = listDemandaSchema.parse({
       page: getString("page"),
       pageSize: getString("pageSize"),
-      status: getString("status"),
-      prioridade: getString("prioridade"),
-      organizacaoId: getString("organizacaoId"),
-      busca: getString("busca"),
       ordenarPor: getString("ordenarPor"),
       ordem: getString("ordem"),
     });
 
-    // Novos filtros (Sprint 8)
-    const areaTematica = searchParams.get("areaTematica");
-    const trfRegiao = searchParams.get("trfRegiao");
-    const regiaoBrasil = searchParams.get("regiaoBrasil");
-    const dataEntradaDe = searchParams.get("dataEntradaDe");
-    const dataEntradaAte = searchParams.get("dataEntradaAte");
-    // CATMAT ou registro ANVISA — a Demanda não guarda o código, então ele é
-    // traduzido para a(s) substância(s) do catálogo (lib/demandas-catmat.ts).
-    const catmat = searchParams.get("catmat")?.trim() || "";
-
+    // Filtro único (lib/demandas-filtro.ts): o mesmo do Dashboard, das
+    // exportações e dos relatórios — mesmo recorte, mesmo total.
+    const aplicado = await aplicarFiltro(lerFiltroDemandas(searchParams));
+    const resumoFiltro = {
+      filtroCatmat: aplicado.catmat,
+      busca: aplicado.busca,
+      medicamento: aplicado.medicamento,
+    };
+    if (aplicado.vazio) {
+      // Código não encontrado: lista vazia com o motivo, não uma tabela muda.
+      return NextResponse.json({
+        data: [],
+        pagination: { page: params.page, pageSize: params.pageSize, total: 0, totalPages: 0 },
+        ...resumoFiltro,
+      });
+    }
+    const where = whereDemandas(aplicado);
     const skip = (params.page - 1) * params.pageSize;
 
-    const where: any = {
-      // Excluir demandas em soft delete por padrão
-      deletedAt: null,
-    };
-
-    if (params.status) where.status = params.status;
-    if (params.prioridade) where.prioridade = params.prioridade;
-    if (params.organizacaoId) where.organizacaoId = params.organizacaoId;
-    if (areaTematica) where.areaTematica = { contains: areaTematica, mode: "insensitive" };
-    if (trfRegiao) where.trfRegiao = parseInt(trfRegiao);
-    if (regiaoBrasil) where.regiaoBrasil = regiaoBrasil;
-    if (dataEntradaDe || dataEntradaAte) {
-      where.dataEntradaDJUD = {};
-      if (dataEntradaDe) where.dataEntradaDJUD.gte = new Date(dataEntradaDe);
-      if (dataEntradaAte) where.dataEntradaDJUD.lte = new Date(dataEntradaAte);
-    }
-
-    // Filtro por código: resolve primeiro para devolver o motivo quando não há
-    // como filtrar, em vez de uma lista vazia sem explicação.
-    let filtroCatmat: FiltroCatmat | null = null;
-    if (catmat) {
-      filtroCatmat = await resolverFiltroCatmat(catmat);
-      if (!filtroCatmat.encontrado) {
-        return NextResponse.json({
-          data: [],
-          pagination: { page: params.page, pageSize: params.pageSize, total: 0, totalPages: 0 },
-          filtroCatmat,
-        });
-      }
-      // AND, não OR: a busca livre (params.busca) já ocupa o where.OR.
-      where.AND = [whereDemandaPorCatmat(filtroCatmat)];
-    }
-
-    if (params.busca) {
-      where.OR = [
-        { numero: { contains: params.busca, mode: "insensitive" } },
-        { titulo: { contains: params.busca, mode: "insensitive" } },
-        { descricao: { contains: params.busca, mode: "insensitive" } },
-        { numeroProcesso: { contains: params.busca, mode: "insensitive" } },
-        { principioAtivo: { contains: params.busca, mode: "insensitive" } },
-      ];
-    }
-
-    const orderBy: any = {};
+    const orderBy: Prisma.DemandaOrderByWithRelationInput[] = [];
     switch (params.ordenarPor) {
-      case "criado":
-        orderBy.criadoEm = params.ordem;
-        break;
       case "atualizado":
-        orderBy.atualizadoEm = params.ordem;
+        orderBy.push({ atualizadoEm: params.ordem });
         break;
       case "vencimento":
-        orderBy.dataVencimento = params.ordem;
+        orderBy.push({ dataVencimento: params.ordem });
         break;
       case "prioridade":
-        orderBy.prioridade = params.ordem === "asc" ? "asc" : "desc";
+        orderBy.push({ prioridade: params.ordem });
+        break;
+      case "entrada":
+        orderBy.push({ dataEntradaDJUD: { sort: params.ordem, nulls: "last" } });
         break;
       default:
-        orderBy.criadoEm = "desc";
+        orderBy.push({ criadoEm: params.ordem });
     }
+    // Desempate estável: sem ele, a mesma página pode trazer linhas diferentes.
+    orderBy.push({ id: "asc" });
 
-    const [demandas, total] = await Promise.all([
+    const [demandas, total, gruposCatmat] = await Promise.all([
       db.demanda.findMany({
         where,
         skip,
@@ -118,13 +80,15 @@ export async function GET(request: NextRequest) {
         },
       }),
       db.demanda.count({ where }),
+      // Com código CATMAT: quantas são da apresentação exata e quantas da mesma
+      // substância sem apresentação identificada (A5) — a tela mostra os dois.
+      contarGruposCatmat({ ...aplicado, filtro: { ...aplicado.filtro, catmatGrupo: null } }),
     ]);
 
-    // Map demandas to include attachmentCount
-    const demandasWithCount = demandas.map((demanda: any) => ({
+    // A busca normalizada é só índice: não trafega para a tela.
+    const demandasWithCount = demandas.map(({ _count, buscaNorm: _busca, ...demanda }) => ({
       ...demanda,
-      attachmentCount: demanda._count?.attachments || 0,
-      _count: undefined, // Remove the _count object from response
+      attachmentCount: _count?.attachments || 0,
     }));
 
     return NextResponse.json({
@@ -135,17 +99,17 @@ export async function GET(request: NextRequest) {
         total,
         totalPages: Math.ceil(total / params.pageSize),
       },
-      filtroCatmat,
+      ...resumoFiltro,
+      gruposCatmat,
     });
   } catch (error) {
-    if (error instanceof Error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 400 }
-      );
+    // Erro inesperado: mensagem amigável na tela e o detalhe no log (A4).
+    console.error("[demandas] GET", error);
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ error: "Parâmetros inválidos na consulta de demandas" }, { status: 400 });
     }
     return NextResponse.json(
-      { error: "Erro ao listar demandas" },
+      { error: "Não foi possível consultar as demandas agora. Tente de novo em instantes." },
       { status: 500 }
     );
   }
@@ -172,6 +136,9 @@ export async function POST(request: NextRequest) {
     const demanda = await db.demanda.create({
       data: {
         ...data,
+        // A coluna da busca acompanha a demanda (A4): sem ela, a nova demanda
+        // não seria achada pela busca até a próxima carga.
+        buscaNorm: montarBuscaNorm(data),
         criadoPorId: session.user.id as string,
       } as any,
       include: {

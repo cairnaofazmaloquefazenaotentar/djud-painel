@@ -39,6 +39,40 @@ const FONTES: Fonte[] = [
     dataKey:    "fns",
     descricao:  "Pagamentos realizados via Ordem Bancária (SIAFI) para autores de ações judiciais.",
   },
+  {
+    nome:      "CMED",
+    sistema:   "ANVISA — lista de preços",
+    sistemaUrl: "https://www.gov.br/anvisa/pt-br/assuntos/medicamentos/cmed/precos",
+    dataKey:   "cmed",
+    descricao: "Preço máximo de venda ao governo (PMVG), teto da Pesquisa de Preços. Data = mês da última lista mensal carregada; os relatórios usam a última publicada até a data de referência.",
+  },
+  {
+    nome:       "Compras.gov.br — Painel de Preços",
+    sistema:    "API de dados abertos",
+    sistemaUrl: "https://dadosabertos.compras.gov.br/swagger-ui/index.html",
+    dataKey:    "comprasGov",
+    descricao:  "Preços praticados nas compras públicas, por CATMAT. Coletados sob demanda na Pesquisa de Preços (válidos por 7 dias).",
+  },
+  {
+    nome:       "BPS — Banco de Preços em Saúde",
+    sistema:    "API de dados abertos do MS",
+    sistemaUrl: "https://apidadosabertos.saude.gov.br/v1/",
+    dataKey:    "bpsApi",
+    descricao:  "Compras de medicamentos com nº do processo, da ata e registro ANVISA. Sem coleta, a pesquisa usa a base histórica carregada.",
+  },
+  {
+    nome:       "Atas de registro de preços",
+    sistema:    "API de dados abertos",
+    sistemaUrl: "https://dadosabertos.compras.gov.br/swagger-ui/index.html",
+    dataKey:    "atas",
+    descricao:  "Itens de atas com vigência iniciada nos últimos 12 meses, por CATMAT, com o link da ata no PNCP.",
+  },
+  {
+    nome:      "Extrator-CATMAT-DA",
+    sistema:   "Carga em lote (scripts/import_extrator_da.py)",
+    dataKey:   "extrator",
+    descricao: "Última carga da saída do extrator (classes inteiras do Compras.gov.br e do BPS).",
+  },
 ];
 
 export default function FontesPage() {
@@ -56,7 +90,7 @@ export default function FontesPage() {
         <div className="flex items-center justify-between px-6 py-4 border-b border-border">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Database className="h-4 w-4" />
-            <span>4 fontes cadastradas</span>
+            <span>{FONTES.length} fontes cadastradas</span>
           </div>
           <button
             onClick={() => refetch()}

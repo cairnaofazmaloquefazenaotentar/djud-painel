@@ -5,7 +5,11 @@ import { db } from "@/lib/db";
 import { updateDemandaSchema } from "@/lib/schemas";
 import { createAuditLog } from "@/lib/audit";
 import { hasPermission } from "@/lib/permissions";
+import { montarBuscaNorm } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
+
+/** A demanda sem a coluna de busca (só índice, não vai para a tela). */
+const semBuscaNorm = <T extends { buscaNorm?: unknown }>({ buscaNorm: _b, ...resto }: T) => resto;
 
 export async function GET(
   request: NextRequest,
@@ -35,7 +39,8 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(demanda);
+    // A busca normalizada é só índice: não trafega para a tela.
+    return NextResponse.json(semBuscaNorm(demanda));
   } catch (error) {
     return NextResponse.json(
       { error: "Erro ao obter demanda" },
@@ -81,6 +86,9 @@ export async function PUT(
       where: { id },
       data: {
         ...data,
+        // A coluna da busca acompanha a edição (A4): título, processo ou
+        // princípio ativo novos têm de ser achados pela busca já.
+        buscaNorm: montarBuscaNorm({ ...demanda, ...data }),
         atualizadoPorId: session.user.id,
       },
       include: {

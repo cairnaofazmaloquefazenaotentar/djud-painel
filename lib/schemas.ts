@@ -60,7 +60,7 @@ export const listDemandaSchema = z.object({
   prioridade: z.string().optional(),
   organizacaoId: z.string().optional(),
   busca: z.string().optional(),
-  ordenarPor: z.enum(["criado", "atualizado", "vencimento", "prioridade"]).default("criado"),
+  ordenarPor: z.enum(["criado", "atualizado", "vencimento", "prioridade", "entrada"]).default("criado"),
   ordem: z.enum(["asc", "desc"]).default("desc"),
   // Sprint 8 — filtros campos judiciais Redmine
   areaTematica: z.string().optional(),

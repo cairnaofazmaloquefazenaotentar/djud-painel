@@ -1,5 +1,7 @@
+import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { formatFileSize } from "@/lib/file-utils";
+import { esc } from "@/lib/relatorio-pesquisa-preco";
 
 /**
  * Gera um relatório em HTML para uma demanda individual
@@ -41,35 +43,10 @@ export async function generateDemandaHTML(demandaId: string): Promise<string> {
 /**
  * Gera um relatório em HTML com múltiplas demandas
  */
-export async function generateRelatórioHTML(filters?: {
-  startDate?: Date;
-  endDate?: Date;
-  status?: string;
-  prioridade?: string;
-  organizacaoId?: string;
-}): Promise<string> {
+export async function generateRelatórioHTML(where: Prisma.DemandaWhereInput): Promise<string> {
   try {
-    // Buscar demandas com filtros
-    const where: any = {};
-
-    if (filters?.startDate) {
-      where.criadoEm = { gte: filters.startDate };
-    }
-    if (filters?.endDate) {
-      where.criadoEm = where.criadoEm
-        ? { ...where.criadoEm, lte: filters.endDate }
-        : { lte: filters.endDate };
-    }
-    if (filters?.status) {
-      where.status = filters.status;
-    }
-    if (filters?.prioridade) {
-      where.prioridade = filters.prioridade;
-    }
-    if (filters?.organizacaoId) {
-      where.organizacaoId = filters.organizacaoId;
-    }
-
+    // `where` vem do filtro único (lib/demandas-filtro.ts): o mesmo recorte da
+    // lista e do Dashboard, sem a lixeira.
     const demandas = await db.demanda.findMany({
       where,
       include: {
@@ -100,7 +77,6 @@ export async function generateRelatórioHTML(filters?: {
     return generateRelatorioPDFHTML({
       demandas,
       stats,
-      filters,
       generatedAt: new Date(),
     });
   } catch (error) {
@@ -146,11 +122,11 @@ function generateDemandaPDFHTML(demanda: any): string {
           .map(
             (att: any) => `
           <div style="border: 1px solid #ddd; padding: 10px; border-radius: 5px;">
-            <div style="font-weight: bold; margin-bottom: 5px;">${att.fileName}</div>
+            <div style="font-weight: bold; margin-bottom: 5px;">${esc(att.fileName)}</div>
             <div style="font-size: 12px; color: #666;">
               <div>Tamanho: ${formatFileSize(att.fileSize)}</div>
               <div>Upload: ${formatDate(att.uploadedAt)}</div>
-              <div>Por: ${att.uploadedBy?.name || "Desconhecido"}</div>
+              <div>Por: ${esc(att.uploadedBy?.name || "Desconhecido")}</div>
             </div>
           </div>
         `
@@ -167,7 +143,7 @@ function generateDemandaPDFHTML(demanda: any): string {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Demanda ${demanda.numero}</title>
+      <title>Demanda ${esc(demanda.numero)}</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -248,29 +224,51 @@ function generateDemandaPDFHTML(demanda: any): string {
     <body>
       <div class="container">
         <div class="header">
-          <h1>Demanda Judicial #${demanda.numero}</h1>
+          <h1>Demanda Judicial #${esc(demanda.numero)}</h1>
           <p>Relatório gerado em ${formatDate(new Date())}</p>
         </div>
 
         <div class="section">
           <h2>Informações Gerais</h2>
           <div class="field">
-            <div class="label">Número</div>
-            <div class="value">${demanda.numero}</div>
+            <div class="label">Número DJUD</div>
+            <div class="value">${esc(demanda.numero)}</div>
+          </div>
+          <div class="field">
+            <div class="label">Nº do Processo</div>
+            <div class="value">${esc(demanda.numeroProcesso || "não informado")}</div>
+          </div>
+          <div class="field">
+            <div class="label">Nº SEI (NUP)</div>
+            <div class="value">${esc(demanda.nupSei || "não informado no Redmine")}</div>
+          </div>
+          <div class="field">
+            <div class="label">Medicamento</div>
+            <div class="value">${esc(demanda.medicamento || demanda.principioAtivo || "não identificado")}</div>
+          </div>
+          <div class="field">
+            <div class="label">Apresentação</div>
+            <div class="value">${
+              Array.isArray(demanda.apresentacoes) && demanda.apresentacoes.length
+                ? demanda.apresentacoes
+                    .map((a: { catmat: string; descricao?: string | null }) => esc(`CATMAT ${a.catmat}${a.descricao ? ` — ${a.descricao}` : ""}`))
+                    .join("<br/>")
+                : "não identificada"
+            }</div>
           </div>
           <div class="field">
             <div class="label">Título</div>
-            <div class="value">${demanda.titulo}</div>
+            <div class="value">${esc(demanda.titulo)}</div>
           </div>
           <div class="field">
             <div class="label">Descrição</div>
-            <div class="value">${demanda.descricao}</div>
+            <div class="value">${esc(demanda.descricao)}</div>
           </div>
           <div class="field">
             <div class="label">Status</div>
             <div class="value">
               <span class="badge" style="background-color: ${statusColor[demanda.status as keyof typeof statusColor] || "#999"}">
-                ${demanda.status || "N/A"}
+                ${esc(demanda.status || "N/A")}
               </span>
             </div>
           </div>
@@ -278,7 +276,7 @@ function generateDemandaPDFHTML(demanda: any): string {
             <div class="label">Prioridade</div>
             <div class="value">
               <span class="badge" style="background-color: ${prioridadeColor[demanda.prioridade as keyof typeof prioridadeColor] || "#999"}">
-                ${demanda.prioridade || "N/A"}
+                ${esc(demanda.prioridade || "N/A")}
               </span>
             </div>
           </div>
@@ -290,11 +288,11 @@ function generateDemandaPDFHTML(demanda: any): string {
             <div>
               <div class="field">
                 <div class="label">Organização</div>
-                <div class="value">${demanda.organizacao?.name || "N/A"}</div>
+                <div class="value">${esc(demanda.organizacao?.name || "N/A")}</div>
               </div>
               <div class="field">
                 <div class="label">Responsável</div>
-                <div class="value">${demanda.responsavel?.name || "N/A"}</div>
+                <div class="value">${esc(demanda.responsavel?.name || "N/A")}</div>
               </div>
               <div class="field">
                 <div class="label">Data Início</div>
@@ -312,7 +310,7 @@ function generateDemandaPDFHTML(demanda: any): string {
               </div>
               <div class="field">
                 <div class="label">Projeto</div>
-                <div class="value">${demanda.projeto || "N/A"}</div>
+                <div class="value">${esc(demanda.projeto || "N/A")}</div>
               </div>
             </div>
           </div>
@@ -322,11 +320,11 @@ function generateDemandaPDFHTML(demanda: any): string {
           <h2>Auditoria</h2>
           <div class="field">
             <div class="label">Criado por</div>
-            <div class="value">${demanda.criadoPor?.name || "Desconhecido"} em ${formatDate(demanda.criadoEm)}</div>
+            <div class="value">${esc(demanda.criadoPor?.name || "Desconhecido")} em ${formatDate(demanda.criadoEm)}</div>
           </div>
           <div class="field">
             <div class="label">Atualizado por</div>
-            <div class="value">${demanda.atualizadoPor?.name || "Nunca"} ${demanda.atualizadoPor ? `em ${formatDate(demanda.atualizadoEm)}` : ""}</div>
+            <div class="value">${esc(demanda.atualizadoPor?.name || "Nunca")} ${demanda.atualizadoPor ? `em ${formatDate(demanda.atualizadoEm)}` : ""}</div>
           </div>
         </div>
 

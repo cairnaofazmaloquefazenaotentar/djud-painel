@@ -5,18 +5,25 @@ import { generateRelatórioHTML } from "@/lib/pdf-generator";
 import { db } from "@/lib/db";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { aplicarFiltro, whereDemandas } from "@/lib/demandas-filtro";
+import { descreverFiltro, lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 
 const generateRelatórioSchema = z.object({
-  startDate: z.string().datetime().optional(),
-  endDate: z.string().datetime().optional(),
-  status: z.string().optional(),
-  prioridade: z.string().optional(),
-  organizacaoId: z.string().optional(),
-  areaTematica: z.string().optional(),
-  trfRegiao: z.coerce.number().int().optional(),
-  regiaoBrasil: z.string().optional(),
   format: z.enum(["html", "json"]).default("html"),
 });
+
+/**
+ * Corpo → filtro único: aceita os parâmetros da lista de Demandas (valores
+ * únicos ou listas) e os nomes antigos desta rota (startDate, endDate…).
+ */
+function filtroDoCorpo(body: Record<string, unknown>) {
+  const sp = new URLSearchParams();
+  for (const [k, v] of Object.entries(body ?? {})) {
+    if (k === "format" || v === null || v === undefined) continue;
+    for (const item of Array.isArray(v) ? v : [v]) sp.append(k, String(item));
+  }
+  return lerFiltroDemandas(sp);
+}
 
 /**
  * POST /api/relatorios/generate
@@ -32,29 +39,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const params = generateRelatórioSchema.parse(body);
 
-    const filters = {
-      startDate: params.startDate ? new Date(params.startDate) : undefined,
-      endDate: params.endDate ? new Date(params.endDate) : undefined,
-      status: params.status,
-      prioridade: params.prioridade,
-      organizacaoId: params.organizacaoId,
-    };
+    const filtro = filtroDoCorpo(body);
+    const aplicado = await aplicarFiltro(filtro);
+    const where = whereDemandas(aplicado);
+    const filtrosDescritos = Object.fromEntries(descreverFiltro(filtro));
 
     if (params.format === "json") {
       // Retorna dados JSON para uso em gráficos no frontend
-      const where: any = {};
-      if (filters.startDate || filters.endDate) {
-        where.criadoEm = {};
-        if (filters.startDate) where.criadoEm.gte = filters.startDate;
-        if (filters.endDate) where.criadoEm.lte = filters.endDate;
-      }
-      if (filters.status) where.status = filters.status;
-      if (filters.prioridade) where.prioridade = filters.prioridade;
-      if (filters.organizacaoId) where.organizacaoId = filters.organizacaoId;
-      if (params.areaTematica) where.areaTematica = { contains: params.areaTematica, mode: "insensitive" };
-      if (params.trfRegiao) where.trfRegiao = params.trfRegiao;
-      if (params.regiaoBrasil) where.regiaoBrasil = params.regiaoBrasil;
-
       const [total, demandas] = await Promise.all([
         db.demanda.count({ where }),
         db.demanda.findMany({
@@ -86,7 +77,7 @@ export async function POST(request: NextRequest) {
           entity: "Relatorio",
           entityId: "json",
           userId: session.user.id,
-          metadata: { format: "json", total, filters: params },
+          metadata: { format: "json", total, filtros: filtrosDescritos },
         },
       });
 
@@ -94,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Gera HTML do relatório
-    const html = await generateRelatórioHTML(filters);
+    const html = await generateRelatórioHTML(where);
 
     // Audit log
     await db.auditLog.create({
@@ -103,7 +94,7 @@ export async function POST(request: NextRequest) {
         entity: "Relatorio",
         entityId: "html",
         userId: session.user.id,
-        metadata: { format: "html", filters: params },
+        metadata: { format: "html", filtros: filtrosDescritos },
       },
     });
 

@@ -24,10 +24,17 @@ import {
   Hash,
   Layers,
   Paperclip,
+  Copy,
+  ExternalLink,
+  Truck,
+  FileSearch,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { formatDateTime } from "@/lib/utils";
 import { rolePermissions } from "@/lib/permissions";
 import { apiPath } from "@/lib/url";
+import { linkExterno, type TipoLink } from "@/lib/links-externos";
+import type { EntregaSismat } from "@/app/api/demandas/[id]/sismat/route";
 import { toast } from "sonner";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -45,6 +52,11 @@ interface Demanda {
   pontoControle?: string | null;
   // Dados Judiciais (Sprint 8)
   numeroProcesso?: string | null;
+  // Avaliação da DLOG: NUP SEI (A6), medicamento e apresentação (A5)
+  nupSei?: string | null;
+  medicamento?: string | null;
+  medicamentoOrigem?: string | null;
+  apresentacoes?: Array<{ catmat: string; descricao: string | null; origem: string; unidades?: string[]; saidas?: number; quantidade?: number; ultimaSaida?: string | null }> | null;
   areaTematica?: string | null;
   regiaoBrasil?: string | null;
   objetoAcao?: string | null;
@@ -131,6 +143,43 @@ function FieldRow({
   );
 }
 
+// ── Sub-componente: número com copiar e link (P7) ─────────────────────────────
+
+const ORIGEM_MEDICAMENTO: Record<string, string> = {
+  REDMINE: "do Redmine",
+  TITULO: "identificado no título",
+  DESCRICAO: "identificado na descrição",
+  SISMAT: "das entregas do SISMAT",
+};
+
+function NumeroComAcoes({ valor, rotulo, link }: { valor: string; rotulo: string; link: TipoLink }) {
+  const url = linkExterno(link, valor);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="font-mono">{valor}</span>
+      <button
+        type="button"
+        aria-label={`Copiar ${rotulo}`}
+        title={`Copiar ${rotulo}`}
+        className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+        onClick={() =>
+          navigator.clipboard
+            .writeText(valor)
+            .then(() => toast.success(`${rotulo} copiado.`))
+            .catch(() => toast.error("Não foi possível copiar."))
+        }
+      >
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+      {url && (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-xs text-primary hover:underline">
+          abrir <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
+    </span>
+  );
+}
+
 // ── Sub-componente: card de seção ─────────────────────────────────────────────
 
 function SectionCard({
@@ -168,6 +217,17 @@ export default function DemandaDetailPage() {
 
   const [demanda, setDemanda] = useState<Demanda | null>(null);
   const [loading, setLoading] = useState(true);
+  // Entregas do SISMAT com o mesmo NUP SEI (A6).
+  const { data: sismat } = useQuery<{ nupSei: string | null; entregas: EntregaSismat[] }>({
+    queryKey: ["demanda-sismat", demandaId],
+    queryFn: async () => {
+      const res = await fetch(apiPath(`/api/demandas/${demandaId}/sismat`));
+      if (!res.ok) throw new Error("Erro ao consultar o SISMAT");
+      return res.json();
+    },
+    enabled: !!demanda?.nupSei,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const userRole = (session?.user as any)?.role || "OPERATOR";
   const permissions = rolePermissions[userRole as keyof typeof rolePermissions] || [];
@@ -277,14 +337,17 @@ export default function DemandaDetailPage() {
           <FieldRow
             icon={<Hash className="h-4 w-4" />}
             label="Número DJUD"
-            value={demanda.numero}
-            mono
+            value={<NumeroComAcoes valor={demanda.numero} rotulo="Nº DJUD" link="redmine" />}
           />
           <FieldRow
             icon={<Scale className="h-4 w-4" />}
             label="Número do Processo"
-            value={demanda.numeroProcesso}
-            mono
+            value={demanda.numeroProcesso ? <NumeroComAcoes valor={demanda.numeroProcesso} rotulo="Nº do processo" link="processo" /> : null}
+          />
+          <FieldRow
+            icon={<FileSearch className="h-4 w-4" />}
+            label="Nº SEI (NUP)"
+            value={demanda.nupSei ? <NumeroComAcoes valor={demanda.nupSei} rotulo="Nº SEI" link="sei" /> : "não informado no Redmine"}
           />
           <FieldRow
             icon={<Layers className="h-4 w-4" />}
@@ -318,8 +381,39 @@ export default function DemandaDetailPage() {
           />
           <FieldRow
             icon={<Pill className="h-4 w-4" />}
-            label="Princípio Ativo / Medicamento"
-            value={demanda.principioAtivo}
+            label="Medicamento"
+            value={
+              demanda.medicamento ?? demanda.principioAtivo ? (
+                <span>
+                  {demanda.medicamento ?? demanda.principioAtivo}
+                  {demanda.medicamentoOrigem && (
+                    <Badge variant="outline" className="ml-2 h-5 text-[10px] font-normal">
+                      {ORIGEM_MEDICAMENTO[demanda.medicamentoOrigem] ?? demanda.medicamentoOrigem}
+                    </Badge>
+                  )}
+                </span>
+              ) : null
+            }
+          />
+          <FieldRow
+            icon={<Layers className="h-4 w-4" />}
+            label="Apresentação"
+            value={
+              demanda.apresentacoes?.length ? (
+                <span className="space-y-0.5">
+                  {demanda.apresentacoes.map((a) => (
+                    <span key={a.catmat} className="block">
+                      CATMAT {a.catmat}
+                      {a.descricao ? ` — ${a.descricao}` : ""}
+                      {a.unidades?.length ? ` · ${a.unidades.join(", ")}` : ""}
+                      <span className="text-xs text-muted-foreground"> ({a.origem === "SISMAT" ? "entregas do SISMAT pelo NUP" : "concentração citada no texto"})</span>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">não identificada</span>
+              )
+            }
           />
           <FieldRow
             icon={<Calendar className="h-4 w-4" />}
@@ -401,6 +495,49 @@ export default function DemandaDetailPage() {
         </SectionCard>
 
       </div>
+
+      {/* ── Entregas no SISMAT (A6) ───────────────────────────────────────────── */}
+      {demanda.nupSei && (
+        <motion.div variants={fadeUp} className="rounded-xl border border-border bg-card overflow-hidden">
+          <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-border bg-muted/30">
+            <Truck className="h-4 w-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Entregas no SISMAT (NUP {demanda.nupSei})</h2>
+          </div>
+          <div className="p-5">
+            {!sismat ? (
+              <p className="text-sm text-muted-foreground">Consultando…</p>
+            ) : sismat.entregas.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma saída do SISMAT com este NUP.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-left text-muted-foreground">
+                    <tr>
+                      {["Data", "Material", "CATMAT", "Quantidade", "Valor total", "Programa"].map((h) => (
+                        <th key={h} className="px-2 py-1 font-medium">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sismat.entregas.map((e, i) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="px-2 py-1 whitespace-nowrap">{e.data ? new Date(`${e.data}T12:00:00Z`).toLocaleDateString("pt-BR") : "—"}</td>
+                        <td className="px-2 py-1">{e.material}</td>
+                        <td className="px-2 py-1 font-mono">{e.catmat ?? "—"}</td>
+                        <td className="px-2 py-1 tabular-nums">{e.quantidade?.toLocaleString("pt-BR") ?? "—"}</td>
+                        <td className="px-2 py-1 tabular-nums">
+                          {e.valorTotal === null ? "—" : e.valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
+                        </td>
+                        <td className="px-2 py-1">{e.programa ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </motion.div>
+      )}
 
       {/* ── Tags ────────────────────────────────────────────────────────────── */}
       {demanda.tags && demanda.tags.length > 0 && (

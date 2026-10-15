@@ -35,6 +35,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from xml.etree.ElementTree import iterparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from demandas_busca import montar_busca_norm, normalizar_nup_sei  # noqa: E402
+
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 SHEET_PATH = "xl/worksheets/sheet1.xml"
 DEFAULT_XLSX = "baseRedmine_20260827.xlsx"
@@ -72,6 +75,9 @@ COLUMNS = [
     "areaTematica", "regiaoBrasil", "objetoAcao", "principioAtivo", "autor",
     "numeroProcesso", "dataEntradaDJUD", "formaCumprimento", "valorEstimado",
     "dataInicio", "criadoPorId", "tags", "criadoEm", "atualizadoEm",
+    # Avaliacao da DLOG (scripts/alter_demanda_busca.py cria as colunas):
+    # NUP SEI canonico (A6) e o texto da busca (A4, espelho de montarBuscaNorm).
+    "nupSei", "buscaNorm",
 ]
 
 
@@ -86,9 +92,29 @@ def _col_index(ref: str) -> int:
     return n - 1
 
 
+def _strings_compartilhadas(zf: zipfile.ZipFile) -> list[str]:
+    """Textos de xl/sharedStrings.xml, na ordem (planilha salva pelo Excel).
+
+    A exportacao direta do Redmine grava o texto na propria celula (inline);
+    a mesma planilha aberta e salva no Excel passa a guardar um indice para
+    esta tabela. O leitor aceita as duas formas.
+    """
+    if "xl/sharedStrings.xml" not in zf.namelist():
+        return []
+    textos: list[str] = []
+    with zf.open("xl/sharedStrings.xml") as fh:
+        for ev, el in iterparse(fh, events=("end",)):
+            if el.tag == NS + "si":
+                textos.append("".join(t.text or "" for t in el.iter(NS + "t")))
+                el.clear()
+    return textos
+
+
 def iter_rows(path: str, limit: int | None = None):
     """Gera cada linha da planilha como lista de strings (None onde vazio)."""
-    with zipfile.ZipFile(path) as zf, zf.open(SHEET_PATH) as fh:
+    with zipfile.ZipFile(path) as zf:
+        compartilhadas = _strings_compartilhadas(zf)
+        fh = zf.open(SHEET_PATH)
         count = 0
         cur: dict[int, str] | None = None
         for ev, el in iterparse(fh, events=("start", "end")):
@@ -102,7 +128,10 @@ def iter_rows(path: str, limit: int | None = None):
                     if node is None:
                         node = el.find(NS + "v")
                     if node is not None and node.text is not None:
-                        cur[_col_index(el.get("r", ""))] = node.text
+                        texto = node.text
+                        if el.get("t") == "s" and compartilhadas:
+                            texto = compartilhadas[int(texto)]
+                        cur[_col_index(el.get("r", ""))] = texto
                 el.clear()
             elif el.tag == NS + "row":
                 if cur:
@@ -123,6 +152,13 @@ def txt(v) -> str | None:
         return None
     s = str(v).strip()
     return s or None
+
+
+def txt_espacos(v) -> str | None:
+    """Texto com espacos repetidos colapsados — "Cessar  Atos" e "Cessar Atos"
+    sao a mesma opcao no filtro (A3). Nao renomeia nada."""
+    s = txt(v)
+    return re.sub(r"\s+", " ", s) if s else None
 
 
 def _lixo(s: str) -> bool:
@@ -183,6 +219,27 @@ def normalizar_lista(v) -> str | None:
             vistos.setdefault(item, None)
 
     return " | ".join(vistos) or None
+
+
+def unir_listas(*valores) -> str | None:
+    """Itens de varias colunas numa lista "A | B", sem repetir (ignora caixa)."""
+    itens: list[str] = []
+    vistos: set[str] = set()
+    for v in valores:
+        s = normalizar_lista(v)
+        for item in (s.split(" | ") if s else []):
+            chave = item.casefold()
+            if chave not in vistos:
+                vistos.add(chave)
+                itens.append(item)
+    return " | ".join(itens) or None
+
+
+def principio_ativo_redmine(principio, principio_jef) -> str | None:
+    """Medicamento do Redmine: colunas CC ("Princípio_Ativo") e CB ("Princípio
+    Ativo_JEF/TRF4") unidas — a segunda traz o medicamento de 1.266 demandas
+    dos Juizados/TRF4 que a primeira deixa como N/A (planilha de 17/03/2026)."""
+    return unir_listas(principio, principio_jef)
 
 
 def to_autor(v) -> str | None:
@@ -373,9 +430,13 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
     it = iter_rows(xlsx, limit=(limit + 1) if limit else None)
     header = next(it)
     idx = {h: i for i, h in enumerate(header) if h}
+    # Cabecalhos com espaco sobrando ("UF_Residência ") tambem pelo nome aparado.
+    idx_aparado = {h.strip(): i for i, h in enumerate(header) if h}
 
     def g(row, name):
         i = idx.get(name)
+        if i is None:
+            i = idx_aparado.get(name.strip())
         if i is None or i >= len(row):
             return None
         return row[i]
@@ -437,9 +498,9 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "projeto": txt(g(row, "project")),
             "ano": to_int(g(row, "Ano Ação Judicial"), lo=1990, hi=2100),
             "origemDemanda": txt(g(row, "tracker")),
-            "status": txt(g(row, "status")),
-            "prioridade": txt(g(row, "priority")),
-            "pontoControle": txt(g(row, "Ponto de Controle")),
+            "status": txt_espacos(g(row, "status")),
+            "prioridade": txt_espacos(g(row, "priority")),
+            "pontoControle": txt_espacos(g(row, "Ponto de Controle")),
             "trfRegiao": trf,
             "ufResidencia": uf_res,
             "ufOcorrencia": to_uf(g(row, "UF")),
@@ -451,7 +512,7 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "areaTematica": txt(g(row, "Grupo Temático")),
             "regiaoBrasil": regiao,
             "objetoAcao": normalizar_lista(g(row, "Objeto da Ação")),
-            "principioAtivo": normalizar_lista(g(row, "Princípio_Ativo")),
+            "principioAtivo": principio_ativo_redmine(g(row, "Princípio_Ativo"), g(row, "Princípio Ativo_JEF/TRF4")),
             "autor": to_autor(g(row, "Autor(a)")),
             "numeroProcesso": numero_processo,
             "dataEntradaDJUD": to_date(g(row, "Data de Entrada_DJUD")),
@@ -462,7 +523,9 @@ def build_rows(xlsx: str, sistema_id: str, stats: Stats, limit: int | None = Non
             "tags": [],
             "criadoEm": criado,
             "atualizadoEm": atualizado,
+            "nupSei": normalizar_nup_sei(g(row, "NUP_SEI Principal")),
         }
+        rec["buscaNorm"] = montar_busca_norm(rec)
 
         for k, v in rec.items():
             if v is not None and v != [] and v != "":

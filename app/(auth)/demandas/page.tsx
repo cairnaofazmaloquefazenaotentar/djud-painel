@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { linkExterno } from "@/lib/links-externos";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Tooltip,
   TooltipContent,
@@ -15,40 +17,55 @@ import {
   DataTable,
   FilterBar,
   FilterInput,
-  FilterSelect,
+  FilterMultiSelect,
+  Paginacao,
   StatusBadge,
   ConfirmDialog,
   EmptyState,
 } from "@/components/backoffice";
+import { Badge } from "@/components/ui/badge";
+import { FiltroMaterial } from "@/components/demandas/filtro-material";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Edit2, Download, Lock, Pencil, ChevronLeft, ChevronRight, AlertCircle, CheckSquare, Square, FileSpreadsheet, Columns3, Eye, EyeOff, RotateCcw } from "lucide-react";
-import { formatDateTime } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Plus,
+  Trash2,
+  Edit2,
+  Download,
+  Lock,
+  AlertCircle,
+  CheckSquare,
+  Square,
+  Columns3,
+  Eye,
+  EyeOff,
+  RotateCcw,
+  Copy,
+  Loader2,
+  SlidersHorizontal,
+} from "lucide-react";
 import { rolePermissions } from "@/lib/permissions";
 import { normalizarPrincipioAtivo } from "@/lib/principio-ativo";
-import type { FiltroCatmat } from "@/lib/demandas-catmat";
+import {
+  ATALHOS_STATUS,
+  ROTULO_CAMPO,
+  ROTULO_CURTO,
+  comSelecao,
+  filtroAtivo,
+  filtroParaQuery,
+  lerFiltroDemandas,
+  parametrosDoFiltro,
+  type CampoDemanda,
+  type FiltroDemandas,
+} from "@/lib/demandas-filtro-tipos";
+import { useDemandasLista, useOpcoesDemandas, type DemandaLista } from "@/hooks/useDemandas";
+import { ExportarDialog } from "@/components/demandas/exportar-dialog";
+import { VisoesMenu } from "@/components/demandas/visoes-menu";
 import { apiPath } from "@/lib/url";
 import { toast } from "sonner";
 
-interface Demanda {
-  id: string;
-  numero: string;
-  titulo: string;
-  descricao: string;
-  status?: string;
-  prioridade?: string;
-  // Sprint 8 — campos Redmine Excel
-  numeroProcesso?: string | null;
-  areaTematica?: string | null;
-  trfRegiao?: number | null;
-  regiaoBrasil?: string | null;
-  objetoAcao?: string | null;
-  principioAtivo?: string | null;
-  dataEntradaDJUD?: string | null;
-  organizacao?: { id: string; name: string } | null;
-  responsavel?: { id: string; name: string } | null;
-  criadoEm: string;
-  attachmentCount?: number;
-}
+type Demanda = DemandaLista;
 
 // Inclui os status do Redmine importados
 const statusColors: Record<string, "active" | "warning" | "error" | "pending"> = {
@@ -65,7 +82,6 @@ const statusColors: Record<string, "active" | "warning" | "error" | "pending"> =
   "Em Análise SCTIE": "pending",
   "Em Análise SECTICS": "pending",
   Concluída: "active",
-  "Cessar Atos": "warning",
   "Entrega Pendente": "warning",
   Suspensa: "warning",
   Cancelada: "error",
@@ -83,41 +99,127 @@ const prioridadeColors: Record<string, "active" | "warning" | "error"> = {
   Critica: "error",
 };
 
-// Opções de Grupo Temático (valores reais do Redmine)
-const AREAS_TEMATICAS = [
-  "Medicamentos Oncológicos/Oftalmológicos",
-  "Medicamentos Alto Impacto Financeiro",
-  "Assistência Farmacêutica Básica",
-  "Atenção à Saúde",
-  "Insumos e Equipamentos",
-  "Outros Medicamentos",
+/**
+ * Filtros sempre à vista (pedido da DLOG): CATMAT/Registro, Descrição, Unidade
+ * de fornecimento, Status e Sub-status (Ponto de Controle) e Processo SEI. Os
+ * demais ficam em "Mais filtros".
+ */
+const CAMPOS_PRINCIPAIS: CampoDemanda[] = ["pontoControle", "subStatus"];
+const CAMPOS_SECUNDARIOS: CampoDemanda[] = [
+  "status",
+  "prioridade",
+  "areaTematica",
+  "trfRegiao",
+  "ufResidencia",
+  "regiaoBrasil",
+  "objetoAcao",
+  "formaCumprimento",
+  "origemDemanda",
+  "responsavelId",
+  "apresentacao",
 ];
 
-// Regiões do Brasil
-const REGIOES_BRASIL = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"];
+const ROTULO_ORIGEM: Record<string, string> = {
+  REDMINE: "Redmine",
+  TITULO: "título",
+  DESCRICAO: "descrição",
+  SISMAT: "SISMAT",
+};
 
-// TRF Regiões (1 a 6)
-const TRF_REGIOES = [
-  { value: "1", label: "1ª Região" },
-  { value: "2", label: "2ª Região" },
-  { value: "3", label: "3ª Região" },
-  { value: "4", label: "4ª Região" },
-  { value: "5", label: "5ª Região" },
-  { value: "6", label: "6ª Região" },
-];
+/** Pausa antes de aplicar o que foi digitado: busca 400 ms (A4), código 450 ms. */
+const PAUSA_BUSCA = 400;
+const PAUSA_CODIGO = 450;
+
+function Copiar({ texto, rotulo }: { texto: string; rotulo: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Copiar ${rotulo}`}
+      title={`Copiar ${rotulo}`}
+      className="rounded p-0.5 text-muted-foreground/60 opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+      onClick={(e) => {
+        e.stopPropagation();
+        navigator.clipboard
+          .writeText(texto)
+          .then(() => toast.success(`${rotulo} copiado.`))
+          .catch(() => toast.error("Não foi possível copiar."));
+      }}
+    >
+      <Copy className="h-3 w-3" />
+    </button>
+  );
+}
 
 export default function DemandasPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
   const { data: session } = useSession();
-  const [loading, setLoading] = useState(true);
-  const [demandas, setDemandas] = useState<Demanda[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [erro, setErro] = useState<string | null>(null);
-  const [pageSize, setPageSize] = useState<number>(
-    parseInt(searchParams.get("pageSize") || "50")
+
+  // ── Estado da URL: a única fonte do filtro ─────────────────────────────────
+  const chaveUrl = searchParams.toString();
+  const filtro = useMemo(() => lerFiltroDemandas(new URLSearchParams(chaveUrl)), [chaveUrl]);
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+  const pageSize = [20, 50, 100].includes(Number(searchParams.get("pageSize")))
+    ? Number(searchParams.get("pageSize"))
+    : 50;
+
+  /** Reescreve a URL com o filtro novo (página volta para 1). */
+  const navegar = useCallback(
+    (novo: FiltroDemandas, extras: Record<string, string | null> = {}) => {
+      const sp = new URLSearchParams(chaveUrl);
+      for (const k of parametrosDoFiltro()) sp.delete(k);
+      sp.delete("page");
+      filtroParaQuery(novo, sp);
+      for (const [k, v] of Object.entries(extras)) {
+        if (v === null) sp.delete(k);
+        else sp.set(k, v);
+      }
+      router.replace(`/demandas?${sp.toString()}`, { scroll: false });
+    },
+    [chaveUrl, router]
   );
+
+  // ── Busca e processo SEI: o digitado só vira filtro depois de uma pausa ───
+  const [buscaInput, setBuscaInput] = useState(filtro.busca ?? "");
+  const [nupInput, setNupInput] = useState(filtro.nupSei ?? "");
+  const timerBusca = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerNup = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timerBusca.current) clearTimeout(timerBusca.current);
+      if (timerNup.current) clearTimeout(timerNup.current);
+    },
+    []
+  );
+  const onBusca = (v: string) => {
+    setBuscaInput(v);
+    if (timerBusca.current) clearTimeout(timerBusca.current);
+    timerBusca.current = setTimeout(() => navegar({ ...filtro, busca: v.trim() || null }), PAUSA_BUSCA);
+  };
+  const onNup = (v: string) => {
+    setNupInput(v);
+    if (timerNup.current) clearTimeout(timerNup.current);
+    timerNup.current = setTimeout(() => navegar({ ...filtro, nupSei: v.trim() || null }), PAUSA_CODIGO);
+  };
+
+  // ── Dados ──────────────────────────────────────────────────────────────────
+  const qs = useMemo(() => {
+    const sp = filtroParaQuery(filtro);
+    sp.set("page", String(page));
+    sp.set("pageSize", String(pageSize));
+    return sp.toString();
+  }, [filtro, page, pageSize]);
+  const { data, isFetching, isLoading, error } = useDemandasLista(qs);
+  const { data: opcoes, isLoading: carregandoOpcoes } = useOpcoesDemandas();
+
+  const demandas = useMemo(() => data?.data ?? [], [data]);
+  const total = data?.pagination.total ?? 0;
+  const totalPages = data?.pagination.totalPages ?? 1;
+  const filtroCatmat = data?.filtroCatmat ?? null;
+  const buscaAplicada = data?.busca ?? null;
+  const gruposCatmat = data?.gruposCatmat ?? null;
+
   const [deleteDialog, setDeleteDialog] = useState<{
     open: boolean;
     demandaId?: string;
@@ -127,9 +229,17 @@ export default function DemandasPage() {
   // Batch operations
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
+  const [exportar, setExportar] = useState<null | "filtro" | "selecao">(null);
+  const [maisFiltros, setMaisFiltros] = useState(
+    () =>
+      CAMPOS_SECUNDARIOS.some((c) => !!filtro.campos[c]) ||
+      !!(filtro.dataEntradaDe || filtro.dataEntradaAte || filtro.busca)
+  );
 
   // Column visibility (chaves = accessorKey ou id da coluna)
-  const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set(["regiaoBrasil", "dataEntradaDJUD"]));
+  const [hiddenCols, setHiddenCols] = useState<Set<string>>(
+    new Set(["regiaoBrasil", "dataEntradaDJUD", "prioridade", "ufResidencia"])
+  );
   const [showColPicker, setShowColPicker] = useState(false);
 
   const toggleCol = (col: string) =>
@@ -153,16 +263,6 @@ export default function DemandasPage() {
       prev.size === demandas.length ? new Set() : new Set(demandas.map((d) => d.id))
     );
 
-  // Helper: sincroniza filtros com a URL
-  const updateUrl = (updates: Record<string, string>) => {
-    const params = new URLSearchParams(searchParams.toString());
-    Object.entries(updates).forEach(([key, value]) => {
-      if (value) params.set(key, value);
-      else params.delete(key);
-    });
-    router.replace(`/demandas?${params.toString()}`, { scroll: false });
-  };
-
   // Verificar permissões
   const userRole = (session?.user as any)?.role || "OPERATOR";
   const permissions = rolePermissions[userRole as keyof typeof rolePermissions] || [];
@@ -171,82 +271,7 @@ export default function DemandasPage() {
   const canDelete = permissions.includes("demandas:delete");
   const canExport = permissions.includes("export:csv");
 
-  // Filtros básicos
-  const [page, setPage] = useState(searchParams.get("page") || "1");
-  const [busca, setBusca] = useState(searchParams.get("busca") || "");
-  const [status, setStatus] = useState(searchParams.get("status") || "");
-  const [prioridade, setPrioridade] = useState(searchParams.get("prioridade") || "");
-  // Filtros Sprint 8
-  const [areaTematica, setAreaTematica] = useState(searchParams.get("areaTematica") || "");
-  const [trfRegiao, setTrfRegiao] = useState(searchParams.get("trfRegiao") || "");
-  const [regiaoBrasil, setRegiaoBrasil] = useState(searchParams.get("regiaoBrasil") || "");
-  // CATMAT / registro ANVISA. Um código tem 4 a 13 dígitos e não há como saber
-  // quando terminou de ser digitado, então o valor aplicado (`catmat`) só
-  // acompanha o digitado (`catmatInput`) depois de uma pausa — senão cada
-  // tecla resolve um código parcial e a lista pisca vazia.
-  const [catmatInput, setCatmatInput] = useState(searchParams.get("catmat") || "");
-  const [catmat, setCatmat] = useState(catmatInput);
-  const catmatTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // O que o servidor resolveu para o código aplicado (descrição, substâncias
-  // ou o motivo de não dar para filtrar).
-  const [filtroCatmat, setFiltroCatmat] = useState<FiltroCatmat | null>(null);
-
-  const onCatmatChange = (v: string) => {
-    setCatmatInput(v);
-    if (catmatTimer.current) clearTimeout(catmatTimer.current);
-    catmatTimer.current = setTimeout(() => {
-      const limpo = v.trim();
-      setCatmat(limpo);
-      setPage("1");
-      updateUrl({ catmat: limpo, page: "1" });
-    }, 450);
-  };
-
-  useEffect(() => {
-    const fetchDemandas = async () => {
-      setLoading(true);
-      setErro(null);
-      try {
-        const params = new URLSearchParams();
-        params.append("page", page);
-        params.append("pageSize", pageSize.toString());
-        if (busca) params.append("busca", busca);
-        if (status) params.append("status", status);
-        if (prioridade) params.append("prioridade", prioridade);
-        if (areaTematica) params.append("areaTematica", areaTematica);
-        if (trfRegiao) params.append("trfRegiao", trfRegiao);
-        if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
-        if (catmat) params.append("catmat", catmat);
-
-        console.log("🔄 Buscando demandas...", params.toString());
-        const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
-
-        if (res.ok) {
-          const data = await res.json();
-          console.log("✅ Demandas carregadas:", data.data.length, "de", data.pagination.total);
-          setDemandas(data.data);
-          setTotal(data.pagination.total);
-          setTotalPages(data.pagination.totalPages);
-          setFiltroCatmat(data.filtroCatmat ?? null);
-        } else {
-          const errorData = await res.json();
-          const errorMsg = errorData.error || `Erro ${res.status}`;
-          console.error("❌ Erro ao carregar:", errorMsg);
-          setErro(errorMsg);
-          setDemandas([]);
-        }
-      } catch (error: any) {
-        const msg = error.message || "Erro ao carregar demandas";
-        console.error("❌ Erro de rede:", msg);
-        setErro(msg);
-        setDemandas([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchDemandas();
-  }, [page, pageSize, busca, status, prioridade, areaTematica, trfRegiao, regiaoBrasil, catmat]);
+  const atualizarLista = () => queryClient.invalidateQueries({ queryKey: ["demandas"] });
 
   const handleDelete = async () => {
     if (!deleteDialog.demandaId) return;
@@ -258,9 +283,9 @@ export default function DemandasPage() {
       });
 
       if (res.ok) {
-        setDemandas(demandas.filter((d) => d.id !== deleteDialog.demandaId));
         setDeleteDialog({ open: false });
         toast.success(`Demanda "${numero}" excluída com sucesso.`);
+        atualizarLista();
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.error || "Erro ao excluir demanda.");
@@ -270,131 +295,13 @@ export default function DemandasPage() {
     }
   };
 
-  const handleExport = async () => {
-    const params = new URLSearchParams();
-    // pageSize = 10000 para garantir exportação completa sem ultrapassar o limite do schema
-    params.append("pageSize", "10000");
-    if (busca) params.append("busca", busca);
-    if (status) params.append("status", status);
-    if (prioridade) params.append("prioridade", prioridade);
-    if (areaTematica) params.append("areaTematica", areaTematica);
-    if (trfRegiao) params.append("trfRegiao", trfRegiao);
-    if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
-    if (catmat) params.append("catmat", catmat);
-
-    const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      toast.error(err.error || "Erro ao exportar demandas.");
-      return;
-    }
-    const data = await res.json();
-
-    const csv = [
-      [
-        "Número DJUD",
-        "Número Processo",
-        "Título",
-        "Status",
-        "Prioridade",
-        "Grupo Temático",
-        "TRF Região",
-        "Região Brasil",
-        "Objeto da Ação",
-        "Princípio Ativo",
-        "Data Entrada DJUD",
-        "Responsável",
-        "Criado em",
-      ].join(","),
-      ...data.data.map((d: Demanda) =>
-        [
-          d.numero,
-          d.numeroProcesso || "",
-          d.titulo,
-          d.status || "",
-          d.prioridade || "",
-          d.areaTematica || "",
-          d.trfRegiao ? `${d.trfRegiao}ª Região` : "",
-          d.regiaoBrasil || "",
-          d.objetoAcao || "",
-          d.principioAtivo || "",
-          d.dataEntradaDJUD ? new Date(d.dataEntradaDJUD).toLocaleDateString("pt-BR") : "",
-          d.responsavel?.name || "",
-          new Date(d.criadoEm).toLocaleDateString("pt-BR"),
-        ]
-          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
-          .join(",")
-      ),
-    ].join("\n");
-
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `demandas_${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleReset = () => {
-    setBusca("");
-    setStatus("");
-    setPrioridade("");
-    setAreaTematica("");
-    setTrfRegiao("");
-    setRegiaoBrasil("");
-    if (catmatTimer.current) clearTimeout(catmatTimer.current);
-    setCatmatInput("");
-    setCatmat("");
-    setPage("1");
+    if (timerBusca.current) clearTimeout(timerBusca.current);
+    if (timerNup.current) clearTimeout(timerNup.current);
+    setBuscaInput("");
+    setNupInput("");
     setSelectedIds(new Set());
-    router.replace("/demandas", { scroll: false });
-  };
-
-  // Exportação XLSX (usa dados já carregados; para exportação completa faz novo fetch)
-  const handleExportXlsx = async () => {
-    toast.loading("Gerando XLSX...", { id: "xlsx-export" });
-    try {
-      const params = new URLSearchParams();
-      params.append("pageSize", "10000");
-      if (busca) params.append("busca", busca);
-      if (status) params.append("status", status);
-      if (prioridade) params.append("prioridade", prioridade);
-      if (areaTematica) params.append("areaTematica", areaTematica);
-      if (trfRegiao) params.append("trfRegiao", trfRegiao);
-      if (regiaoBrasil) params.append("regiaoBrasil", regiaoBrasil);
-      if (catmat) params.append("catmat", catmat);
-
-      const res = await fetch(apiPath(`/api/demandas?${params.toString()}`));
-      if (!res.ok) { toast.error("Erro ao buscar dados.", { id: "xlsx-export" }); return; }
-      const { data } = await res.json();
-
-      const rows = data.map((d: Demanda) => ({
-        "Número DJUD": d.numero,
-        "Número Processo": d.numeroProcesso || "",
-        "Título": d.titulo,
-        "Status": d.status || "",
-        "Prioridade": d.prioridade || "",
-        "Grupo Temático": d.areaTematica || "",
-        "TRF Região": d.trfRegiao ? `${d.trfRegiao}ª Região` : "",
-        "Região Brasil": d.regiaoBrasil || "",
-        "Objeto da Ação": d.objetoAcao || "",
-        "Princípio Ativo": d.principioAtivo || "",
-        "Data Entrada DJUD": d.dataEntradaDJUD ? new Date(d.dataEntradaDJUD).toLocaleDateString("pt-BR") : "",
-        "Responsável": d.responsavel?.name || "",
-        "Criado em": new Date(d.criadoEm).toLocaleDateString("pt-BR"),
-      }));
-
-      // Importar xlsx dinamicamente para não aumentar o bundle inicial
-      const XLSX = await import("xlsx");
-      const ws = XLSX.utils.json_to_sheet(rows);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Demandas");
-      XLSX.writeFile(wb, `demandas_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      toast.success(`XLSX gerado com ${rows.length} demandas.`, { id: "xlsx-export" });
-    } catch {
-      toast.error("Erro ao gerar XLSX.", { id: "xlsx-export" });
-    }
+    router.replace(`/demandas?pageSize=${pageSize}`, { scroll: false });
   };
 
   // Batch delete — move para lixeira
@@ -412,28 +319,30 @@ export default function DemandasPage() {
       else failed++;
     }
 
-    setDemandas((prev) => prev.filter((d) => !selectedIds.has(d.id)));
     setSelectedIds(new Set());
     setBatchDeleting(false);
+    atualizarLista();
 
     if (failed === 0) toast.success(`${success} demanda(s) movida(s) para a lixeira.`);
     else toast.warning(`${success} excluída(s), ${failed} com erro.`);
   };
 
   const ALL_COLUMNS = [
-    "numero", "numeroProcesso", "titulo", "areaTematica",
-    "status", "prioridade", "trfRegiao", "regiaoBrasil",
-    "dataEntradaDJUD", "responsavel",
+    "numero", "numeroProcesso", "nupSei", "titulo", "areaTematica",
+    "pontoControle", "status", "prioridade", "trfRegiao", "regiaoBrasil",
+    "ufResidencia", "dataEntradaDJUD", "responsavel",
   ];
 
   const COL_LABELS: Record<string, string> = {
-    numero: "Nº DJUD", numeroProcesso: "Nº Processo", titulo: "Título / Princípio Ativo",
-    areaTematica: "Grupo Temático", status: "Status", prioridade: "Prioridade",
-    trfRegiao: "TRF", regiaoBrasil: "Região Brasil", dataEntradaDJUD: "Entrada DJUD",
+    numero: "Nº DJUD", numeroProcesso: "Nº Processo", nupSei: "Nº SEI", titulo: "Título / Medicamento / Apresentação",
+    areaTematica: "Grupo Temático", status: "Situação (Redmine)", pontoControle: "Status (Ponto de Controle)", prioridade: "Prioridade",
+    trfRegiao: "TRF", regiaoBrasil: "Região Brasil", ufResidencia: "UF", dataEntradaDJUD: "Entrada DJUD",
     responsavel: "Responsável",
   };
 
   const allSelected = demandas.length > 0 && selectedIds.size === demandas.length;
+
+  const traco = <span className="text-muted-foreground/40 text-xs">—</span>;
 
   const columns: ColumnDef<Demanda>[] = [
     // Coluna de seleção para batch ops
@@ -473,21 +382,46 @@ export default function DemandasPage() {
       header: "Nº Processo",
       cell: ({ row }) =>
         row.original.numeroProcesso ? (
-          <span className="font-mono text-xs text-muted-foreground whitespace-nowrap">
+          <span className="group inline-flex items-center gap-1 font-mono text-xs text-muted-foreground whitespace-nowrap">
             {row.original.numeroProcesso}
+            <Copiar texto={row.original.numeroProcesso} rotulo="Nº do processo" />
           </span>
-        ) : (
-          <span className="text-muted-foreground/40 text-xs">—</span>
-        ),
+        ) : traco,
+    },
+    {
+      accessorKey: "nupSei",
+      header: "Nº SEI",
+      cell: ({ row }) =>
+        row.original.nupSei ? (
+          <span className="group inline-flex items-center gap-1 font-mono text-xs text-muted-foreground whitespace-nowrap">
+            {linkExterno("sei", row.original.nupSei) ? (
+              <a
+                href={linkExterno("sei", row.original.nupSei) as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-primary hover:underline"
+                title="Abrir o processo no SEI"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {row.original.nupSei}
+              </a>
+            ) : (
+              row.original.nupSei
+            )}
+            <Copiar texto={row.original.nupSei} rotulo="Nº SEI" />
+          </span>
+        ) : traco,
     },
     {
       accessorKey: "titulo",
-      header: "Título / Princípio Ativo",
+      header: "Título / Medicamento / Apresentação",
       cell: ({ row }) => {
         // Demandas de serviço/material não têm medicamento — daí o traço.
-        const principios = normalizarPrincipioAtivo(row.original.principioAtivo);
+        const principios = row.original.medicamento ?? normalizarPrincipioAtivo(row.original.principioAtivo);
+        const origem = row.original.medicamentoOrigem;
+        const apresentacao = row.original.apresentacoes?.[0];
         return (
-          <div className="max-w-[220px]">
+          <div className="max-w-[260px]">
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -520,6 +454,20 @@ export default function DemandasPage() {
             ) : (
               <p className="text-xs text-muted-foreground/40">—</p>
             )}
+            {principios && (
+              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                {origem && origem !== "REDMINE" && (
+                  <Badge variant="outline" className="h-4 px-1 text-[10px]" title="De onde veio o medicamento">
+                    {ROTULO_ORIGEM[origem] ?? origem}
+                  </Badge>
+                )}
+                <span className="truncate" title={apresentacao?.descricao ?? "apresentação não identificada"}>
+                  {apresentacao
+                    ? `CATMAT ${apresentacao.catmat}${apresentacao.unidades?.length ? ` · ${apresentacao.unidades.join(", ")}` : ""}`
+                    : "apresentação não identificada"}
+                </span>
+              </p>
+            )}
           </div>
         );
       },
@@ -541,16 +489,25 @@ export default function DemandasPage() {
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-        ) : (
-          <span className="text-muted-foreground/40 text-xs">—</span>
-        ),
+        ) : traco,
+    },
+    {
+      // "Status" na tela de Demandas é o Ponto de Controle (coluna BZ do Redmine).
+      accessorKey: "pontoControle",
+      header: "Status",
+      cell: ({ row }) =>
+        row.original.pontoControle ? (
+          <span className="block max-w-[180px] truncate text-xs" title={row.original.pontoControle}>
+            {row.original.pontoControle}
+          </span>
+        ) : traco,
     },
     {
       accessorKey: "status",
-      header: "Status",
+      header: "Situação",
       cell: ({ row }) => (
         <StatusBadge status={statusColors[row.original.status || ""] || "pending"}>
-          {row.original.status || "Sem status"}
+          {row.original.status || "Sem situação"}
         </StatusBadge>
       ),
     },
@@ -571,9 +528,7 @@ export default function DemandasPage() {
           <span className="text-xs font-medium whitespace-nowrap">
             {row.original.trfRegiao}ª Região
           </span>
-        ) : (
-          <span className="text-muted-foreground/40 text-xs">—</span>
-        ),
+        ) : traco,
     },
     {
       accessorKey: "regiaoBrasil",
@@ -581,9 +536,13 @@ export default function DemandasPage() {
       cell: ({ row }) =>
         row.original.regiaoBrasil ? (
           <span className="text-xs whitespace-nowrap">{row.original.regiaoBrasil}</span>
-        ) : (
-          <span className="text-muted-foreground/40 text-xs">—</span>
-        ),
+        ) : traco,
+    },
+    {
+      accessorKey: "ufResidencia",
+      header: "UF",
+      cell: ({ row }) =>
+        row.original.ufResidencia ? <span className="text-xs">{row.original.ufResidencia}</span> : traco,
     },
     {
       accessorKey: "dataEntradaDJUD",
@@ -591,11 +550,9 @@ export default function DemandasPage() {
       cell: ({ row }) =>
         row.original.dataEntradaDJUD ? (
           <span className="text-xs text-muted-foreground whitespace-nowrap">
-            {new Date(row.original.dataEntradaDJUD).toLocaleDateString("pt-BR")}
+            {new Date(row.original.dataEntradaDJUD).toLocaleDateString("pt-BR", { timeZone: "UTC" })}
           </span>
-        ) : (
-          <span className="text-muted-foreground/40 text-xs">—</span>
-        ),
+        ) : traco,
     },
     {
       accessorKey: "responsavel",
@@ -613,7 +570,7 @@ export default function DemandasPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => router.push(`/demandas/${row.original.id}/edit`)}
+              onClick={(e) => { e.stopPropagation(); router.push(`/demandas/${row.original.id}/edit`); }}
               className="h-8 px-2 gap-1.5"
               title="Editar demanda"
             >
@@ -629,7 +586,7 @@ export default function DemandasPage() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setDeleteDialog({ open: true, demandaId: row.original.id, demandaNumero: row.original.numero })}
+              onClick={(e) => { e.stopPropagation(); setDeleteDialog({ open: true, demandaId: row.original.id, demandaNumero: row.original.numero }); }}
               className="h-8 px-2 gap-1.5 text-destructive hover:text-destructive/90 hover:bg-destructive/10"
               title="Excluir demanda"
             >
@@ -646,17 +603,45 @@ export default function DemandasPage() {
     },
   ];
 
-  const isFiltered = !!(busca || status || prioridade || areaTematica || trfRegiao || regiaoBrasil || catmat);
+  const isFiltered = filtroAtivo(filtro);
 
   // Filtrar colunas ocultas (preserva select + actions sempre)
-  const visibleColumns = columns.filter(
-    (col) => !col.id || col.id === "select" || col.id === "actions" || !hiddenCols.has((col as any).accessorKey || col.id)
-  ).filter(
-    (col) => {
-      const key = (col as any).accessorKey as string | undefined;
-      return !key || !hiddenCols.has(key);
+  const visibleColumns = columns.filter((col) => {
+    const key = (col as any).accessorKey as string | undefined;
+    return !key || !hiddenCols.has(key);
+  });
+
+  const multi = (campo: CampoDemanda) => {
+    let lista = opcoes?.[campo] ?? [];
+    // Sub-status: só as combinações que contêm algum dos Status escolhidos.
+    const status = filtro.campos.pontoControle?.incluir ?? [];
+    if (campo === "subStatus" && status.length) {
+      lista = lista.filter((o) => o.itens?.some((i) => status.includes(i)) || filtro.campos.subStatus?.incluir.includes(o.valor));
     }
-  );
+    // Campo só com "(não informado)" (p.ex. responsável, hoje vazio na base) não vira filtro.
+    if (!carregandoOpcoes && lista.length <= 1 && !filtro.campos[campo] && campo !== "subStatus") return null;
+    return (
+      <FilterMultiSelect
+        key={campo}
+        label={ROTULO_CURTO[campo] ?? ROTULO_CAMPO[campo]}
+        opcoes={lista}
+        carregando={carregandoOpcoes}
+        valor={filtro.campos[campo]}
+        atalhos={campo === "status" ? ATALHOS_STATUS : []}
+        onChange={(sel) => navegar(comSelecao(filtro, campo, sel))}
+      />
+    );
+  };
+
+  const setPagina = (p: number) => {
+    const sp = new URLSearchParams(chaveUrl);
+    sp.set("page", String(p));
+    router.replace(`/demandas?${sp.toString()}`, { scroll: false });
+  };
+
+  const termosTexto = buscaAplicada?.interpretacao.tipo === "texto" ? buscaAplicada.interpretacao.termos : [];
+  const buscaReescrita =
+    termosTexto.length > 0 && termosTexto.join(" ") !== (filtro.busca ?? "").trim().toLowerCase();
 
   return (
     <div className="space-y-8">
@@ -671,6 +656,11 @@ export default function DemandasPage() {
               <span className="hidden sm:inline">Lixeira</span>
             </Button>
 
+            <VisoesMenu
+              querystring={filtroParaQuery({ ...filtro, ids: [] }).toString()}
+              onAplicar={(q) => router.replace(`/demandas?${q}${q ? "&" : ""}pageSize=${pageSize}`, { scroll: false })}
+            />
+
             {/* Visibilidade de colunas */}
             <div className="relative">
               <Button variant="outline" size="sm" onClick={() => setShowColPicker((v) => !v)} className="gap-1.5">
@@ -678,7 +668,7 @@ export default function DemandasPage() {
                 <span className="hidden sm:inline">Colunas</span>
               </Button>
               {showColPicker && (
-                <div className="absolute right-0 top-full mt-1 z-20 bg-card border border-border rounded-lg shadow-lg p-3 w-48 space-y-1">
+                <div className="absolute right-0 top-full mt-1 z-20 bg-card border border-border rounded-lg shadow-lg p-3 w-52 space-y-1">
                   {ALL_COLUMNS.map((col) => (
                     <button
                       key={col}
@@ -696,16 +686,10 @@ export default function DemandasPage() {
             </div>
 
             {canExport && (
-              <div className="flex gap-1">
-                <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
-                  <Download className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">CSV</span>
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleExportXlsx} className="gap-1.5">
-                  <FileSpreadsheet className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">XLSX</span>
-                </Button>
-              </div>
+              <Button variant="outline" size="sm" onClick={() => setExportar("filtro")} className="gap-1.5">
+                <Download className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Exportar</span>
+              </Button>
             )}
             {canCreate ? (
               <Button onClick={() => router.push("/demandas/new")}>
@@ -726,69 +710,94 @@ export default function DemandasPage() {
         onReset={isFiltered ? handleReset : undefined}
         isActive={isFiltered}
       >
+        <FiltroMaterial
+          catmat={filtro.catmat}
+          unidade={filtro.unidade}
+          onChange={({ catmat, unidade }) => navegar({ ...filtro, catmat, unidade, catmatGrupo: null })}
+        />
+        {CAMPOS_PRINCIPAIS.map(multi)}
         <FilterInput
-          label="Buscar"
-          placeholder="Número, título, processo, medicamento..."
-          value={busca}
-          onChange={(v) => { setBusca(v); setPage("1"); updateUrl({ busca: v, page: "1" }); }}
+          label="Processo SEI"
+          placeholder="Ex.: 25000.123456/2021-11"
+          value={nupInput}
+          onChange={onNup}
         />
-        <FilterInput
-          label="CATMAT / Registro ANVISA"
-          placeholder="Ex.: 457888 ou 1006811570015"
-          value={catmatInput}
-          onChange={onCatmatChange}
-        />
-        <FilterSelect
-          label="Status"
-          value={status}
-          onChange={(v) => { setStatus(v); setPage("1"); updateUrl({ status: v, page: "1" }); }}
-          options={[
-            { value: "Em Análise", label: "Em Análise" },
-            { value: "Em Análise COAJUD", label: "Em Análise COAJUD" },
-            { value: "Em Análise CONJUR", label: "Em Análise CONJUR" },
-            { value: "Concluída", label: "Concluída" },
-            { value: "Cancelada", label: "Cancelada" },
-            { value: "Suspensa", label: "Suspensa" },
-            { value: "Entrega Pendente", label: "Entrega Pendente" },
-            { value: "Cessar Atos", label: "Cessar Atos" },
-            { value: "Aberta", label: "Aberta" },
-            { value: "Fechada", label: "Fechada" },
-            { value: "Arquivada", label: "Arquivada" },
-          ]}
-        />
-        <FilterSelect
-          label="Prioridade"
-          value={prioridade}
-          onChange={(v) => { setPrioridade(v); setPage("1"); updateUrl({ prioridade: v, page: "1" }); }}
-          options={[
-            { value: "Baixa", label: "Baixa" },
-            { value: "Média", label: "Média" },
-            { value: "Alta", label: "Alta" },
-            { value: "Crítica", label: "Crítica" },
-          ]}
-        />
-        <FilterSelect
-          label="Grupo Temático"
-          value={areaTematica}
-          onChange={(v) => { setAreaTematica(v); setPage("1"); updateUrl({ areaTematica: v, page: "1" }); }}
-          options={AREAS_TEMATICAS.map((a) => ({ value: a, label: a }))}
-        />
-        <FilterSelect
-          label="TRF Região"
-          value={trfRegiao}
-          onChange={(v) => { setTrfRegiao(v); setPage("1"); updateUrl({ trfRegiao: v, page: "1" }); }}
-          options={TRF_REGIOES}
-        />
-        <FilterSelect
-          label="Região Brasil"
-          value={regiaoBrasil}
-          onChange={(v) => { setRegiaoBrasil(v); setPage("1"); updateUrl({ regiaoBrasil: v, page: "1" }); }}
-          options={REGIOES_BRASIL.map((r) => ({ value: r, label: r }))}
-        />
+        {maisFiltros && (
+          <>
+            <FilterInput
+              label="Buscar (texto, nº DJUD, nº do processo)"
+              placeholder="Nome do medicamento, nº DJUD, nº CNJ…"
+              value={buscaInput}
+              onChange={onBusca}
+            />
+            {CAMPOS_SECUNDARIOS.map(multi)}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Entrada no DJUD</Label>
+              <div className="flex items-center gap-1">
+                <Input
+                  type="date"
+                  aria-label="Entrada no DJUD a partir de"
+                  className="h-9 text-sm"
+                  value={filtro.dataEntradaDe ?? ""}
+                  onChange={(e) => navegar({ ...filtro, dataEntradaDe: e.target.value || null })}
+                />
+                <span className="text-xs text-muted-foreground">a</span>
+                <Input
+                  type="date"
+                  aria-label="Entrada no DJUD até"
+                  className="h-9 text-sm"
+                  value={filtro.dataEntradaAte ?? ""}
+                  onChange={(e) => navegar({ ...filtro, dataEntradaAte: e.target.value || null })}
+                />
+              </div>
+            </div>
+          </>
+        )}
+        <div className="flex items-end">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setMaisFiltros((v) => !v)}
+            aria-expanded={maisFiltros}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            {maisFiltros ? "Menos filtros" : "Mais filtros"}
+          </Button>
+        </div>
       </FilterBar>
 
-      {/* Tradução do código: a Demanda não tem CATMAT, o filtro é por substância */}
-      {catmat && filtroCatmat && (
+      {/* Como a busca foi lida (A4) */}
+      {filtro.busca && buscaAplicada && (buscaAplicada.codigo || buscaAplicada.interpretacao.tipo === "numero" || buscaReescrita) && (
+        <div className="-mt-4 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          {buscaAplicada.codigo ? (
+            <>
+              “{filtro.busca}” interpretado como{" "}
+              <span className="font-medium text-foreground">
+                {buscaAplicada.codigo.tipo === "REGISTRO"
+                  ? `registro ANVISA ${buscaAplicada.codigo.registro}`
+                  : `CATMAT ${buscaAplicada.codigo.catmat}`}
+              </span>{" "}
+              — {buscaAplicada.codigo.descricao} (substâncias: {buscaAplicada.codigo.grupos.map((g) => g.rotulo).join(" ou ")}). A
+              busca inclui também as demandas que citam o número.
+            </>
+          ) : buscaAplicada.interpretacao.tipo === "numero" ? (
+            <>
+              Procurando o número <span className="font-mono text-foreground">{buscaAplicada.interpretacao.digitos}</span> (só os
+              dígitos) no Nº DJUD, no nº do processo e no NUP SEI.
+            </>
+          ) : (
+            <>
+              Busca sem acento, pelo radical das palavras longas:{" "}
+              <span className="font-mono text-foreground">{termosTexto.join(" ")}</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Tradução do código: a Demanda não tem CATMAT, o filtro é por substância e apresentação */}
+      {filtro.catmat && filtroCatmat && (
         filtroCatmat.encontrado ? (
           <div className="-mt-4 rounded-md border bg-muted/30 px-3 py-2 text-xs flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className="font-medium">
@@ -803,9 +812,32 @@ export default function DemandasPage() {
               · {filtroCatmat.descricao}
             </span>
             <span className="basis-full text-muted-foreground">
-              Demandas cujo medicamento corresponde a:{" "}
-              <span className="text-foreground">{filtroCatmat.grupos.map((g) => g.rotulo).join(" ou ")}</span>
+              Substância: <span className="text-foreground">{filtroCatmat.grupos.map((g) => g.rotulo).join(" ou ")}</span>
+              {filtro.unidade && <> · unidade <span className="text-foreground">{filtro.unidade}</span></>}
             </span>
+            {gruposCatmat && (
+              <span className="basis-full flex flex-wrap items-center gap-1.5 pt-1">
+                {([
+                  [null, `Todas (${(gruposCatmat.exata + gruposCatmat.naoIdentificada).toLocaleString("pt-BR")})`],
+                  ["exata", `Apresentação exata (${gruposCatmat.exata.toLocaleString("pt-BR")})`],
+                  ["nao_identificada", `Mesma substância, apresentação não identificada (${gruposCatmat.naoIdentificada.toLocaleString("pt-BR")})`],
+                ] as const).map(([grupo, rotulo]) => (
+                  <button
+                    key={grupo ?? "todas"}
+                    type="button"
+                    aria-pressed={filtro.catmatGrupo === grupo}
+                    onClick={() => navegar({ ...filtro, catmatGrupo: grupo })}
+                    className={
+                      filtro.catmatGrupo === grupo
+                        ? "rounded-full border border-primary bg-primary px-2 py-0.5 text-[11px] text-primary-foreground"
+                        : "rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    }
+                  >
+                    {rotulo}
+                  </button>
+                ))}
+              </span>
+            )}
           </div>
         ) : (
           <div className="-mt-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-2">
@@ -815,16 +847,16 @@ export default function DemandasPage() {
         )
       )}
 
-      {/* Exibir erro se houver */}
-      {erro && (
+      {/* Erro amigável (o detalhe fica no log do servidor) */}
+      {error && (
         <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
           <AlertCircle className="h-4 w-4 inline mr-2" />
-          {erro}
+          {error.message}
         </div>
       )}
 
-      {/* Skeleton de carregamento */}
-      {loading && (
+      {/* Skeleton só na primeira carga; depois a tabela fica com os dados anteriores */}
+      {isLoading && (
         <div className="space-y-2">
           {Array.from({ length: 10 }).map((_, i) => (
             <div key={i} className="h-12 bg-muted animate-pulse rounded-md" />
@@ -841,19 +873,12 @@ export default function DemandasPage() {
               <RotateCcw className="h-3.5 w-3.5" />
               Limpar
             </Button>
-            <Button variant="outline" size="sm" onClick={() => {
-              const ids = [...selectedIds];
-              const params = new URLSearchParams();
-              params.append("pageSize", "10000");
-              ids.forEach((id) => {
-                const d = demandas.find((x) => x.id === id);
-                if (d) params.append("ids", d.id);
-              });
-              handleExport();
-            }} className="gap-1.5">
-              <Download className="h-3.5 w-3.5" />
-              Exportar seleção
-            </Button>
+            {canExport && (
+              <Button variant="outline" size="sm" onClick={() => setExportar("selecao")} className="gap-1.5">
+                <Download className="h-3.5 w-3.5" />
+                Exportar seleção
+              </Button>
+            )}
             {canDelete && (
               <Button
                 variant="destructive"
@@ -870,97 +895,73 @@ export default function DemandasPage() {
         </div>
       )}
 
-      {/* DataTable — 100 itens por página */}
-      {!loading && !erro && (
-        <DataTable<Demanda>
-          columns={visibleColumns}
-          data={demandas}
-          loading={false}
-          pageSize={pageSize}
-          onRowClick={(row) => router.push(`/demandas/${row.id}`)}
-          renderEmptyState={() => (
-            <EmptyState
-              title="Nenhuma demanda encontrada"
-              description={
-                isFiltered
-                  ? "Nenhuma demanda corresponde aos filtros aplicados. Tente redefinir os filtros."
-                  : "Comece criando uma nova demanda ou importe dados do Excel."
-              }
-              action={
-                isFiltered ? (
-                  <Button variant="outline" onClick={handleReset}>
-                    Limpar filtros
-                  </Button>
-                ) : (
-                  <Button onClick={() => router.push("/demandas/new")}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Nova Demanda
-                  </Button>
-                )
-              }
-            />
+      {!isLoading && !error && (
+        <div className={isFetching ? "relative space-y-3 opacity-60 transition-opacity" : "relative space-y-3"}>
+          {/* Itens por página e paginação acima do cabeçalho dos registros */}
+          <Paginacao
+            pagina={page}
+            totalPaginas={totalPages}
+            totalRegistros={total}
+            onPagina={setPagina}
+            tamanho={pageSize}
+            onTamanho={(n) => {
+              const sp = new URLSearchParams(chaveUrl);
+              sp.set("pageSize", String(n));
+              sp.delete("page");
+              router.replace(`/demandas?${sp.toString()}`, { scroll: false });
+            }}
+            carregando={isFetching}
+          />
+          {isFetching && (
+            <Loader2 className="absolute right-2 top-9 h-4 w-4 animate-spin text-muted-foreground" aria-label="Atualizando" />
           )}
-        />
+          <DataTable<Demanda>
+            columns={visibleColumns}
+            data={demandas}
+            loading={false}
+            pageSize={pageSize}
+            paginacaoInterna={false}
+            onRowClick={(row) => router.push(`/demandas/${row.id}`)}
+            renderEmptyState={() => (
+              <EmptyState
+                title="Nenhuma demanda encontrada"
+                description={
+                  isFiltered
+                    ? "Nenhuma demanda corresponde aos filtros aplicados. Tente redefinir os filtros."
+                    : "Comece criando uma nova demanda ou importe dados do Excel."
+                }
+                action={
+                  isFiltered ? (
+                    <Button variant="outline" onClick={handleReset}>
+                      Limpar filtros
+                    </Button>
+                  ) : (
+                    <Button onClick={() => router.push("/demandas/new")}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Nova Demanda
+                    </Button>
+                  )
+                }
+              />
+            )}
+          />
+          {/* Repetida embaixo, sem o tamanho da página: quem rolou até o fim avança dali. */}
+          {totalPages > 1 && (
+            <Paginacao pagina={page} totalPaginas={totalPages} onPagina={setPagina} carregando={isFetching} />
+          )}
+        </div>
       )}
 
-      {/* Paginação + pagesize selector */}
-      <div className="flex items-center justify-between px-1 flex-wrap gap-3">
-        {/* Pagesize selector */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Itens por página:</span>
-          <div className="flex gap-1">
-            {[20, 50, 100].map((size) => (
-              <Button
-                key={size}
-                variant={pageSize === size ? "default" : "outline"}
-                size="sm"
-                className="h-7 px-2.5 text-xs"
-                onClick={() => {
-                  setPageSize(size);
-                  setPage("1");
-                  updateUrl({ pageSize: String(size), page: "1" });
-                }}
-              >
-                {size}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        {/* Paginação */}
-        {totalPages > 1 && (
-          <div className="flex items-center gap-3">
-            <p className="text-xs text-muted-foreground">
-              Página{" "}
-              <span className="font-semibold text-foreground">{page}</span>{" "}
-              de{" "}
-              <span className="font-semibold text-foreground">
-                {totalPages.toLocaleString("pt-BR")}
-              </span>
-            </p>
-            <div className="flex gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-                disabled={page === "1"}
-                onClick={() => { const p = String(Math.max(1, parseInt(page) - 1)); setPage(p); updateUrl({ page: p }); }}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0 transition-all hover:border-primary/40 hover:text-primary disabled:opacity-30"
-                disabled={parseInt(page) >= totalPages}
-                onClick={() => { const p = String(Math.min(totalPages, parseInt(page) + 1)); setPage(p); updateUrl({ page: p }); }}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
+      {exportar && (
+        <ExportarDialog
+          aberto
+          onOpenChange={(v) => !v && setExportar(null)}
+          filtro={filtro}
+          total={total}
+          selecionados={Array.from(selectedIds)}
+          escopoInicial={exportar}
+        />
+      )}
 
       <ConfirmDialog
         open={deleteDialog.open}

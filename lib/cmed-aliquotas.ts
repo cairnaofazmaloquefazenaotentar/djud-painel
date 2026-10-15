@@ -30,6 +30,11 @@ export function rotuloAliquota(codigo: CodigoAliquota): string {
   return alc ? `${taxa}% ALC` : `${taxa}%`;
 }
 
+/** "PMVG sem impostos", "PMVG 17%", "PMVG 17,5% ALC" — o nome do PMVG de uma alíquota. */
+export function rotuloPmvg(codigo: CodigoAliquota): string {
+  return codigo === "SEM_IMPOSTOS" ? "PMVG sem impostos" : `PMVG ${rotuloAliquota(codigo)}`;
+}
+
 function posicaoExibicao(codigo: CodigoAliquota): number {
   if (codigo === "SEM_IMPOSTOS") return -1;
   const alc = codigo.endsWith("_ALC");

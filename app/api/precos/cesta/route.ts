@@ -54,6 +54,17 @@ export async function POST(request: NextRequest) {
       );
     }
     const { codigo, unidade, uf, quantidade, observacao, exclusoes, orcamentos } = parsed.data;
+    const config = {
+      ...(parsed.data.periodoMeses !== undefined ? { periodoMeses: parsed.data.periodoMeses } : {}),
+      ...(parsed.data.periodoInicio !== undefined ? { periodoInicio: parsed.data.periodoInicio } : {}),
+      ...(parsed.data.justificativaPeriodo !== undefined ? { justificativaPeriodo: parsed.data.justificativaPeriodo } : {}),
+      ...(parsed.data.corrigirIpca !== undefined ? { corrigirIpca: parsed.data.corrigirIpca } : {}),
+      ...(parsed.data.duplicidadesRevertidas !== undefined ? { duplicidadesRevertidas: parsed.data.duplicidadesRevertidas } : {}),
+      ...(parsed.data.metodoPreco !== undefined ? { metodoPreco: parsed.data.metodoPreco } : {}),
+      ...(parsed.data.regraTeto !== undefined ? { regraTeto: parsed.data.regraTeto } : {}),
+      ...(parsed.data.aliquotaTeto !== undefined ? { aliquotaTeto: parsed.data.aliquotaTeto } : {}),
+      ...(parsed.data.justificativa !== undefined ? { justificativa: parsed.data.justificativa } : {}),
+    };
 
     if (!classificarCodigo(codigo)) {
       return NextResponse.json(
@@ -66,7 +77,20 @@ export async function POST(request: NextRequest) {
     // dá o snapshot de preço que a cesta exibe até a emissão do relatório. A
     // curadoria vinda da tela entra já aqui, para o snapshot refletir o que o
     // relatório vai apurar.
-    const resultado = await pesquisarPrecos({ codigo, unidade, uf, exclusoes, orcamentos });
+    const resultado = await pesquisarPrecos({
+      codigo,
+      unidade,
+      uf,
+      exclusoes,
+      orcamentos,
+      duplicidadesRevertidas: config.duplicidadesRevertidas,
+      corrigirIpca: config.corrigirIpca,
+      periodo: {
+        mesesMercado: config.periodoMeses === 0 ? null : (config.periodoMeses as 12 | 24 | 36 | undefined) ?? 12,
+        justificativaAmpliacao: config.justificativaPeriodo ?? null,
+        inicio: config.periodoInicio ?? null,
+      },
+    });
     if (!resultado) {
       return NextResponse.json(
         { error: "Código não encontrado no catálogo CATMAT nem nos registros ANVISA (CMED)" },
@@ -107,6 +131,7 @@ export async function POST(request: NextRequest) {
                   create: orcamentos,
                 },
               }),
+          ...config,
           ...precos,
         },
         include: { orcamentos: { orderBy: { criadoEm: "asc" } } },
@@ -137,6 +162,7 @@ export async function POST(request: NextRequest) {
         observacao: observacao ?? null,
         exclusoes: exclusoes ?? [],
         ...(orcamentos?.length ? { orcamentos: { create: orcamentos } } : {}),
+        ...config,
         ...precos,
       },
       include: { orcamentos: { orderBy: { criadoEm: "asc" } } },

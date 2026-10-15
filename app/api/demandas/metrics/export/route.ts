@@ -5,8 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getMetricsData } from "@/lib/metrics";
 import { getRankingAnual, type RankingAnualData } from "@/lib/metrics-ranking-anual";
-import { csvDoPainel, paginaPainelHTML, type FiltroDescrito } from "@/lib/metrics-export";
-import { filterMetricsSchema } from "@/lib/schemas";
+import { csvDoPainel, descreverRecorte, paginaPainelHTML } from "@/lib/metrics-export";
+import { lerFiltroDemandas } from "@/lib/demandas-filtro-tipos";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -20,8 +20,6 @@ import { NextRequest, NextResponse } from "next/server";
 // pontos que couberam no gráfico.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const fmtData = (d: Date) => d.toLocaleDateString("pt-BR");
-
 export async function GET(request: NextRequest) {
   try {
     const session = await auth();
@@ -33,25 +31,8 @@ export async function GET(request: NextRequest) {
     const formato = sp.get("format") === "html" ? "html" : "csv";
     const comRanking = sp.get("rankingAnual") === "1";
 
-    const filters = filterMetricsSchema.parse({
-      startDate: sp.get("startDate") ?? undefined,
-      endDate: sp.get("endDate") ?? undefined,
-      status: sp.get("status") ?? undefined,
-      prioridade: sp.get("prioridade") ?? undefined,
-      principioAtivo: sp.get("principioAtivo") ?? undefined,
-      organizacaoId: sp.get("organizacaoId") ?? undefined,
-      catmat: sp.get("catmat") ?? undefined,
-    });
-
-    const parametros = {
-      startDate: filters.startDate ? new Date(filters.startDate) : undefined,
-      endDate: filters.endDate ? new Date(filters.endDate) : undefined,
-      status: filters.status,
-      prioridade: filters.prioridade,
-      principioAtivo: filters.principioAtivo,
-      organizacaoId: filters.organizacaoId,
-      catmat: filters.catmat,
-    };
+    const filtro = lerFiltroDemandas(sp);
+    const parametros = { filtro };
 
     const [metrics, ranking] = await Promise.all([
       getMetricsData(parametros),
@@ -60,21 +41,7 @@ export async function GET(request: NextRequest) {
 
     // O que vai impresso como "recorte da análise": só os filtros realmente
     // aplicados, com o rótulo que o usuário vê na tela.
-    const descritos: FiltroDescrito[] = [];
-    if (parametros.startDate) descritos.push(["Data inicial", fmtData(parametros.startDate)]);
-    if (parametros.endDate) descritos.push(["Data final", fmtData(parametros.endDate)]);
-    if (filters.status) descritos.push(["Status", filters.status]);
-    if (filters.prioridade) descritos.push(["Prioridade", filters.prioridade]);
-    if (filters.principioAtivo) descritos.push(["Princípio ativo", filters.principioAtivo]);
-    if (metrics.filtroCatmat) {
-      const f = metrics.filtroCatmat;
-      descritos.push([
-        f.tipo === "REGISTRO" ? "Registro ANVISA" : "Código CATMAT",
-        f.encontrado
-          ? `${f.codigo} — ${f.descricao ?? ""} (substâncias: ${f.grupos.map((g) => g.rotulo).join(" · ")})`
-          : `${f.codigo} — ${f.motivo ?? "não encontrado"}`,
-      ]);
-    }
+    const descritos = descreverRecorte(filtro, metrics);
 
     const geradoEm = new Date();
     const ctx = {

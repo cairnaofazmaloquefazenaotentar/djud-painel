@@ -97,15 +97,36 @@ export function limitesIqr(valores: number[]): { lo: number; hi: number } | null
 
 // ── 2. Exclusão justificada de registros ─────────────────────────────────────
 
-/** Fontes cujos registros individuais podem ser desconsiderados. */
-export type FonteCurada = "bps" | "siasg" | "pncp" | "cmed" | "orcamentos";
+/**
+ * Fontes cujos registros individuais podem ser desconsiderados. As de mercado
+ * seguem a ordem dos incisos do art. 5º (ver lib/pesquisa-preco-fontes.ts);
+ * a CMED é o teto regulatório, tratada à parte.
+ */
+export type FonteCurada =
+  | "comprasgov"
+  | "bps"
+  | "siasg"
+  | "pncp"
+  | "arp"
+  | "similar"
+  | "midia"
+  | "orcamentos"
+  | "notaFiscal"
+  | "cmed";
 
+// "siasg" e "pncp" são bases da fonte Compras.gov.br; os nomes ficam para
+// ler exclusões gravadas antes da junção (normalizarExclusoes as converte).
 export const NOME_FONTE_CURADA: Record<FonteCurada, string> = {
+  comprasgov: "Compras.gov.br",
   bps: "BPS",
-  siasg: "SIASG (judicial)",
-  pncp: "PNCP",
-  cmed: "CMED/ANVISA",
+  siasg: "Compras.gov.br — SIASG judicial",
+  pncp: "Compras.gov.br — base PNCP do painel",
+  arp: "Ata de registro de preços",
+  similar: "Contratação similar informada",
+  midia: "Mídia especializada / sítio eletrônico",
   orcamentos: "Orçamento direto de fornecedor",
+  notaFiscal: "Nota fiscal eletrônica",
+  cmed: "CMED/ANVISA",
 };
 
 const FONTES_CURADAS = Object.keys(NOME_FONTE_CURADA) as FonteCurada[];
@@ -142,10 +163,13 @@ export function normalizarExclusoes(
     const id = String((e as ExclusaoRegistro).id ?? "").trim();
     const motivo = String((e as ExclusaoRegistro).motivo ?? "").trim().slice(0, MOTIVO_MAX);
     if (!FONTES_CURADAS.includes(fonte) || !id || !motivoValido(motivo)) continue;
-    const chave = `${fonte}:${id}`;
+    // SIASG judicial e a base PNCP entraram na fonte Compras.gov.br: a
+    // exclusão gravada antes da junção continua valendo (o id é o mesmo).
+    const fonteAtual: FonteCurada = fonte === "siasg" || fonte === "pncp" ? "comprasgov" : fonte;
+    const chave = `${fonteAtual}:${id}`;
     if (vistos.has(chave)) continue;
     vistos.add(chave);
-    saida.push({ fonte, id, motivo });
+    saida.push({ fonte: fonteAtual, id, motivo });
     if (saida.length >= MAX_EXCLUSOES) break;
   }
   return saida;
@@ -172,10 +196,28 @@ export interface RegistroDescartado {
   motivo: string;
 }
 
-// ── 3. Orçamento direto de fornecedor (art. 5º, IV) ──────────────────────────
+// ── 3. Preços informados pelo responsável (art. 5º, II a V) ──────────────────
+//
+// O "orçamento direto" virou "preço informado" com tipo (P13 da avaliação da
+// DLOG). Cada tipo é uma fonte própria no consolidado, com a janela do seu
+// inciso (lib/pesquisa-preco-periodo.ts) e sem IQR — foi escolhido a dedo.
 
-/** Teto de orçamentos por item — mais que isto vira base de preços, não cotação. */
-export const MAX_ORCAMENTOS = 10;
+export type TipoPrecoInformado = "IV" | "III" | "V" | "II";
+
+export const TIPOS_PRECO_INFORMADO: Record<
+  TipoPrecoInformado,
+  { fonte: FonteCurada; rotulo: string; documento: string }
+> = {
+  IV: { fonte: "orcamentos", rotulo: "Cotação com fornecedor (art. 5º, IV)", documento: "Nº da proposta / e-mail / SEI" },
+  III: { fonte: "midia", rotulo: "Mídia especializada ou sítio eletrônico (art. 5º, III)", documento: "Publicação / página consultada" },
+  V: { fonte: "notaFiscal", rotulo: "Nota fiscal eletrônica (art. 5º, V)", documento: "Nº da nota fiscal" },
+  II: { fonte: "similar", rotulo: "Contratação similar fora das bases (art. 5º, II)", documento: "Contrato / ata / processo" },
+};
+
+export const ORDEM_TIPOS_INFORMADOS: TipoPrecoInformado[] = ["II", "III", "IV", "V"];
+
+/** Teto de preços informados por item — mais que isto vira base de preços, não cotação. */
+export const MAX_ORCAMENTOS = 30;
 
 export interface OrcamentoFornecedor {
   /** Estável dentro do item; gerado na tela ou pelo banco (CestaOrcamento.id). */
@@ -197,12 +239,30 @@ export interface OrcamentoFornecedor {
   observacao: string | null;
   /** false = fica registrado no relatório, mas fora do cálculo. */
   considerarNoCalculo: boolean;
+  /** Tipo do preço informado; ausente nos registros antigos = IV (cotação). */
+  tipo: TipoPrecoInformado;
+  /** III: endereço da página consultada. */
+  url: string | null;
+  /** III: data e hora do acesso (ISO) — exigidas pelo inciso III. */
+  acessadoEm: string | null;
+  /** V: chave de acesso da NF-e (44 dígitos). */
+  chaveNfe: string | null;
+  /** Mantém no cálculo um preço fora da janela do inciso, com justificativa. */
+  justificativaForaPeriodo: string | null;
 }
 
 const soData = (v: unknown): string | null => {
   const s = String(v ?? "").trim();
   if (!s) return null;
   const d = new Date(s.length <= 10 ? `${s}T00:00:00` : s);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+/** Data e hora (ISO completo), sem cortar a hora como `soData`. */
+const soDataHora = (v: unknown): string | null => {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
 
@@ -228,6 +288,9 @@ export function normalizarOrcamentos(bruto: unknown): OrcamentoFornecedor[] {
     if (!fornecedor || !Number.isFinite(valorUnitario) || valorUnitario <= 0 || !dataOrcamento) {
       continue;
     }
+    const tipo: TipoPrecoInformado =
+      r.tipo && (ORDEM_TIPOS_INFORMADOS as string[]).includes(r.tipo) ? r.tipo : "IV";
+    const url = texto(r.url, 500);
     saida.push({
       id: texto(r.id, 60) ?? `orc-${i + 1}`,
       fornecedor,
@@ -240,6 +303,11 @@ export function normalizarOrcamentos(bruto: unknown): OrcamentoFornecedor[] {
       documento: texto(r.documento, 120),
       observacao: texto(r.observacao, 300),
       considerarNoCalculo: r.considerarNoCalculo !== false,
+      tipo,
+      url: url && /^https?:\/\//i.test(url) ? url : null,
+      acessadoEm: soDataHora(r.acessadoEm),
+      chaveNfe: (String(r.chaveNfe ?? "").replace(/\D/g, "") || null),
+      justificativaForaPeriodo: texto(r.justificativaForaPeriodo, MOTIVO_MAX),
     });
     if (saida.length >= MAX_ORCAMENTOS) break;
   }

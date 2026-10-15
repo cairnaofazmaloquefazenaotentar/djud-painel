@@ -64,6 +64,10 @@ stories/          # Storybook 8 — 8 components × 2-6 stories cada
 
 3. **Cores em oklch(L C H), nunca hsl/rgb/hex.**
 
+4. **Janelas modais** em `components/ui/dialog.tsx`: fecham no Esc e no clique fora (contado só
+   quando o botão desce e sobe no fundo). Esc já tratado por um componente de dentro (lista de
+   sugestões, Select — `preventDefault`) fecha só ele, não a janela.
+
 ## RBAC — Roles e Permissões
 
 | Role     | Pode fazer                                                    |
@@ -84,6 +88,8 @@ npm run db:push          # Sync Prisma schema → banco
 npm run build            # Build production
 npm run lint             # ESLint check
 
+# Scripts Python: ambiente virtual com `pip install -r scripts/requirements.txt` (no macOS só existe
+# `python3` fora do venv — ver docs/ATUALIZACAO_DE_DADOS.md). DATABASE_URL: ambiente → .env.local → .env
 # Pesquisa de Preços — bases de apoio (Python: openpyxl + psycopg; lê DATABASE_URL de .env.local)
 python scripts/import_catmat_classes.py --file "Catmats - 16 Classes - DD.MM.AAAA.xlsx" --dry-run|--confirm
 python scripts/import_cmed_registros.py --file "01. CMED - grande.padrão - ....xlsx" --dry-run|--confirm
@@ -99,6 +105,20 @@ python scripts/create_orcamento_table.py --dry-run|--confirm
 # --limpar-orfas, --saida relatorio.csv
 python scripts/import_cmed_mensal.py --dir cmed_originais_arr --dry-run|--confirm
 python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Python, cabeçalhos e valores
+
+# Avaliação da DLOG (out/2026) — uma vez por ambiente, ANTES do deploy que lê as colunas/tabelas
+python scripts/create_dadosabertos_tables.py --dry-run|--confirm   # DadosAbertosPreco/Coleta, PncpVinculo
+python scripts/alter_cesta_dlog.py --dry-run|--confirm             # colunas de D1/D2/P11–P13/P18 na cesta
+python scripts/import_ipca.py --dry-run|--confirm                  # IndiceIpca (SIDRA 1737); mensal, UPSERT
+python scripts/alter_demanda_busca.py --dry-run|--confirm [--redmine base.xlsx]  # Demanda: buscaNorm (pg_trgm), nupSei, colunas da A5
+python scripts/enriquecer_demandas.py --dry-run|--confirm [--relatorio cob.csv]   # A5, depois de cada carga do Redmine
+
+# Autotestes e conferências (sem banco, exceto o mapa gerado)
+npx tsx scripts/autoteste-pesquisa-preco.ts       # período, IPCA, duplicidade, escolha gravada (roda no CI)
+npx tsx scripts/autoteste-demandas.ts             # filtro único, busca, buscaNorm/NUP × Python (roda no CI)
+python scripts/demandas_busca.py && python scripts/substancia.py   # espelhos Python × casos_busca.json
+npx tsx scripts/conferir-mapear-dados-abertos.ts  # mapear.ts × esperado_mapear.json (roda no CI)
+python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--painel r.json]
 ```
 
 ## Pesquisa de Preços (aba /pesquisa-preco)
@@ -110,11 +130,46 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   (REPLACE; criam a tabela se ausente com a mesma DDL do `prisma db push`).
 - Preço CMED é por embalagem (`PrecoCmed.pmvgSemImpostos`); a pesquisa divide por `qtEmbalagem` para
   refletir a menor unidade de fornecimento. Registros sem CATMAT só têm preço CMED.
-- Fontes: CMED (teto), BPS, SIASG judicial, PNCP e **orçamento direto de fornecedor**
-  (art. 5º, IV — informado pelo usuário, não consultado em base). Cruzamento por código:
-  BPS/SIASG usam `"BR0" + CATMAT`, PNCP usa o código puro.
+- Fontes: CMED (teto), **Compras.gov.br** (uma fonte só, com três bases: a API de dados abertos —
+  Painel de Preços —, o SIASG judicial e a base PNCP do painel; `composicao` dá total, fora do período
+  e filtro sem coluna por base, e cada registro traz `base`), BPS (API do Ministério da Saúde ou, sem
+  coleta, a base histórica `PrecoBps`), **atas de registro de preços** (API) e os **preços informados
+  pelo responsável** (P13: II contratação similar, III mídia/sítio, IV cotação com fornecedor, V nota
+  fiscal — cada tipo é uma fonte). O **PNCP não é fonte à parte**: é o link da contratação de cada
+  compra do Compras.gov.br (vínculo abaixo). Rótulos das bases em `ROTULO_BASE`
+  (`lib/pesquisa-preco-fontes.ts`); exclusões gravadas com `fonte` siasg/pncp (antes da fusão) são
+  lidas como `comprasgov`. Cruzamento por código: BPS/SIASG locais usam `"BR0" + CATMAT`, PNCP local
+  o código puro; as fontes de dados abertos gravam o CATMAT sem zeros.
 - A base ComprasGov (`sismat.ComprasGovPreco`) **não** entra na Pesquisa de Preços: não traz CATMAT e
-  só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços.
+  só poderia ser cruzada por nome do PDM, sem dosagem. Ela alimenta apenas a aba Preços. Não confundir
+  com a fonte "Compras.gov.br" (tabela `DadosAbertosPreco`, origem `COMPRASGOV`).
+- Ordem e rótulos das fontes (incisos do art. 5º) em `lib/pesquisa-preco-fontes.ts` — a tela, o HTML
+  e o mapa XLSX usam a mesma lista.
+
+### Dados abertos (Compras.gov.br, BPS, atas) e vínculo com o PNCP
+
+- `lib/dados-abertos/`: `cliente.ts` (timeout, 5xx, 429 → `aguardarMs`, 404 = contrato alterado,
+  200 sem JSON = erro, cota de 90/min por processo), `comprasgov.ts`, `bps.ts`, `pncp-vinculo.ts`,
+  `coleta.ts`, `pesquisa.ts` e `mapear.ts` — o ÚNICO que conhece os nomes de campo das APIs, com
+  espelho em `scripts/dados_abertos_mapear.py` (os dois conferidos contra
+  `scripts/fixtures/dados-abertos/esperado_mapear.json`).
+- Coleta **uma página por chamada** (`POST /api/precos/dados-abertos/coletar`); a tela repete, espaça
+  700 ms e obedece `aguardarMs` — a função nunca dorme esperando a cota. Janela: 36 meses
+  (Compras.gov.br e BPS), 365 dias (atas). Coleta completa remove da janela o que a API não devolve mais.
+  Relatórios nunca coletam.
+- **Ids estáveis**: `COMPRASGOV:<idCompra(17)+item(5)>`, `BPS:<sha1 do conteúdo>`,
+  `ARP:<nº de controle da ata>:<item>`. Nunca `cuid()` — a curadoria grava exclusões pelo id.
+- `idCompra` tem 16 ou 17 dígitos e vem da API como inteiro acima de 2^53: leia com
+  `parseJsonSeguro` e normalize para 17 dígitos (o PNCP não acha a compra com 16).
+- Vínculo PNCP (`PncpVinculo`, `POST /api/precos/dados-abertos/vincular-pncp`): 1.1 (contratação) +
+  2.1 (itens) por `idCompra`; encontrado = permanente, não encontrado = 30 dias. Dá a coluna
+  "Anulada/Revogada" (situação), o processo e o link (`lib/pncp.ts`).
+- Fonte BPS (P21): com coleta pela API, lê `DadosAbertosPreco` (processo, ata, registro ANVISA,
+  fabricante); sem coleta, `PrecoBps` com aviso de base histórica. Itens de ata herdam a unidade de
+  fornecimento da compra com a mesma chave de 22 dígitos.
+- Carga em lote: `scripts/import_extrator_da.py` (saída do Extrator-CATMAT-DA, mesmas chaves).
+  `scripts/probe_dados_abertos.py` confere o contrato das APIs. Resumo da API em
+  `docs/api/compras-dadosabertos.md`.
 - `normalizarTexto`/`normalizarUnidade` (TS) são espelhadas em `scripts/precos_norm.py` — alterar as duas.
 
 ### Filtros opcionais ("Mais filtros")
@@ -125,22 +180,33 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
 - Tipos e helpers puros ficam em `lib/pesquisa-preco-filtros.ts`, **não** em `lib/pesquisa-preco.ts`:
   a página é Client Component e importar de lá arrastaria o Prisma para o bundle do navegador.
   `lib/pesquisa-preco.ts` reexporta tudo (`export *`), então o servidor importa de um lugar só.
-- Cobertura por base (`FONTE_SEM_CAMPO`) — a fonte que **não tem a coluna** é excluída da apuração
-  enquanto o filtro estiver ativo, e o motivo aparece no painel, no relatório e nas observações.
-  Misturar registros filtrados com não filtrados falsearia a mediana das medianas.
+- Cobertura por base (`FONTE_SEM_CAMPO`, chaveado pela base: `comprasgov` = API, `siasg`, `pncp`) —
+  a base que **não tem a coluna** é excluída da apuração enquanto o filtro estiver ativo, e o motivo
+  aparece no painel (composição da fonte), no relatório e nas observações. Misturar registros
+  filtrados com não filtrados falsearia a mediana das medianas. Na fonte Compras.gov.br,
+  `filtrosNaoSuportados` só lista o filtro que **nenhuma** das três bases tem.
 
-  | Filtro         | BPS | SIASG              | PNCP              | CMED            |
-  |----------------|-----|--------------------|-------------------|-----------------|
-  | Fornecedor     | ✅  | ✅                 | coluna vazia¹     | n/a             |
-  | Fabricante     | ✅  | coluna vazia¹      | ❌ sem coluna     | ✅ laboratório  |
-  | CNPJ Comprador | ✅ `cnpjInstituicao` | ❌ só `cnpjFornecedor` | coluna vazia¹ (`cnpjOrgao`) | n/a |
+  | Filtro         | Compras.gov.br — API | BPS | Compras.gov.br — SIASG | Compras.gov.br — base PNCP | Atas | CMED |
+  |----------------|----------------|-----|--------------------|-------------------|---------------|-----------------|
+  | Fornecedor     | ✅ | ✅  | ✅                 | coluna vazia¹     | ✅            | n/a             |
+  | Fabricante     | ✅ `marca` | ✅ (API: `nomeFabricante`) | coluna vazia¹ | ❌ sem coluna | ❌ sem coluna | ✅ laboratório  |
+  | CNPJ Comprador | ❌ só UASG/órgão | ✅ `cnpjInstituicao` | ❌ só `cnpjFornecedor` | coluna vazia¹ (`cnpjOrgao`) | ❌ sem coluna | n/a |
 
   ¹ A coluna existe no schema e é consultada normalmente; hoje a carga está vazia, então o filtro
   simplesmente não retorna nada. Não entra em `FONTE_SEM_CAMPO` de propósito — passa a filtrar
   sozinha quando os dados chegarem.
 - Fabricante recorta **também o teto**: o PMVG passa a ser o do laboratório escolhido.
-- A cesta guarda só `codigo`+`unidade`+`uf`; o relatório consolidado refaz a pesquisa **sem** os
-  filtros opcionais. A tela avisa isso ao adicionar um item com filtro ativo.
+- **Autocomplete** (`GET /api/precos/filtros/sugestoes`, `lib/pesquisa-preco-sugestoes.ts`, campo
+  `components/pesquisa-preco/campo-filtro-sugestoes.tsx`): valores que existem para o item + unidade
+  (+ UF) nas **mesmas colunas** que o filtro consulta, com a contagem e as bases — escolher a sugestão
+  garante ao menos os registros contados. Sem a janela do art. 5º (o que estiver fora aparece no
+  aviso do período). Une grafias só por caixa: o filtro distingue acento e pontuação, então unir
+  "S.A" e "SA" prometeria registros que ele não acha. Fabricante: os laboratórios da CMED vêm num
+  grupo à parte, no topo (recortam o teto). CNPJ: dígitos casam por prefixo; letras procuram pelo
+  nome do comprador e só a sugestão escolhida preenche o campo. O valor continua livre (trecho).
+- A cesta guarda `codigo`+`unidade`+`uf`, a curadoria e as escolhas do item, mas **não** os filtros
+  opcionais: o relatório consolidado refaz a pesquisa sem eles. A tela avisa isso ao adicionar um
+  item com filtro ativo.
 
 ### Estatística e curadoria (art. 6º da IN 65/2021)
 
@@ -149,7 +215,7 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   (`Estatisticas` em `lib/pesquisa-preco-curadoria.ts`). Painel e relatório exibem os três.
 - Dois **consolidados**, porque respondem a perguntas diferentes e o relatório explica isso:
   - `porFonte` — cada base pesa igual; estatísticas sobre o vetor das medianas das fontes.
-    É daqui que sai o preço adotado (**mediana das medianas**, `METODO_ADOTADO`).
+    É daqui que sai o preço adotado no padrão do painel (**mediana das medianas**).
   - `porRegistro` — cada compra pesa igual; todos os registros depurados num conjunto único.
     Contraprova da ordem de grandeza, nunca preço adotado: a base mais numerosa domina.
 - **Exclusão justificada** de registros antes da emissão (art. 6º, §§ 1º e 2º): a
@@ -159,15 +225,108 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   IQR incide sobre o que sobrou.
 - `REGISTROS_ANALISE` (150) por fonte = os mais recentes **mais todos os outliers do IQR**;
   sem a segunda parte, justamente os registros a desconsiderar ficariam fora da lista.
-- **Orçamento direto de fornecedor** entra como uma fonte a mais (uma mediana no vetor
-  consolidado) e **não** passa por IQR — as propostas foram escolhidas a dedo pelo
-  responsável. `considerarNoCalculo: false` mantém a cotação no relatório, fora da conta.
+- **Preços informados** (P13; `TIPOS_PRECO_INFORMADO` em `lib/pesquisa-preco-curadoria.ts`):
+  IV cotação com fornecedor, III mídia especializada ou sítio (URL e data/hora de acesso), V nota
+  fiscal (nº e chave da NF-e), II contratação similar fora das bases. Gravados em `CestaOrcamento`
+  (`tipo`, `url`, `acessadoEm`, `chaveNfe`, `justificativaForaPeriodo`). Cada tipo é uma fonte a mais
+  (uma mediana no vetor consolidado) e **não** passa por IQR — foram escolhidos a dedo.
+  `considerarNoCalculo: false` e "fora da janela do inciso sem justificativa" viram exclusão com
+  motivo declarado: o preço continua no relatório, fora da conta.
+- **A mesma compra em mais de uma base** (P18, `lib/pesquisa-preco-duplicidade.ts`, puro): mesma
+  chave de 22 dígitos → prevalece a primeira fonte de `ORDEM_FONTES`; BPS × Compras.gov.br por regra
+  (mesmo CNPJ, preço em 2 casas e UF; mesma quantidade até 15 dias, sem quantidade até 3) = provável
+  duplicata, reversível na curadoria (`duplicidadesRevertidas`). A cópia sai **só do conjunto
+  único** (`porRegistro`, aba do item: "Compõe = Não — duplicado de …"); cada fonte mantém a sua
+  estatística no consolidado por fonte. Exceção: cópia **dentro da mesma fonte** — SIASG ou base
+  PNCP repetindo a API (mesma chave, ou base PNCP × API com mesma UF, preço, quantidade e até 3
+  dias) — sai também da estatística da fonte Compras.gov.br (`copiaNaFonte`).
 - O relatório nomina **empresa vencedora, marca e fabricante** em cada registro
-  (BPS: fabricante; SIASG: fabricante + marca; PNCP: só fornecedor).
+  (BPS: fabricante; Compras.gov.br — SIASG: fabricante + marca; base PNCP: só fornecedor).
 - Tela de curadoria: `components/pesquisa-preco/curadoria-dialog.tsx`, usada tanto pela
   pesquisa avulsa (estado efêmero, enviado junto com o relatório) quanto por item da cesta
   (gravado). A prévia do impacto é recalculada **no servidor** (`POST /api/precos/buscar`),
   nunca no navegador: o número exibido tem de ser o mesmo que sai impresso.
+
+### Método do preço adotado e teto CMED (P11/P12 da avaliação da DLOG)
+
+- `lib/pesquisa-preco-metodo.ts` (módulo puro): `adotarPreco`/`camposDoPreco` montam a
+  recomendação a partir do consolidado que a pesquisa já apurou — o servidor
+  (`pesquisarPrecos`, parâmetro `escolha`) e a prévia da tela usam a MESMA função.
+- Métodos: mediana das medianas (padrão), **critério DLOG** (menor entre média e mediana do
+  conjunto único), média, mediana ou menor valor do conjunto único.
+- Tetos (os dois aparecem na tela, no HTML e no mapa), **na alíquota de ICMS escolhida**:
+  - A alíquota vem do filtro "Alíquota ICMS do teto" em "Mais filtros", padrão 17% (decisão do
+    usuário, out/2026). Aceita qualquer coluna das listas mensais (`ALIQUOTAS_TETO` =
+    `ALIQUOTAS_ICMS`).
+  - **Menor PMVG por unidade** — padrão do painel. O id `menor_pmvg_sem_impostos` é legado, de
+    quando a regra era só sem impostos; está gravado em itens da cesta.
+  - **PMVG do medicamento de referência** — critério DLOG, o maior teto. Referência =
+    `tipoProduto` "Novo" ou "Biológico"; havendo vários, o de maior PMVG; nenhum, o maior PMVG da
+    lista.
+  - Isento de ICMS (CONFAZ 87, ICMS 0% ou só 0% publicado) entra com o PMVG a 0% (P4 do prompt
+    CMED; `pmvgNaAliquota`/`isentoAZero`).
+  - Cada registro carrega `pmvgAliquotas` (todas as colunas), então a prévia troca de alíquota
+    sem nova consulta. `pmvgUnitario`/`pmvgUnitMin`/`pmvgUnitMax` ficam na alíquota do teto;
+    `pmvgEmbalagem` continua "sem impostos", porque é coluna fixa do mapa da DLOG.
+  - Onde a alíquota é definida: na modal avulsa, a da pesquisa aparece só para leitura. Na cesta,
+    cada item usa a sua (`aliquotaTeto`, gravada da pesquisa), e a escolha geral define só método
+    e regra.
+  - No mapa, D12 = `CMED!O` (PMVG na alíquota ÷ Qt_Embal) nas duas regras.
+- A modal de emissão pré-seleciona `ESCOLHA_PADRAO_MAPA` (método do painel + teto da DLOG) e
+  manda a mesma escolha para o HTML e para o XLSX: os dois documentos trazem o mesmo preço.
+  Sem escolha no pedido, o HTML usa `ESCOLHA_PADRAO` (padrão do painel).
+- Justificativa do preço (`lib/mapa-dlog/justificativa.ts`, pura) gerada dos números; editável
+  na modal (o `AuditLog` registra a edição).
+
+### Período do art. 5º e IPCA (D1/D2 da avaliação da DLOG)
+
+- `lib/pesquisa-preco-periodo.ts` (puro): data de referência (padrão = hoje em Brasília; na cesta,
+  a da emissão; nunca no futuro), `mesesMercado` 12 (padrão) | 24 | 36 | null = todo o período.
+  Ampliar exige justificativa (≥ 20 caracteres): a rota **recusa com 400**, não corrige em silêncio;
+  a justificativa sai no relatório, na aba Parâmetros e no `AuditLog`. Sem ampliação automática.
+- **Intervalo de datas** (pedido da DLOG): `inicio` ("AAAA-MM-DD", não posterior à data de
+  referência) prevalece sobre `mesesMercado` — as bases vão de `inicio` até a data de referência.
+  Início anterior a 12 meses conta como ampliação (`periodoAmpliado`, exige a justificativa);
+  `inicioDasBases` dá o início efetivo para a justificativa e o relatório ("intervalo de … a …").
+  Na cesta, `CestaItem.periodoInicio`.
+- Janela por fonte (`janelaDaFonte`): bases e atas (I e II) seguem o período escolhido; preços
+  informados ficam na janela do seu inciso (II e V: 12 meses; III e IV: 6), mesmo com as bases
+  ampliadas. Cada fonte devolve `periodo { inicio, fim, foraDoPeriodo, maisRecenteFora }`; fonte
+  vazia na janela com registros mais antigos gera a observação do art. 5º, §1º.
+- `lib/ipca.ts` (puro): mês-base = último índice publicado não posterior ao mês anterior à data de
+  referência; fator = NI(mês-base) ÷ NI(mês do preço) — composto, começa no mês **seguinte** ao do
+  preço (a DLOG inclui o próprio mês: convenção a confirmar, P10). Sem índice → fator 1, sinalizado.
+  Atualiza o **valor do registro de compra** dos incisos I e II (`corrigidoPeloIpca`: bases, atas e
+  contratação similar), da data da compra até o último índice publicado. Mídia, cotação, nota
+  fiscal e o **PMVG (teto CMED) nunca** — os textos da tela e dos relatórios dizem isso com essas
+  palavras (pedido do usuário). `RegistroMercado.precoNominal` guarda o publicado,
+  `preco` é o corrigido (estatística, IQR, curadoria e consolidados usam o corrigido).
+- Tabela `IndiceIpca` (`scripts/import_ipca.py`, SIDRA 1737: 2266 número-índice, 63 variação, ids
+  conferidos pelo nome; autoteste produto × razão). Sem a tabela, a pesquisa sai nominal com aviso.
+- HTML: seção "Período da Pesquisa e Atualização Monetária" (fontes corrigidas, fatores, mês do
+  preço mais antigo) e o nominal × fator ao lado de cada preço. XLSX: W = `INDEX/MATCH` na aba
+  "Índices IPCA" (fator = razão dos índices), X = N × (1 + W); `conferir_mapa_dlog.py` confere os dois.
+
+### Mapa comparativo no modelo da DLOG (XLSX)
+
+- Rotas `POST /api/relatorios/pesquisa-preco/xlsx` (avulsa, + `quantidade`) e
+  `POST /api/relatorios/cesta/xlsx` (cesta; **não** esvazia a cesta). Gravam `AuditLog`
+  (com o SHA-256 do arquivo) e `RelatorioGerado` (`lib/relatorio-registro.ts`), como as
+  rotas HTML agora também gravam.
+- `lib/mapa-dlog/`: `layout.ts` (abas, os 24 cabeçalhos A–X com o texto da DLOG, larguras,
+  formatos e a **paleta da DLOG — única exceção aos tokens**, o XLSX não lê CSS), `dados.ts`
+  (puro: ResultadoPesquisa → linhas A–Y), `gerar.ts` (servidor, `exceljs`), `meta.ts`.
+  `exceljs` nunca em módulo importado por página client.
+- **Um cálculo só**: o gerador lê o `ResultadoPesquisa` (modo `registrosCompletos`, a amostra
+  inteira) e nunca recalcula preço. As fórmulas (sobre a coluna auxiliar AA = X quando
+  "Compõe = Sim") reproduzem o cálculo para auditoria e são gravadas com o resultado.
+  `scripts/conferir_mapa_dlog.py --gerado X.xlsx [--modelo DLOG.xlsx] [--painel r.json]` confere
+  estrutura, fórmulas e números (sai com 1 se houver erro).
+- Abas: Consolidação · MEMÓRIA DE CÁLCULO · Item n · Índices IPCA · CMED · Parâmetros. O que o
+  painel acrescenta fica à direita (Y em diante) ou abaixo; colunas auxiliares agrupadas e
+  recolhidas.
+- `processarItens` (concorrência 4) fica em `lib/pesquisa-preco-processar.ts`: o HTML e o
+  XLSX da cesta fazem uma apuração só por emissão.
 
 ### Cesta de itens (carrinho)
 
@@ -184,6 +343,18 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   `CestaOrcamento`. O relatório da cesta refaz `pesquisarPrecos` **reaplicando** as duas —
   são decisão do responsável, não resultado de consulta, e não caducam com ela. `exclusoes`
   e `orcamentos` no PATCH do item são **substituição total**, não incremento.
+- Escolhas gravadas no item (`scripts/alter_cesta_dlog.py`): `periodoMeses` (12/24/36; 0 = todo o
+  período), `periodoInicio` (intervalo; prevalece sobre os meses) e `justificativaPeriodo` (D1), `corrigirIpca` (D2), `duplicidadesRevertidas` (P18),
+  `metodoPreco`/`regraTeto`/`aliquotaTeto` e `justificativa` (E2 — gravados pela modal a cada
+  emissão; a próxima emissão parte deles). `parametrosDoItem` monta a pesquisa do item com a **data
+  de referência da emissão**. PATCH que muda curadoria, período, IPCA, duplicatas ou método
+  **refaz o snapshot** de preço; quantidade, observação e o texto da justificativa, não.
+- **Incluir preço informado** sem pesquisar (botão ao lado da Cesta,
+  `components/pesquisa-preco/incluir-preco-informado.tsx` → `POST /api/precos/cesta/preco-informado`):
+  material (código ou descrição), unidade (das bases ou digitada — sem registro nas bases, a cotação
+  é o que resta) e UF; o preço é **acrescentado** ao item da cesta com essa chave (o item é criado se
+  não existir) e o snapshot é refeito. O formulário (`formulario-preco-informado.tsx`) é o mesmo da
+  curadoria. O inciso III exige URL e data/hora do acesso também no servidor (`orcamentoSchema`).
 - Gerar o relatório esvazia a cesta por padrão (checkbox na modal permite manter).
 - HTML dos relatórios: blocos compartilhados em `lib/relatorio-pesquisa-preco.ts`, usados tanto pelo
   relatório de um item quanto pelo da cesta.
@@ -194,8 +365,19 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   por sha1 do conteúdo) e `CmedVigencia` (competência × versão), carregadas por
   `scripts/import_cmed_mensal.py` das planilhas `NNN.mmm.aa.xlsx` (001 = jan/2017; a pasta
   `cmed_originais_arr/` fica fora do git). **Carregado: jan/2020 → ago/2026 (037–116).**
-- **A tela ainda lê `PrecoCmed`.** Os filtros Mês de Competência / Alíquota ICMS e o uso destas tabelas
-  no teto são o passo seguinte de `PROMPT_CMED_mensal_pesquisa_precos.md` (seção 7).
+- **O teto da Pesquisa de Preços lê estas listas** (`lib/cmed.ts`, no mesmo formato de linha que
+  `PrecoCmed` tinha — o resto do cálculo não muda). Decisão do usuário (out/2026): a tela consulta
+  qualquer competência carregada (seletor "Lista CMED (teto)"), mas **os relatórios — HTML e XLSX,
+  avulsa e cesta — usam sempre a última lista publicada até a data de referência**
+  (`competenciaVigenteEm`, `lib/cmed-competencia.ts`, puro). As rotas de relatório montam os
+  parâmetros campo a campo e nunca repassam a competência; a tela e a modal de emissão avisam
+  quando a consulta está noutra lista. Sem listas mensais, a pesquisa cai para `PrecoCmed`.
+- Curadoria da CMED pela chave estável da apresentação, `cmed:<registro>:<GGREM>` (vale em qualquer
+  competência); exclusões gravadas com o id de `PrecoCmed` são traduzidas por
+  `traduzirExclusoesLegadas`. O CAP impresso é o `capPercentual` da lista (`rotuloCap`).
+- Da seção 7 do prompt CMED, já feitos: a alíquota ICMS como filtro (padrão 17%, por decisão do
+  usuário, no lugar do P1) e P4. Faltam P7 (liberados listados), P8 (alerta de Qt_Embal) e P9
+  (regra do catálogo) — ver `Pendências.md`.
 - `pf`/`pmvg` = arrays JSON alinhados a `ALIQUOTAS_ICMS` (`lib/cmed-aliquotas.ts`, espelho
   `scripts/cmed_layout.py`). **Append-only**: nunca reordenar; alíquota nova entra no fim dos dois
   arquivos (o hash usa código → valor, então acrescentar não muda versões gravadas; arrays antigos
@@ -214,6 +396,77 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
 - Deduplicação real ~2,7× (779.595 versões para 2.127.976 pares): a TARJA muda de formato quase todo
   mês ("Tarja Vermelha(*)" / "- (*)" / "Tarja -(*)") e qualquer campo diferente gera versão nova.
 
+## Demandas — filtro único (A1–A4 e B da avaliação da DLOG)
+
+- **Um filtro só** para a lista, o Dashboard (ORM, SQL e SQL com alias `d` do JOIN com o SIAFI),
+  o ranking anual, a aba Autores, as exportações e os relatórios: `FiltroDemandas` em
+  `lib/demandas-filtro-tipos.ts` (**puro**: tipos, URL, rótulos, atalhos, busca) e
+  `whereDemandas`/`sqlDemandas(a, alias?)` em `lib/demandas-filtro.ts` (servidor), com a
+  **mesma semântica** e **sempre `deletedAt IS NULL`**. `aplicarFiltro` resolve antes o que
+  depende do banco (código CATMAT do campo ou da busca, radicais do medicamento). Mexeu numa
+  das duas formas, rode a paridade (mesmos totais no ORM, no SQL e no SQL com alias).
+- Semântica (P1): OR entre os incluídos e NOT IN para os excluídos dentro do campo; AND entre
+  campos; `__null__` = "(não informado)". Excluir um valor **mantém** as linhas nulas (NOT
+  (NULL) não é verdadeiro no SQL — a condição as inclui de propósito). `pontoControle` e
+  `objetoAcao` são listas "A | B": casam **por item** (igual, início, fim ou meio da lista).
+- URL: parâmetros repetidos (`?status=A&status=B&status_excluir=C`); `?status=X` antigo vale, e
+  os nomes antigos do Dashboard (`startDate`, `endDate`, `principioAtivo`) são lidos como
+  `criadoDe`, `criadoAte`, `medicamento`. Datas `AAAA-MM-DD`, inclusive nas duas pontas.
+- Opções dos filtros = valores do banco com contagem (`GET /api/demandas/opcoes`, P2); seletor
+  `components/backoffice/filter-multi-select.tsx` (tri-estado, busca, "Selecionar todos",
+  atalhos).
+- **"Status" na aba Demandas = Ponto de Controle** (coluna BZ do Redmine), em dois níveis (pedido
+  da DLOG): **Status** (`pontoControle`, cada item em qualquer posição — "Cessar Atos" casa
+  "Arquivado | Cessar Atos") e **Sub-status** (`subStatus`, a combinação exata, sem a ordem:
+  `comboCanonico`; o servidor expande a chave para as grafias do banco em `aplicarFiltro`). O
+  status do fluxo do Redmine virou **"Situação no Redmine"** (`status`, em "Mais filtros", com os
+  atalhos de P3 — "Em análise (todos)", "Encerrados", "Ativos"; a confirmar).
+- Filtros principais da lista: CATMAT/Registro e Descrição (o `MaterialSearch` da Pesquisa de
+  Preços, com sugestões; `components/demandas/filtro-material.tsx`), Unidade de fornecimento (as do
+  item), Status, Sub-status e Processo SEI (`nupSei`: NUP completo casa exato; trecho, pelo texto
+  ou pelos dígitos). O resto fica em "Mais filtros".
+- Paginação da lista é do servidor: `DataTable paginacaoInterna={false}` + `Paginacao` acima da
+  tabela (itens por página, primeira/última). A interna contava só a página carregada.
+- Visões salvas (P4): `GET/POST/DELETE /api/demandas/visoes` sobre `UserView`, com a
+  querystring canônica.
+- Exportação (A2): `GET /api/demandas/export?formato=csv|xlsx|html&colunas=…&agrupar=…` +
+  filtro (ou `ids` = seleção). **Sem teto de linhas** e em **streaming** (o arquivo inteiro passa
+  do limite de 4,5 MB de resposta da Vercel). Colunas e agrupamentos em
+  `lib/demandas-colunas.ts` (puro); autor e descrição completa não saem. Grava `AuditLog` e
+  `RelatorioGerado` (`DEMANDAS`).
+- Busca (A4): `interpretarBusca` — CATMAT (4–6 dígitos) ou registro (13) reconhecido aplica o
+  filtro por substância **OU** o número no texto (um nº DJUD não some); só dígitos e
+  separadores com 8+ dígitos (nº CNJ, NUP SEI) compara os dígitos; texto: termos de
+  `normalizarTexto`, palavras de 6+ letras pelo radical. Tudo sobre `Demanda.buscaNorm`
+  (`montarBuscaNorm`, espelho `scripts/demandas_busca.py`; índice GIN pg_trgm, P8). A tela
+  aplica com 400 ms de pausa e cancela a requisição anterior (`signal` + `keepPreviousData`).
+- **`buscaNorm` precisa acompanhar a demanda**: o importador do Redmine, `POST /api/demandas`,
+  o `PUT /api/demandas/[id]` e `scripts/alter_demanda_busca.py` (carga inicial e recálculo)
+  gravam a coluna. Campo novo na busca → `montarBuscaNorm` + espelho Python + rodar
+  `alter_demanda_busca.py --confirm --somente-busca`.
+- **Apresentação (A5)** — `scripts/enriquecer_demandas.py` (depois de cada carga): `medicamento` +
+  `medicamentoOrigem` (REDMINE → TITULO → DESCRICAO → SISMAT; dicionário = CatmatItem classe 6505
+  + CmedRegistro.substancia, pelo radical, com `PALAVRAS_GENERICAS` de fora),
+  `apresentacoes`/`catmatsDerivados` (1º SISMAT pelo NUP — `materialCodigo` "BR0410020" → 410020;
+  2º concentração no texto igual à do CATMAT; senão não identificada) e `unidadesDerivadas` (CMED).
+  Filtro por código = **apresentação exata** (`catmatsDerivados` tem o CATMAT; a unidade refina)
+  **ou mesma substância com apresentação não identificada**; outra apresentação da mesma
+  substância fica de fora (410020 × 410019 diferem). `catmatGrupo` restringe a um dos dois; a
+  lista devolve as duas contagens (`contarGruposCatmat`).
+- **Medicamento do Redmine = colunas CC + CB unidas** ("Princípio_Ativo" e "Princípio
+  Ativo_JEF/TRF4", `principio_ativo_redmine` no importador). `alter_demanda_busca.py --redmine`
+  só ACRESCENTA os itens de CB à base já carregada (a planilha pode ser mais antiga que a carga).
+- A6: Nº SEI na lista, no detalhe, nas exportações e no PDF da demanda, com botão de copiar e link
+  (`lib/links-externos.ts`, modelo com `{valor}`). O SEI tem padrão no código, informado pelo
+  usuário: `https://sei.saude.gov.br/sei/#{valor}`; `NEXT_PUBLIC_URL_SEI` troca. A barra do NUP
+  não é codificada. Processo e Redmine só com `NEXT_PUBLIC_URL_PROCESSO`/`_REDMINE` (pendentes,
+  `Pendências.md`). O link do SEI está na lista, no detalhe e nos exports HTML/XLSX;
+  "Entregas no SISMAT" no detalhe (`/api/demandas/[id]/sismat`, pelo NUP do destinatário).
+- Dashboard (B3): campo "Medicamento" (sugestões por substância canônica com contagem,
+  `/api/demandas/principios-ativos`; aplica ao escolher, com Enter ou após 450 ms), "Resumo do
+  recorte" e "Processos do recorte" (a mesma rota da lista, 20 por página, botão "Abrir na
+  lista de Demandas"). `jsonComVersao` das métricas inclui `siafiPagamento`.
+
 ## Demandas — filtro por CATMAT / Registro ANVISA
 
 - `Demanda` **não tem coluna CATMAT**: o medicamento vem do Redmine como texto livre em
@@ -221,10 +474,12 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   só em `titulo`/`descricao`. O filtro `?catmat=` da lista (`GET /api/demandas`) traduz o código
   para substância em `lib/demandas-catmat.ts`: `resolverItem()` (o mesmo da Pesquisa de Preços) →
   substância do `CatmatItem` + `substancia` dos `CmedRegistro` do código → radicais → `contains`
-  em `principioAtivo`/`titulo`/`descricao`.
-- Radical = palavra mais longa da substância, sem sal/veículo na frente ("SUCCINATO DE"), sem
-  sufixo ("SÓDICA") e sem a vogal final: NUSINERSENA → NUSINERSEN casa "Nusinersen" e
-  "Nusinersena"; procurado com e sem acento. Mínimo de 5 caracteres.
+  em `principioAtivo`/`medicamento`/`titulo`/`descricao` (`whereTermos`/`sqlTermos`).
+- Radical (`lib/substancia.ts`, puro; espelho `scripts/substancia.py`) = palavra mais longa da
+  substância, sem sal/veículo na frente ("SUCCINATO DE"), sem sufixo ("SÓDICA") e sem a
+  terminação portuguesa — vogal final, ou o "UE" de "-GUE": NUSINERSENA → NUSINERSEN,
+  ELTROMBOPAGUE → ELTROMBOPAG (casa "Eltrombopag"); procurado com e sem acento. Mínimo de 5
+  caracteres.
 - **OR entre grupos, AND dentro**: o registro "CANABIDIOL;TETRAIDROCANABINOL" exige as duas
   substâncias (é aquele produto, não qualquer canabidiol). Marca comercial (`produto`) só entra
   na busca por registro ANVISA — pelo CATMAT seriam dezenas de marcas.
@@ -233,11 +488,10 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   por quais substâncias está filtrando.
 - O campo da tela aplica o valor com 450 ms de pausa (`catmatInput` → `catmat`): um código tem
   de 4 a 13 dígitos e cada tecla resolveria um código parcial.
-- O dashboard também recebe o filtro: `getMetricsData` resolve o código e aplica
-  `whereDemandaPorCatmat` (ORM) e `sqlDemandaPorCatmat` (`$queryRaw` das séries por mês e
-  por ano). **As duas versões precisam casar exatamente** — números diferentes entre a lista
-  e o painel para o mesmo código seriam impossíveis de explicar. Código não encontrado →
-  painel zerado com o motivo na tela, não gráficos vazios sem explicação.
+- O dashboard recebe o filtro pelo filtro único (acima): ORM e SQL (com e sem alias) casam
+  exatamente — números diferentes entre a lista e o painel para o mesmo código seriam
+  impossíveis de explicar. Código não encontrado → painel zerado com o motivo na tela, não
+  gráficos vazios sem explicação.
 
 ## Dashboard — ranking por ano e exportação
 
@@ -256,6 +510,25 @@ python scripts/cmed_layout.py            # autoteste: ALIQUOTAS_ICMS do TS == Py
   estraga o arquivo) ou relatório HTML imprimível. A apuração é **refeita no servidor** com
   os mesmos filtros, então a planilha traz a série mensal inteira e não só os pontos que
   couberam no gráfico. Registrada no `AuditLog`.
+
+## Relatórios — Panorama Executivo e especificação de Risco/ARP (Frente C)
+
+- **Panorama Executivo**: `GET /api/relatorios/executivo?format=html|csv&<filtros>` (permissão
+  `relatorios:executivo`), montado em `lib/relatorio-executivo.ts` (puro) sobre o que
+  `getMetricsData` e `getRankingAnual` já apuraram — **nenhum número novo é consultado**, por
+  isso bate com o Dashboard sob os mesmos filtros. Deriva só participações (%), a série anual e
+  os últimos 12 meses completos × os 12 anteriores (o mês mais recente da série fica de fora, por
+  poder estar incompleto; sem 24 meses completos antes dele, não compara). Destaques = frases
+  montadas dos números, sem juízo.
+- Grava `AuditLog` (EXPORT, entidade `PanoramaExecutivo`, com SHA-256) e `RelatorioGerado`
+  (`EXECUTIVO`, com a consulta). Entradas: botão **Panorama Executivo** no Dashboard (leva os
+  filtros da tela) e o card da página Relatórios (base inteira, HTML ou CSV).
+- Moldura, recorte e CSV multi-bloco compartilhados com a exportação do Dashboard em
+  `lib/metrics-export.ts` (`documentoHTML`, `tabelaRecorte`, `descreverRecorte`, `csvDeBlocos`,
+  `blocosRankingAnual`).
+- **Análise de Risco e Prazos** e **Dimensionamento para ARP**: especificados em
+  `spec/relatorios-risco-arp.md`, com as decisões pendentes (prazo, histórico de situação,
+  faixas de prioridade, unidade do SISMAT, método de projeção). Datas de entrega: do usuário.
 
 ## Variáveis de Ambiente
 
