@@ -20,6 +20,19 @@
 >    nº da compra, a UASG, o item e o nº de controle PNCP que a planilha da DLOG traz e o painel
 >    não tem (Frente D, D0).
 >
+> **Revisão 3 (15/10/2026), mais duas fontes analisadas:**
+> 3. **API de Dados Abertos do Ministério da Saúde — BPS**
+>    (`GET https://apidadosabertos.saude.gov.br/economia-da-saude/bps`; Swagger em
+>    <https://apidadosabertos.saude.gov.br/v1/>). Ela traz, por CATMAT, **nº do processo de compra,
+>    nº da ata, registro ANVISA e fabricante**, que a tabela `PrecoBps` do painel não guarda (7.1.2).
+> 4. **Extrator-CATMAT-DA** (<https://github.com/abelogliari/Extrator-CATMAT-DA>), o script do
+>    usuário que extrai a Pesquisa de Preço do Compras.gov.br e o BPS. Ele já resolve cota, 429,
+>    paginação, unidade de fornecimento, limpeza de descrição e a chave de 22 dígitos do item da
+>    compra, mas **ainda não liga a compra à contratação no PNCP**. Esse vínculo existe na própria
+>    API: `/modulo-contratacoes/1.1_consultarContratacoes_PNCP_14133_Id?tipo=idCompra&codigo=<idCompra>`
+>    (7.1.3). A seção 7.6 diz o que o painel reaproveita do extrator, e a seção 13 traz um prompt
+>    separado para acrescentar o vínculo PNCP ao próprio extrator.
+>
 > **Rastreamento:** feito em 15/10/2026 sobre `main` @ `c7cf45d`. As referências `arquivo:linha`
 > valem para esse commit; confira antes de editar. A DLOG pediu que se desconsidere o que já
 > estiver em andamento, e a seção 2.3 lista o que já está em andamento. **A API não pôde ser
@@ -37,7 +50,7 @@ ou mais PRs separados**:
 | Frente | Prioridade | Observações | Resumo |
 |--------|-----------|-------------|--------|
 | **E — Relatório no modelo da DLOG (XLSX)** | **1** | anexo + revisão 2 | O painel gera o "Mapa comparativo de Preços" com as mesmas abas, colunas e blocos da planilha da DLOG, preenchido pelos dados da pesquisa, com fórmulas auditáveis e **sem os erros dela** (8.5). Vale para a pesquisa avulsa (1 item) e para a cesta (n itens). |
-| **D — Pesquisa de Preços** | **1** | 5, 6, 7, 8 + revisão 2 | **D0:** fonte nova, a API de Dados Abertos do Compras.gov.br (Painel de Preços, contratações PNCP e atas). **D1:** período do art. 5º da IN 65/2021. **D2:** IPCA. **D3:** identificação da contratação. **D4:** link para o PNCP. |
+| **D — Pesquisa de Preços** | **1** | 5, 6, 7, 8 + revisões 2 e 3 | **D0:** fontes novas pelas APIs: Compras.gov.br (Painel de Preços, contratações PNCP e atas) e BPS (Ministério da Saúde), com o **vínculo de cada compra à contratação no PNCP** e a importação da saída do Extrator-CATMAT-DA. **D1:** período do art. 5º da IN 65/2021. **D2:** IPCA. **D3:** identificação da contratação. **D4:** link para o PNCP. |
 | **A — Demandas** | 2 | 1, 2, 3 | Filtros com seleção múltipla, exclusão e agrupamento; status "Cessar Atos"; busca por nome e por CATMAT; medicamento e apresentação visíveis; nº do processo judicial e do SEI; exportação com os tópicos escolhidos. |
 | **B — Dashboard** | 2 | "Aba DASHBOARD" | Os dados do medicamento pesquisado aparecem direto na tela, com o mesmo recorte da lista e do relatório. |
 | **C — Relatórios** | 3 | 4 | Panorama Executivo, Análise de Risco e Prazos e Dimensionamento para ARP. |
@@ -77,10 +90,14 @@ redija a **nota de resposta à DLOG** (seção 12.2).
 | P15 | **Fonte Compras.gov.br (Painel de Preços), via `/modulo-pesquisa-preco/1_consultarMaterial`** | **Entra neste ciclo** como fonte própria ("I - Compras.gov.br"), com **todas** as compras públicas do CATMAT e não só as judiciais. O SIASG judicial continua como fonte separada. |
 | P16 | Fonte PNCP | Os itens homologados do módulo 7 (`/modulo-contratacoes/2_consultarItensContratacoes_PNCP_14133`, que traz o nº de controle PNCP) **alimentam a fonte PNCP quando há coleta**. `PrecoPncp` continua como histórico até a validação. Remoção só em PR separado. |
 | P17 | Atas de registro de preços (`/modulo-arp/2_consultarARPItem`) | **Fonte opcional** ("II - Ata de Registro de Preços"): atas com vigência iniciada nos últimos 12 meses. Ligada por padrão no XLSX e desligável na tela. |
-| P18 | Duplicidade entre fontes (a mesma compra no Compras.gov.br, no PNCP e no BPS) | No **conjunto único** (aba do item no XLSX e `porRegistro`), um registro repetido (mesma UASG + nº da compra + nº do item + fornecedor) fica **só uma vez**: prevalece o Compras.gov.br, depois o PNCP, depois as demais. A cópia aparece com "Compõe = Não — duplicado de <fonte>". No consolidado **por fonte**, cada base conta uma vez. |
+| P18 | Duplicidade entre fontes (a mesma compra no Compras.gov.br, no PNCP e no BPS) | No **conjunto único** (aba do item no XLSX e `porRegistro`), um registro repetido fica **só uma vez**. A identificação é pela **chave de 22 dígitos do item da compra** (Compras.gov.br × SIASG × PNCP, 7.1.1). Para o BPS, que não tem essa chave, vale a regra de duplicata **provável** de 7.1.2. Prevalece o Compras.gov.br, depois o SIASG, depois o PNCP, depois as demais. A cópia aparece com "Compõe = Não — duplicado de <fonte>". No consolidado **por fonte**, cada base conta uma vez. |
 | P19 | Validade da coleta na API | Os dados coletados valem **7 dias** por CATMAT. Depois disso, a pesquisa oferece "Atualizar do Compras.gov.br". Nunca coleta em silêncio no meio da emissão de um relatório. |
 | P20 | Biblioteca do XLSX | **`exceljs`**, dependência nova e **só no servidor**. O `xlsx` (SheetJS 0.18.5, já instalado) **não grava estilo** (cor, fonte, borda) na versão comunitária, e o modelo da DLOG depende de estilo. O `xlsx` continua onde já é usado. |
-
+| P21 | **Fonte BPS** | Com coleta válida (P19), a fonte `bps` lê os registros da **API do BPS** (7.1.2), que trazem processo, ata, registro ANVISA e fabricante. Sem coleta, cai em `PrecoBps` e avisa "BPS de base histórica". `PrecoBps` sai só em PR separado, depois da validação. |
+| P22 | **Vínculo compra → PNCP** | Todo registro com `idCompra` (Compras.gov.br, e SIASG se a origem trouxer a chave de 22 dígitos) é ligado à contratação no PNCP por `1.1_consultarContratacoes_PNCP_14133_Id?tipo=idCompra`. O resultado vai para um cache **permanente** por `idCompra`. "Não encontrado" fica guardado 30 dias e depois é consultado de novo. O vínculo é feito para os registros **da pesquisa** (dezenas ou centenas), nunca para a base inteira dentro do painel. |
+| P23 | **Carga em lote pelo Extrator-CATMAT-DA** | O painel ganha `scripts/import_extrator_da.py`, que carrega a saída do extrator (`.xlsx`/`.csv` da aba Compras.gov e da aba BPS) em `DadosAbertosPreco`. Para classes inteiras (por exemplo, 6505) o caminho é o extrator na máquina do usuário. A coleta pelo painel (D0) serve para atualizar **um** CATMAT. As duas formas gravam com o mesmo mapeamento e as mesmas chaves. |
+| P24 | **Limite de requisições do Compras.gov.br** | ~100 requisições por **minuto por cliente**, somando **todos** os módulos (medido pelo extrator em 29/09/2026; 429 com `Retry-After` de até 45 s). O painel fica abaixo de **90/min**. Num 429, a rota devolve `{ aguardarMs }` e **a tela espera e repete**; a função do servidor nunca dorme esperando. O BPS é outro servidor e tem cota própria. |
+| P25 | Descrição do item na coluna K do XLSX | A descrição **do próprio registro**, limpa pelas regras do extrator (`limpar_descricao_bps`, igual ao `extracao_bps.sql` e ao `tratar_catalogo.py`). A troca pela descrição do BPS do mesmo CATMAT (opção "Usar a descrição do BPS" do extrator) fica **desligada** no painel, porque o relatório precisa mostrar o que foi comprado. |
 Se algum item acima não valer, pare e pergunte antes de implementar a parte afetada.
 
 ---
@@ -99,8 +116,8 @@ Se algum item acima não valer, pare e pergunte antes de implementar a parte afe
 | 4 | Previsão dos relatórios de Ata, Riscos e Executivo | Cards `"em-breve"` (`app/(auth)/relatorios/page.tsx:36,45,54`) sem código. `RelatorioGerado.tipo` já prevê `ARP \| RISCO \| EXECUTIVO`. | C |
 | 5 | Períodos do art. 5º | `pesquisarPrecos` usa os **500 registros mais recentes sem recorte de data** (`lib/pesquisa-preco.ts:82`, `:849`, `:872`, `:897`). | D1 |
 | 6 | IPCA | Não existe. | D2 |
-| 7 | Identificação da contratação | `RegistroMercado` (`lib/pesquisa-preco.ts:226`) não tem nº da compra, ata, contrato, UASG nem processo. As bases atuais não guardam esses campos (os carregadores nem estão no repositório). **A API (D0) traz esses dados.** | D0, D3 |
-| 8 | Link PNCP | `PrecoPncp.numeroControlePncp` existe (`schema.prisma:574`), mas não é lido em `pesquisarPrecos`. O módulo 7 da API traz o nº de controle de cada item. | D0, D4 |
+| 7 | Identificação da contratação | `RegistroMercado` (`lib/pesquisa-preco.ts:226`) não tem nº da compra, ata, contrato, UASG nem processo. `PrecoBps` não guarda o processo nem a ata, **que a API do BPS traz** (`numeroProcessoCompra`, `numeroAta`). O Compras.gov.br traz `idCompra` e `numeroItemCompra`, que dão o nº da compra e a UASG. | D0, D3 |
+| 8 | Link PNCP | `PrecoPncp.numeroControlePncp` existe (`schema.prisma:574`), mas não é lido em `pesquisarPrecos`. Para as compras do Compras.gov.br, o nº de controle sai de `1.1_consultarContratacoes_PNCP_14133_Id?tipo=idCompra`. **É exatamente o vínculo que falta no Extrator-CATMAT-DA.** | D0, D4 |
 | Anexo | Usar uma ferramenta só | Estatística, curadoria e quadro-resumo já existem. **Falta gerar o arquivo no modelo da DLOG** e os campos que só a API traz. | E |
 
 ---
@@ -159,6 +176,15 @@ Se algum item acima não valer, pare e pergunte antes de implementar a parte afe
   alíquota escolhidas.
 - Branch `claude/youthful-wright-j2b31e`: associador Registro × CATMAT, com o parser de concentração
   `scripts/catmat_assoc/normaliza.doses()`. Reaproveite em A5 se já estiver na `main`.
+- **Repositório `abelogliari/Extrator-CATMAT-DA`** (outro repositório; leitura pública):
+  - `ExtratorCatmat.py` (interface CustomTkinter, ~5.700 linhas);
+  - `extrator_comprasgov.py` (o mesmo motor sem interface);
+  - `extracao_bps.sql` (extração direta do banco `dbbps`);
+  - `tratar_catalogo.py` (limpeza do catálogo).
+  É a referência de comportamento da API (seção 7.6). **Não o copie para dentro do painel**: as
+  regras são **portadas** para `lib/dados-abertos/` (TS) e para os scripts Python, com autoteste
+  sobre os mesmos casos. O vínculo PNCP **no próprio extrator** é a seção 13, para uma sessão
+  aberta naquele repositório.
 
 ---
 
@@ -206,9 +232,16 @@ Distribuição por ano de `PrecoBps`, `PrecoSiasg` e `PrecoPncp`. Preenchimento 
 
 Os carregadores **não estão no repositório**. Pergunte ao usuário a origem e liste as colunas de
 identificação disponíveis (nº da compra, UASG, item, processo, ata, contrato, modalidade, critério,
-situação).
+situação). Hipóteses a confirmar com ele:
 
-### 3.7 API de Dados Abertos do Compras.gov.br (obrigatório antes de D0 e E)
+- **BPS:** a origem provável é o `extracao_bps.sql` ou o CSV público. Esse layout tem
+  `numeroProcesso` e `numeroAtaPrecos`, que o carregador atual descarta.
+- **SIASG judicial:** a origem provável é a exportação do **DW** que o extrator consolida (aba
+  "Consolidação DW + DA"). Ela traz **`Identif Item Compra`, com 22 dígitos**, que dá UASG,
+  modalidade, nº, ano e item. Se for isso, acrescente essa coluna a `PrecoSiasg` (DDL Python) e
+  reaproveite o vínculo PNCP de P22 para o SIASG também.
+
+### 3.7 APIs: Compras.gov.br, vínculo PNCP e BPS (obrigatório antes de D0 e E)
 
 1. Baixe o contrato `GET https://dadosabertos.compras.gov.br/v3/api-docs` e salve um **resumo**
    dos endpoints usados (caminho, parâmetros e DTO de resposta) em
@@ -227,6 +260,28 @@ situação).
    33 linhas da aba "Item 1" da planilha. As compras 90041/2026 (UASG 120195, item 122, R$ 130,00)
    e 90007/2026 (UASG 160166, item 55, R$ 76,73) precisam aparecer. A comparação mostra se
    `1_consultarMaterial` é a origem do "I - Compras.gov" da DLOG e como o nº da compra é montado.
+5. **Vínculo com o PNCP (P22):**
+   - Chame `GET /modulo-contratacoes/1.1_consultarContratacoes_PNCP_14133_Id` com
+     `tipo=idCompra` e `codigo=<idCompra>` para as duas compras do item 4.
+   - Teste também uma UASG de **5 dígitos**, porque o `idCompra` fica com 16 dígitos. Exemplo:
+     Item 4 da DLOG, compra 90254/2026, UASG 90201. Teste com e sem o zero à esquerda (17
+     dígitos).
+   - Anote o `numeroControlePNCP` devolvido e abra o link (7.5).
+   - Chame `2.1_consultarItensContratacoes_PNCP_14133_Id` com o mesmo `tipo`/`codigo` e confira
+     que o `numeroItem` casa com o `numeroItemCompra`.
+   - Registre como a API responde a uma compra **sem** registro no PNCP (lista vazia, 404 ou 500)
+     e se ela traz a **situação** da contratação ou do item (anulada, revogada, homologada), para a
+     coluna F do XLSX.
+   - O valor de `tipo` é sensível: valores fora de `idCompra` e `numeroControlePNCPCompra` deram
+     500 no cliente de referência.
+6. **API do BPS (7.1.2):**
+   - `GET https://apidadosabertos.saude.gov.br/economia-da-saude/bps?codigoCatmat=410020&pagina=1&tamanhoPagina=10`.
+     Confirme se o caminho precisa do prefixo `/v1` (o extrator em produção usa **sem**), as
+     chaves reais de um item de `bps[]`, o formato aceito em `dataCompraInicio`/`dataCompraFim` e
+     o comportamento com `codigoCatmat` com zeros à esquerda.
+   - Para os 6 CATMATs da DLOG, conte os registros nos últimos 12 meses e compare com `PrecoBps`.
+7. **Tempo e cota:** meça quantas requisições por minuto passam antes do primeiro 429 (o extrator
+   mediu ~100, P24) e se o `Retry-After` vem no cabeçalho.
 
 ---
 
@@ -386,104 +441,220 @@ os incisos I e II.
 | IV | Pesquisa direta com no mínimo 3 fornecedores | **6 meses** | "IV - Cotação com fornecedor" (orçamento direto) |
 | V | Base nacional de notas fiscais eletrônicas | **1 ano** | "V - Nota fiscal eletrônica" (P13) |
 
-### 7.1 D0 — API de Dados Abertos do Compras.gov.br (revisão 2)
+### 7.1 D0 — APIs de dados abertos: Compras.gov.br, BPS e o vínculo com o PNCP
 
-**Base:** `https://dadosabertos.compras.gov.br`. Acesso público, sem chave.
+Status dos campos nesta seção:
 
-**Envelope das respostas:** `{ resultado: [...], totalRegistros, totalPaginas, paginasRestantes }`.
-Paginação por `pagina` (a partir de 1) e `tamanhoPagina` (**entre 10 e 500**; fora disso, 400).
-Datas no formato `YYYY-MM-DD`.
+- **confirmado (extrator):** usado em produção pelo Extrator-CATMAT-DA (`ordem_final_colunas` e
+  `COLUNAS_BPS` de `ExtratorCatmat.py`);
+- **confirmado (cliente):** conferido contra o `/v3/api-docs` pelo cliente público `compras-mcp`;
+- **esperado:** confirmar no diagnóstico 3.7.
 
-| Uso | Endpoint | Parâmetros | Campos de resposta |
-|-----|----------|------------|--------------------|
-| **Preços praticados (inciso I)**, a origem provável do "I - Compras.gov" da DLOG | `GET /modulo-pesquisa-preco/1_consultarMaterial` | **confirmado:** `tipo=codigoItemCatalogo` + `codigo=<CATMAT>` (**mudou em ago/2026**; antes era `codigoItemCatalogo`), `dataCompraInicio`, `dataCompraFim`, `estado` (UF), `codigoMunicipio`, `codigoUasg`, `pagina`, `tamanhoPagina` | **confirmado:** `precoUnitario`, `quantidade`, `dataCompra`, `niFornecedor`, `nomeFornecedor`, UASG compradora. **Esperado** (confirmar em 3.7): `idCompra`, `idItemCompra`, `numeroItemCompra`, `modalidade`, `criterioJulgamento`, `codigoItemCatalogo`, `descricaoItem`, unidade de fornecimento (`siglaUnidadeFornecimento`/`nomeUnidadeFornecimento`/`capacidadeUnidadeFornecimento`), `marca`, `codigoUasg`, `nomeUasg`, `codigoOrgao`/`nomeOrgao`, `esfera`, `estado`, `municipio`, `dataResultado` |
-| Descrição detalhada do item comprado (**sem preço**) | `GET /modulo-pesquisa-preco/2_consultarMaterialDetalhe` | `codigoItemCatalogo`, `dataCompraInicio`, `dataCompraFim` | **confirmado** (7 campos e nenhum é valor): `idCompra`, `idItemCompra`, `numeroItemCompra`, `codigoItemCatalogo`, `objetoCompra`, `descricaoDetalhadaItem`, `dataAtualizacaoFato` |
-| **Itens de contratações PNCP (inciso II)**, com nº de controle | `GET /modulo-contratacoes/2_consultarItensContratacoes_PNCP_14133` | **obrigatórios:** `dataInclusaoPncpInicial`, `dataInclusaoPncpFinal`. **Filtros:** `codItemCatalogo` (com esse nome), `materialOuServico=M`, `temResultado=true` (**só existe o valor `true`**), `situacaoCompraItem` (`2` = homologado, `4` = cancelado), `orgaoEntidadeCnpj`, `unidadeOrgaoCodigoUnidade`, `codFornecedor` | **confirmado:** `codItemCatalogo`, `idCompraItem`. **Esperado:** valor unitário estimado e homologado, fornecedor, quantidade, `numeroControlePNCPCompra`/`numeroControlePNCP` |
-| Cabeçalho da contratação (modalidade, nº, processo, objeto, UASG) | `GET /modulo-contratacoes/1.1_consultarContratacoes_PNCP_14133_Id` | `tipo=numeroControlePNCPCompra`, `codigo=<nº de controle>` | **confirmado:** `numeroControlePNCP`, `objetoCompra` |
-| Resultado por contratação | `GET /modulo-contratacoes/3.1_consultarResultadoItensContratacoes_PNCP_14133_Id` | `tipo=numeroControlePNCPCompra`, `codigo` | `niFornecedor` e valores homologados. **Não use a rota `3_…` sem `_Id` para pesquisar por CATMAT: ela não filtra por item.** |
-| **Atas de registro de preços (P17)** | `GET /modulo-arp/2_consultarARPItem` | **obrigatórios:** `dataVigenciaInicialMin` e `dataVigenciaInicialMax` (**janela de até 365 dias**). **Filtros:** `codigoItem`, `tipoItem`, `niFornecedor`, `codigoUnidadeGerenciadora` | **confirmado:** `numeroItem`, `valorUnitario`, `niFornecedor`. **Esperado:** `numeroControlePncpAta`, nº da ata, UASG gerenciadora, vigência |
-| Cabeçalho da ata | `GET /modulo-arp/1.1_consultarARP_Id` | `numeroControlePncpAta` | Cabeçalho da ata |
+#### 7.1.1 Compras.gov.br — `https://dadosabertos.compras.gov.br`
 
-**Armadilhas conhecidas da API.** Vêm do histórico de um cliente público e precisam ser conferidas
-no 3.7:
+**Envelope:** `{ resultado: [...], totalRegistros, totalPaginas, paginasRestantes }`. Paginação por
+`pagina` e `tamanhoPagina` (**10 a 500**). Datas `YYYY-MM-DD`. Acesso público.
 
-- A rota responde **404, e não 400, quando falta um parâmetro obrigatório ou a assinatura muda**.
-  Foi o que aconteceu em ago/2026 com `1_consultarMaterial`. Um 404 **não** significa "item sem
-  preço": trate como "contrato da API mudou", com mensagem própria e alerta.
-- `codItemCatalogo` (módulo de contratações) × `codigoItemCatalogo` (pesquisa de preço) ×
-  `codigoItem` (atas): três nomes para o mesmo código.
-- `temResultado=false` devolve sempre vazio: itens sem vencedor vêm com `null`. Filtre no cliente
-  quando precisar.
-- A latência é alta e variável. Nenhuma chamada à API pode ficar no caminho de uma requisição que
-  já faz outra coisa pesada.
+**Cota (P24):** ~100 requisições por minuto por cliente, somando todos os módulos. Um 429 traz
+"Rate limit is exceeded. Try again in N seconds" e `Retry-After` de até 45 s.
 
-**Modelo de dados** (schema `public`; DDL em `scripts/create_dadosabertos_tables.py`). O nome não
-pode colidir com `sismat.ComprasGovPreco`, que é outra base:
+| Uso | Endpoint | Parâmetros | Campos |
+|-----|----------|------------|--------|
+| **Preços praticados (inciso I)**: o "I - Compras.gov" da DLOG | `GET /modulo-pesquisa-preco/1_consultarMaterial` (JSON). O extrator usa a variante `1.1_consultarMaterial_CSV`, com os mesmos campos | `tipo=codigoItemCatalogo` (ou `codigoPdm`) + `codigo` (**desde ago/2026**; antes, `codigoItemCatalogo=<n>`), `dataCompraInicio`, `dataCompraFim`, `estado`, `codigoMunicipio`, `codigoUasg`, `pagina`, `tamanhoPagina` | **confirmado (extrator):** `idCompra`, `idItemCompra`, `forma`, `modalidade` (**código**: 5 = Pregão, 6 = Dispensa, 7 = Inexigibilidade, 3 = Concorrência… mapa `MAPA_MODALIDADE_DA`), `criterioJulgamento`, `numeroItemCompra`, `descricaoItem`, `codigoItemCatalogo`, `nomeUnidadeFornecimento`, `siglaUnidadeFornecimento`, `nomeUnidadeMedida`, `capacidadeUnidadeFornecimento`, `siglaUnidadeMedida`, `quantidade`, `precoUnitario`, `percentualMaiorDesconto`, `niFornecedor`, `nomeFornecedor`, `marca`, `codigoUasg`, `nomeUasg`, `codigoMunicipio`, `municipio`, `estado`, `codigoOrgao`, `nomeOrgao`, `poder`, `esfera`, `dataCompra`, `dataHoraAtualizacaoCompra`, `dataHoraAtualizacaoItem`, `dataResultado`, `dataHoraAtualizacaoUasg`, `codigoClasse`, `nomeClasse` |
+| Descrição detalhada (**sem preço**) | `GET /modulo-pesquisa-preco/2_consultarMaterialDetalhe` | `codigoItemCatalogo`, `dataCompraInicio`, `dataCompraFim` | **confirmado (cliente):** `idCompra`, `idItemCompra`, `numeroItemCompra`, `codigoItemCatalogo`, `objetoCompra`, `descricaoDetalhadaItem`, `dataAtualizacaoFato` |
+| **Contratação no PNCP a partir da compra (P22)** | `GET /modulo-contratacoes/1.1_consultarContratacoes_PNCP_14133_Id` | `tipo=idCompra` + `codigo=<idCompra>`, **ou** `tipo=numeroControlePNCPCompra` + `codigo=<nº de controle>` (outro valor de `tipo` → 500) | **confirmado (cliente):** `numeroControlePNCP`, `objetoCompra`. **Esperado:** modalidade, nº, processo, situação, UASG, valor estimado |
+| Itens dessa contratação | `GET /modulo-contratacoes/2.1_consultarItensContratacoes_PNCP_14133_Id` | mesmo `tipo`/`codigo` | **Esperado:** nº do item, valor estimado e homologado, situação do item |
+| Itens de contratações PNCP por CATMAT (fonte PNCP, P16) | `GET /modulo-contratacoes/2_consultarItensContratacoes_PNCP_14133` | **obrigatórios** `dataInclusaoPncpInicial/Final`; `codItemCatalogo`, `materialOuServico=M`, `temResultado=true` (só `true` existe), `situacaoCompraItem` (`2` homologado, `4` cancelado), `orgaoEntidadeCnpj`, `unidadeOrgaoCodigoUnidade`, `codFornecedor` | **confirmado (cliente):** `codItemCatalogo`, `idCompraItem`. **Esperado:** valores, fornecedor, nº de controle |
+| Contratos de uma compra (coluna "contrato" da obs. 7) | `GET /modulo-contratos/1.1_consultarContratos_Id` | `tipo=idCompra` + `codigo` (ou `numeroControlePncpContrato`) | **Esperado:** `numeroContrato`, `numeroControlePncpContrato`, vigência |
+| **Atas (P17)** | `GET /modulo-arp/2_consultarARPItem` | **obrigatórios** `dataVigenciaInicialMin/Max` (**≤ 365 dias**); `codigoItem`, `tipoItem`, `niFornecedor`, `codigoUnidadeGerenciadora` | **confirmado (cliente):** `numeroItem`, `valorUnitario`, `niFornecedor`. **Esperado:** `numeroControlePncpAta` |
+| Cabeçalho da ata | `GET /modulo-arp/1.1_consultarARP_Id` | `numeroControlePncpAta` | — |
 
-- `DadosAbertosPreco`:
-  - `id`;
-  - `origem` (`PESQUISA_PRECO | PNCP_ITEM | ARP_ITEM`) e `chaveOrigem` (`idCompra`+`idItemCompra`
-    / `idCompraItem` / ata+item), com `@@unique([origem, chaveOrigem])`;
-  - `codigoCatmat`, `descricao`, `descricaoDetalhada`, `unidade`, `unidadeNorm`
-    (`normalizarUnidade`), `quantidade`, `precoUnitario`, `valorUnitarioEstimado`;
-  - `dataCompra`, `dataResultado`;
-  - `idCompra`, `numeroCompra` (formato "90041/2026"), `numeroItemCompra`, `modalidade`,
-    `criterioJulgamento`, `situacao`;
-  - `codigoUasg`, `nomeUasg`, `orgao`, `cnpjOrgao`, `esfera`, `uf`, `municipio`;
-  - `niFornecedor`, `nomeFornecedor`, `marca`;
+**Regras de dados herdadas do extrator** (porte cada uma com teste):
+
+- **`idCompra`** tem 16 ou 17 dígitos: 16 quando a UASG tem 5 dígitos. Normalize com
+  `padStart(17, "0")`. Estrutura: UASG (6) + modalidade (2) + número (5) + ano (4). Exemplo:
+  `12019505900412026` → UASG 120195, Pregão, **compra 90041/2026**.
+- **Chave do item da compra (22 dígitos)** = `idCompra.padStart(17,"0") + numeroItemCompra.padStart(5,"0")`.
+  É a mesma "Identif Item Compra" do DW/SIASG. Serve para **deduplicar** o Compras.gov.br contra o
+  SIASG e o PNCP (P18) e é a chave natural do registro.
+- **Unidade de fornecimento:**
+  - usa `nomeUnidadeFornecimento`; se vazio, traduz `siglaUnidadeFornecimento` pelo mapa do
+    extrator (`FR-AM` → "Frasco-Ampola", `COMPR` → "Comprimido", `TBTE` → "Tubete"…);
+  - acrescenta `capacidadeUnidadeFornecimento` + `siglaUnidadeMedida` só quando a capacidade não
+    é `0,00`;
+  - o resultado passa por `normalizarUnidade` para casar com a unidade da pesquisa.
+- **Paginação:** `totalPaginas` é a fonte. `ceil(totalRegistros/500)` confere e substitui o rodapé
+  quando ele falta. `totalRegistros` pode vir com separador de milhar. Rodapé ausente e última
+  página cheia → uma requisição a mais para confirmar o fim.
+- **Resposta 200 que não é o JSON/CSV esperado** (por exemplo, página HTML de manutenção) é
+  **erro**, não "0 registros".
+- **404 não significa "item sem preço"**: significa que a assinatura mudou (P24). O extrator tenta
+  a assinatura nova e, se receber 400 ou 404, cai **uma vez** para a antiga (`codigoItemCatalogo=`)
+  e memoriza a escolha. Faça igual: tente `tipo`+`codigo`; se vier 400/404, use
+  `codigoItemCatalogo` e grave na coleta qual assinatura funcionou.
+- **Texto livre** pode trazer `\x0b`, ` ` e outros caracteres de controle. Limpe antes de
+  gravar e antes do XLSX (o `exceljs` e o Excel rejeitam).
+
+#### 7.1.2 BPS — API de Dados Abertos do Ministério da Saúde
+
+- **Endpoint:** `GET https://apidadosabertos.saude.gov.br/economia-da-saude/bps`. O Swagger fica em
+  `/v1/`; o extrator usa o caminho **sem** `/v1`.
+- **Parâmetros:** `codigoCatmat` (só dígitos, **sem zeros à esquerda**), `dataCompraInicio`,
+  `dataCompraFim` (`YYYY-MM-DD` no extrator; confirmar), `pagina` e `tamanhoPagina` (**máximo
+  500**).
+- **Resposta:** `{ "bps": [...] }`. **Não informa o total**: pagine até vir uma página com menos
+  que `tamanhoPagina` registros. Não filtra por PDM.
+- **Cota e paralelismo:** servidor diferente do Compras.gov.br, então a cota de P24 não se aplica.
+  O extrator usa 4 em paralelo, com espera crescente em 429 e 5xx.
+- **Campos (confirmado, extrator):** `codigoCatmat`, `descricaoItem`, `unidadeFornecimento`,
+  `capacidade`, `siglaUnidadeMedida`, `unidadeMedidaCapacidade`, `codigoClasse`, `nomeClasse`,
+  `codigoPdm`, `nomePdm`, **`registroAnvisa`**, `generico`, `anoCompra`, `dataCompra`,
+  `dataInsercao`, `modalidade`, `tipoCompra`, `nomeInstituicao`, `cnpjInstituicao`, `municipio`,
+  `estado`, `esfera`, `cnpjFornecedor`, `nomeFornecedor`, **`cnpjFabricante`**, `nomeFabricante`,
+  `quantidade`, `precoUnitario`, `precoTotal`, **`numeroProcessoCompra`**, **`numeroAta`**,
+  `validadeCompra`, `observacoes`, `codigoGrupo`, `nomeGrupo`. Equivalem, na ordem, às 33 colunas
+  do `extracao_bps.sql`.
+- **Armadilhas:**
+  - `capacidade` vem **multiplicada por 100** (25000.0 = 250,00).
+  - `descricaoItem` traz **tags HTML e entidades** (`&#231;`). Limpe com as regras de
+    `limpar_descricao_bps`, que são as mesmas do `extracao_bps.sql` e do `tratar_catalogo.py`:
+    tags de bloco viram espaço; entidades viram caractere; "¿" vira "°"; tira "*"; ": " depois de
+    dois-pontos; sem espaço antes de vírgula; espaços colapsados.
+  - `dataCompra` é a **data de homologação** (no SQL, `compra = dt_homologacao`).
+  - **Não há id do registro.** O id no painel é um **hash determinístico** do conteúdo canônico
+    (CATMAT, CNPJ da instituição, data de compra, data de inserção, CNPJ do fornecedor, preço,
+    quantidade, processo). Ver "ids estáveis" em 7.1.4.
+- **O que muda no painel com o BPS pela API:**
+  - nº do processo e nº da ata entram em `contratacao` (D3) e na coluna T do XLSX;
+  - `registroAnvisa` permite **cruzar com a CMED** o teto do mesmo registro e o filtro Fabricante
+    (que hoje casa por nome);
+  - `cnpjFabricante` dá a identificação do fabricante.
+  - O BPS **não** tem `idCompra`. Não há vínculo PNCP direto. A duplicidade contra o Compras.gov.br
+    (P18) só pode ser **provável**: mesmo CATMAT, mesmo CNPJ de fornecedor, mesmo preço com 2
+    casas, mesma UF e data de homologação com até 3 dias de diferença. Nesse caso a linha sai com
+    "Compõe = Não — provável duplicata de Compras.gov.br" e **o usuário pode reverter na curadoria**.
+
+#### 7.1.3 Vínculo compra → contratação no PNCP (o que falta no extrator)
+
+- **Entrada:** os `idCompra` distintos dos registros que entraram na pesquisa (Compras.gov.br e,
+  se a origem trouxer a chave de 22 dígitos, SIASG). São dezenas ou centenas, nunca a base
+  inteira.
+- **Chamada:** `1.1_consultarContratacoes_PNCP_14133_Id?tipo=idCompra&codigo=<idCompra>`, uma por
+  `idCompra` distinto. Muitos itens dividem a mesma compra.
+- **Cache `PncpVinculo`:**
+  - `idCompra @id`, `encontrado`, `numeroControlePncp`, `situacao`, `modalidade`, `numeroCompra`,
+    `processo`, `objeto`, `cnpjOrgao`, `consultadoEm`, `bruto Json`;
+  - encontrado = **permanente**; não encontrado = **30 dias** (P22).
+- **Não encontrado** = "compra sem registro no PNCP (anterior à Lei 14.133/2021 ou não
+  publicada)". Isso aparece no painel e no XLSX e **não** é erro.
+- **Itens:** com o vínculo, `2.1_…_Id` dá a situação e o valor homologado do item. Use para a
+  coluna F ("Anulada/Revogada") e para conferir o preço.
+- **Contratos (opcional):** `/modulo-contratos/1.1_consultarContratos_Id?tipo=idCompra` dá o nº do
+  contrato quando houver.
+- **Link (7.5):** do `numeroControlePncp` sai o link da contratação.
+- **Carga em lote** (classes inteiras): a chamada por `idCompra` custa uma requisição por compra
+  dentro da cota de ~90/min. Para dezenas de milhares de compras, **não use a chamada por id**.
+  Monte o índice `idCompra → numeroControlePNCP` pela listagem
+  `1_consultarContratacoes_PNCP_14133` (500 por página), mês a mês. Confirme no 3.7 quais filtros
+  a listagem exige (o cliente de referência manda `codigoModalidade`) e se ela devolve `idCompra`.
+  É o caminho da seção 13 para o extrator.
+
+#### 7.1.4 Modelo de dados
+
+DDL em `scripts/create_dadosabertos_tables.py`. Nenhum nome pode colidir com
+`sismat.ComprasGovPreco`, que é outra base.
+
+- **`DadosAbertosPreco`:**
+  - `id` (**determinístico**, ver abaixo);
+  - `origem` (`COMPRASGOV | BPS | PNCP_ITEM | ARP_ITEM`) e `chaveOrigem`, com
+    `@@unique([origem, chaveOrigem])`;
+  - `chaveItemCompra22` (anulável; Compras.gov.br e SIASG);
+  - `codigoCatmat`, `codigoPdm`, `descricao` (limpa), `descricaoDetalhada`, `unidade`,
+    `unidadeNorm`, `capacidade`, `quantidade`, `precoUnitario`, `valorUnitarioEstimado`;
+  - `dataCompra`, `dataResultado`, `dataInsercao`;
+  - `idCompra`, `numeroCompra`, `numeroItemCompra`, `modalidade` (nome, já traduzido),
+    `criterioJulgamento`, `forma`, `situacao`;
+  - `codigoUasg`, `nomeUasg`, `orgao`, `cnpjOrgao`, `esfera`, `poder`, `uf`, `municipio`;
+  - `niFornecedor`, `nomeFornecedor`, `marca`, `cnpjFabricante`, `nomeFabricante`,
+    `registroAnvisa`, `generico`;
+  - `processoCompra`, `numeroAta`, `validadeCompra`, `observacoes` (do BPS);
   - `numeroControlePncp`, `numeroControlePncpAta`;
-  - `bruto Json` (o item como veio, para auditoria) e `coletadoEm`.
-  - Índices em `(codigoCatmat, origem, dataCompra)`.
-- `DadosAbertosColeta`: `origem`, `codigoCatmat`, `dataInicio`, `dataFim`, `status`
-  (`OK | PARCIAL | ERRO | CONTRATO_ALTERADO`), `paginas`, `registros`, `erro`, `iniciadoEm`,
-  `concluidoEm`, `usuarioId`. Governa a validade (P19).
-- O **nº da compra** no formato da DLOG ("90041/2026") sai de `idCompra`. Confirme a regra de
-  montagem no 3.7, item 4. A hipótese a confirmar é UASG (6) + modalidade (2) + número (5) + ano
-  (4). Se a regra não fechar, grave o `idCompra` cru e mostre-o assim.
+  - `origemCarga` (`API_PAINEL | EXTRATOR`), `bruto Json`, `coletadoEm`.
+  - Índices em `(codigoCatmat, origem, dataCompra)` e em `idCompra`.
+- **`DadosAbertosColeta`:** `origem`, `codigoCatmat`, `dataInicio`, `dataFim`, `assinatura`
+  (`tipo+codigo` ou legada), `status` (`OK | PARCIAL | ERRO | CONTRATO_ALTERADO`), `paginas`,
+  `esperados`, `baixados`, `erro`, `iniciadoEm`, `concluidoEm`, `usuarioId`. `esperados`/`baixados`
+  repetem o "relatório de integridade" do extrator.
+- **`PncpVinculo`:** como em 7.1.3.
+- **Ids estáveis (obrigatório):** a curadoria grava exclusões por **id do registro**
+  (`ExclusaoRegistro.id`, `CestaItem.exclusoes`). Se o id mudar a cada coleta, as exclusões
+  justificadas se perdem.
+  - Compras.gov.br: id = `COMPRASGOV:<chave22>`.
+  - PNCP: `PNCP:<idCompraItem>`.
+  - Ata: `ARP:<numeroControlePncpAta>:<numeroItem>`.
+  - BPS: `BPS:<sha1 do conteúdo canônico>`.
+  - **Nunca `cuid()`.**
+  - Ao trocar `PrecoBps`/`PrecoPncp` pela API (P16/P21), exclusões antigas que apontam para ids
+    `cuid` não casam mais. O relatório lista essas exclusões como "registro não encontrado na base
+    atual" e a curadoria avisa o usuário. Nada some em silêncio.
 
-**Coleta**, sem estourar o tempo de função da Vercel:
+#### 7.1.5 Coleta pelo painel e carga pelo extrator
 
-- `lib/dados-abertos/cliente.ts` (servidor):
-  - `fetch` com timeout de 25 s e 2 novas tentativas com espera crescente (só para 5xx e timeout);
-  - `User-Agent` identificando o painel;
-  - 404 → `CONTRATO_ALTERADO`.
-- `lib/dados-abertos/mapear.ts`: item da API → linha de `DadosAbertosPreco`. É o **único lugar**
-  que conhece os nomes de campo da API.
-- `POST /api/precos/dados-abertos/coletar` `{ codigo, origem, pagina }`:
-  - busca **uma** página (`tamanhoPagina=500`), faz upsert e devolve
-    `{ pagina, totalPaginas, gravados }`;
-  - a tela chama página a página e mostra o progresso;
-  - permissão `precos:pesquisar`, com `lib/rate-limit.ts`;
-  - `preferredRegion` conforme o 3.7.
-- **Validade (P19):** a pesquisa lê `DadosAbertosColeta` e, se a última coleta OK tem mais de 7
-  dias ou não existe, mostra "Atualizar do Compras.gov.br".
-- **Os relatórios (HTML e XLSX) não coletam:** usam o que está gravado e imprimem a data e hora da
-  coleta.
-- `scripts/coletar_dados_abertos.py --catmat 410020,410019 | --arquivo lista.txt --dry-run|--confirm`:
-  carga em lote com o mesmo mapeamento, em espelho Python, com autoteste sobre um JSON de exemplo
-  salvo no 3.7.
-- `scripts/probe_dados_abertos.py`: chama cada endpoint da tabela com parâmetros conhecidos e
-  confere os campos esperados. Sai com código ≠ 0 se o contrato mudou. Documente em
-  `docs/ATUALIZACAO_DE_DADOS.md` que ele roda antes de cada ciclo de pesquisa.
+- **`lib/dados-abertos/`:**
+  - `cliente.ts`: `fetch` com timeout de 25 s, 2 novas tentativas (5xx/timeout), `User-Agent` do
+    painel, detecção de assinatura (7.1.1), 404 → `CONTRATO_ALTERADO`, 200 não-JSON → erro, 429 →
+    `{ aguardarMs }` vindo do `Retry-After`;
+  - `comprasgov.ts`, `bps.ts` e `pncp-vinculo.ts`: chamadas e paginação;
+  - `mapear.ts`: item da API → linha de `DadosAbertosPreco`. É o **único** lugar que conhece os
+    nomes de campo. Inclui unidade, modalidade, chave22, nº da compra e limpeza de descrição.
+- **Rotas:**
+  - `POST /api/precos/dados-abertos/coletar` `{ codigo, origem, pagina }`: uma página por
+    chamada; a tela repete até `totalPaginas` (ou até a página curta, no BPS), mostra o progresso e
+    obedece `aguardarMs`.
+  - `POST /api/precos/dados-abertos/vincular-pncp` `{ idsCompra: string[] }`: até 20 ids por
+    chamada, cada um respeitando a cota; a tela repete até o fim.
+  - Permissão `precos:pesquisar`, `lib/rate-limit.ts` e `preferredRegion` conforme o 3.7.
+- **Espaçamento:**
+  - Em **instância única** (servidor interno), a cota é global no processo, como a `_CotaCompras`
+    do extrator.
+  - Na **Vercel** há várias instâncias, então a garantia vem da tela: **uma** coleta por vez por
+    usuário, espaçamento mínimo de 700 ms entre chamadas e obediência ao `aguardarMs`.
+  - Documente que coletas simultâneas de vários usuários dividem a mesma cota de ~100/min por IP de
+    saída.
+- **Validade (P19)** e **relatórios sem coleta** (2.2): como antes.
+- **Carga em lote (P23):**
+  - `scripts/import_extrator_da.py --arquivo <saída do extrator> --dry-run|--confirm`;
+  - lê a aba Compras.gov (`Dados CATMAT`, colunas de `ordem_final_colunas`) e a aba `BPS`
+    (`COLUNAS_BPS`), aplica o **mesmo** mapeamento (espelho Python de `mapear.ts`, com autoteste
+    sobre um JSON e uma linha de planilha de exemplo salvos no 3.7) e grava com `origemCarga =
+    EXTRATOR`;
+  - upsert pela chave; relatório de cargas por CATMAT; compara `esperados × baixados` com o
+    `Relatorio_Integridade` do extrator.
+- `scripts/probe_dados_abertos.py`: chamadas conhecidas aos endpoints de 7.1.1 e 7.1.2, conferindo
+  os campos. Sai com código ≠ 0 se o contrato mudou.
 
-**Uso na pesquisa** (`pesquisarPrecos`):
+#### 7.1.6 Uso na pesquisa (`pesquisarPrecos`)
 
-- Fonte nova `comprasgov` em `FonteCurada`/`NOME_FONTE_CURADA` ("Compras.gov.br — Painel de
-  Preços").
-  - `FONTE_SEM_CAMPO`: fornecedor ✅ (`nomeFornecedor`), fabricante e CNPJ do comprador conforme o
-    3.7.
-  - Unidade casada por `unidadeNorm`, UF por `uf`, janela de D1 sobre `dataCompra`.
+- **Fonte `comprasgov`** ("Compras.gov.br — Painel de Preços", inciso I):
+  - `FONTE_SEM_CAMPO`: fornecedor ✅ (`nomeFornecedor`); fabricante ✅ (`marca`); CNPJ do
+    comprador conforme o 3.7 (`codigoOrgao`/UASG);
+  - unidade por `unidadeNorm`, UF por `uf`, janela D1 sobre `dataCompra`;
   - IQR e curadoria como nas outras fontes.
-  - Atualizar a tabela de cobertura do `CLAUDE.md`.
-- **PNCP (P16):** havendo coleta `PNCP_ITEM` válida, a fonte `pncp` lê `DadosAbertosPreco` (itens
-  homologados, `situacao = 2`). Sem coleta, cai em `PrecoPncp` e avisa "dados PNCP de base
-  histórica".
-- **Atas (P17):** fonte `atas` ("Ata de Registro de Preços", inciso II).
-- **Duplicidade (P18):** deduplicar no conjunto único, com o motivo visível.
-- **Tela:** painel "Compras.gov.br" com "coletado em dd/mm/aaaa hh:mm · n registros ·
-  [Atualizar]" e progresso da coleta. Mensagem específica para `CONTRATO_ALTERADO`.
-- **Fontes e cache:** `lib/data-version.ts` e `/fontes` passam a mostrar a última coleta por
-  origem.
+- **Fonte `bps` (P21):** com coleta válida, lê `DadosAbertosPreco` (origem `BPS`); sem coleta, lê
+  `PrecoBps`.
+  - Fabricante pelo `nomeFabricante`/`cnpjFabricante`.
+  - **Registro ANVISA:** quando o registro do BPS existir em `CmedRegistro`, mostre ao lado o PMVG
+    unitário **daquele** registro, para a curadoria identificar compras acima do teto do próprio
+    produto.
+- **PNCP (P16)**, **atas (P17)** e **duplicidade (P18)**, com as chaves de 7.1.1 e 7.1.2.
+- **Tela:**
+  - um painel por fonte com "coletado em … · n registros · [Atualizar]";
+  - botão "Vincular ao PNCP" na pesquisa;
+  - o vínculo é feito automaticamente na geração do XLSX **somente se** os ids já estiverem no
+    cache; se faltarem, a modal de geração oferece "Vincular agora (n compras)" antes de gerar.
+- **Fontes e cache:** `lib/data-version.ts` e `/fontes` mostram a última coleta por origem e a
+  última carga do extrator.
+- **`CLAUDE.md`:** atualizar a tabela de cobertura dos filtros opcionais com as fontes novas.
 
 ### 7.2 D1 — Período da pesquisa (obs. 5)
 
@@ -529,9 +700,15 @@ pode colidir com `sismat.ComprasGovPreco`, que é outra base:
     `criterioJulgamento`, `situacao`, `numeroControlePncp`, `numeroControlePncpAta` e `url`;
   - `indisponivel: string | null` com o motivo quando não há o dado.
 - **Fontes:**
-  - **Compras.gov.br, PNCP e atas:** preenchidos pela API (D0).
-  - **BPS e SIASG:** só o que existir na origem (3.6), com colunas anuláveis nas tabelas. O que
-    faltar sai como "não disponível na base <X>".
+  - **Compras.gov.br:** nº da compra e UASG (de `idCompra`), item, modalidade, critério, órgão.
+    Com o vínculo de 7.1.3 também vêm o nº de controle PNCP, a situação, o processo e, se houver, o
+    contrato.
+  - **PNCP e atas:** preenchidos pela API (D0).
+  - **BPS** (pela API, P21): **nº do processo de compra e nº da ata** (`numeroProcessoCompra`,
+    `numeroAta`), instituição e CNPJ, validade. **Sem UASG nem link PNCP**, porque o BPS não tem
+    `idCompra`.
+  - **SIASG:** se a origem for o DW com `Identif Item Compra` (3.6), o mesmo que o Compras.gov.br,
+    inclusive o vínculo PNCP; senão, "não disponível na base SIASG".
 - **Tela e relatórios:**
   - linha "Contratação: Pregão 90041/2026 · UASG 120195 · item 122 · [PNCP ↗]" no `SourcePanel` e
     na curadoria (`curadoria-dialog.tsx:130`);
@@ -549,6 +726,39 @@ pode colidir com `sismat.ComprasGovPreco`, que é outra base:
   Rota relatada por terceiros: **abra 5 registros reais antes de mergear.** Para ata, só use uma
   rota conferida; se não houver, use o link da contratação-mãe.
 - O link aparece na tela, no HTML e na coluna **T ("Referência")** do XLSX, como hiperlink.
+- Para compras do Compras.gov.br, o `numeroControlePncp` vem do vínculo de 7.1.3. Sem vínculo, a
+  coluna T diz "compra sem registro no PNCP".
+
+### 7.6 O que o painel reaproveita do Extrator-CATMAT-DA (análise)
+
+O extrator é uma ferramenta desktop em Python (CustomTkinter + PyInstaller) que percorre
+Classe → PDM → CATMAT → registros. Ele também baixa o BPS em paralelo, consolida DW (SIASG) + DA
+(Compras.gov.br) removendo duplicatas pela chave de 22 dígitos e gera planilhas em streaming com
+relatório de integridade. O README dele conclui que migrar para a web exige jobs, um limitador
+global e cache, ou seja, um modelo de execução diferente. Por isso o painel **não roda o extrator**:
+porta as regras, e o extrator continua sendo o caminho de carga em lote (P23).
+
+| Regra do extrator | Onde fica no painel |
+|-------------------|---------------------|
+| Cota global de ~90/min + pausa por `Retry-After` (`_CotaCompras`, `_retry_after`) | P24, `lib/dados-abertos/cliente.ts`, loop da tela |
+| Assinatura `tipo`+`codigo` com recuo para `codigoItemCatalogo` em 400/404, memorizado (`_API_ACEITA_TIPO`) | `cliente.ts` + `DadosAbertosColeta.assinatura` |
+| Paginação por rodapé, `ceil(total/500)` como conferência, milhar no total, requisição extra quando o rodapé falta | `comprasgov.ts` |
+| Resposta 200 que não é CSV/JSON = erro | `cliente.ts` |
+| Unidade de fornecimento (nome > sigla traduzida; capacidade só se ≠ 0) e mapa de siglas | `mapear.ts` + espelho Python |
+| Mapa de modalidades (`MAPA_MODALIDADE_DA`) | `mapear.ts` |
+| Chave do item = `idCompra`(17) + `numeroItemCompra`(5); `idCompra` com 16 ou 17 dígitos | `mapear.ts`, P18, ids estáveis |
+| Limpeza da descrição (`limpar_descricao_bps` = `extracao_bps.sql` = `tratar_catalogo.py`) | `mapear.ts` + espelho Python, com os mesmos casos de teste |
+| BPS: paginação até a página curta, `capacidade` × 100, CATMAT sem zeros | `bps.ts` |
+| Relatório de integridade (`esperados × baixados`, `ERRO_API_PERSISTENTE`) | `DadosAbertosColeta` + painel de fontes |
+| Limpeza de caracteres de controle antes do Excel (`IllegalCharacterError`) | `mapear.ts` e `lib/mapa-dlog/dados.ts` |
+
+**Pontos do extrator que o painel não deve herdar:**
+
+- `verify=False` no TLS (o próprio README aponta). No painel, a verificação de certificado fica
+  **sempre ligada**.
+- Descarte de colunas vazias **por página**.
+- `except Exception` genérico, que mascara erro interno como falha de API.
+- Troca da descrição do registro pela do BPS (P25).
 
 ---
 
@@ -733,15 +943,15 @@ DLOG.** O que o painel acrescenta fica **à direita ou abaixo**, sem deslocar na
 
 | Coluna DLOG | Compras.gov.br (D0) | PNCP (módulo 7) | Ata (ARP) | BPS / SIASG | Preço informado | CMED |
 |-------------|---------------------|-----------------|-----------|-------------|-----------------|------|
-| Nº da Compra | de `idCompra` | do cabeçalho `1.1_…_Id` | nº da ata | só se a origem tiver (3.6) | documento | — |
-| Data/Hora da Compra | `dataCompra` | data do resultado ou homologação | início da vigência | `data` | data da proposta, emissão da NF ou acesso | — |
-| Anulada/Revogada | situação, se houver | `situacaoCompraItem` | situação da ata | não informado | — | — |
-| Nº do Item da Compra | `numeroItemCompra` | nº do item | `numeroItem` | só se a origem tiver | — | — |
-| Modalidade / Critério | `modalidade` / `criterioJulgamento` | cabeçalho | "SRP" | `modalidade` | tipo (III, IV ou V) | — |
-| Descrição / Unidade / Quantidade / Preço | `descricaoItem` (+ detalhe `2_…`) / unidade / `quantidade` / `precoUnitario` | idem / valor homologado | idem / `valorUnitario` | campos atuais | campos do formulário | `PrecoCmed` |
-| Fornecedor (CNPJ e nome) | `niFornecedor` / `nomeFornecedor` | idem | `niFornecedor` | `cnpjFornecedor` / `fornecedor` | CNPJ e fornecedor | laboratório |
-| Órgão / UASG / Nome UASG | `nomeOrgao` / `codigoUasg` / `nomeUasg` | idem | gerenciadora | `orgao` / instituição | — | — |
-| Referência | link PNCP, quando houver nº de controle | **link PNCP** | link da ata, quando a rota estiver conferida | — | URL ou NF | — |
+| Nº da Compra | de `idCompra` ("90041/2026") | do cabeçalho `1.1_…_Id` | nº da ata | **BPS:** `numeroProcessoCompra` (rotulado "Processo"). **SIASG:** da chave de 22 dígitos, se houver (3.6) | documento | — |
+| Data/Hora da Compra | `dataCompra` | data do resultado ou homologação | início da vigência | **BPS:** `dataCompra` (homologação). **SIASG:** `data` | data da proposta, emissão da NF ou acesso | — |
+| Anulada/Revogada | situação do item ou da contratação pelo vínculo (7.1.3); sem vínculo, "não informado" | `situacaoCompraItem` | situação da ata | não informado | — | — |
+| Nº do Item da Compra | `numeroItemCompra` | nº do item | `numeroItem` | SIASG: da chave de 22 dígitos; BPS: — | — | — |
+| Modalidade / Critério | `modalidade` (código → nome) / `criterioJulgamento` | cabeçalho | "SRP" | `modalidade` / — | tipo (III, IV ou V) | — |
+| Descrição / Unidade / Quantidade / Preço | `descricaoItem` limpa (+ detalhe `2_…`) / unidade derivada (7.1.1) / `quantidade` / `precoUnitario` | idem / valor homologado | idem / `valorUnitario` | **BPS:** `descricaoItem` limpa / `unidadeFornecimento` (+ capacidade ÷ 100) / `quantidade` / `precoUnitario` | campos do formulário | `PrecoCmed` |
+| Fornecedor (CNPJ e nome) | `niFornecedor` / `nomeFornecedor` | idem | `niFornecedor` | `cnpjFornecedor` / `nomeFornecedor` | CNPJ e fornecedor | laboratório |
+| Órgão / UASG / Nome UASG | `nomeOrgao` / `codigoUasg` / `nomeUasg` | idem | gerenciadora | **BPS:** `nomeInstituicao` / — / CNPJ da instituição | — | — |
+| Referência | **link PNCP** pelo vínculo (7.1.3), ou "sem registro no PNCP" | **link PNCP** | link da ata, quando a rota estiver conferida | **BPS:** "Ata <numeroAta>" e, se houver, "validade <validadeCompra>" | URL ou NF | — |
 
 ### 8.4 Justificativa automática e diferenças de método
 
@@ -864,7 +1074,17 @@ Excel e no LibreOffice.
   - 410020 coletado em páginas sem estourar o tempo de função;
   - as compras 90041/2026 e 90007/2026 aparecem com UASG, item e preço;
   - um 404 simulado mostra "contrato da API alterado", e não "sem preços";
-  - os relatórios não disparam coleta.
+  - os relatórios não disparam coleta;
+  - um 429 simulado faz a tela esperar o `Retry-After` e retomar, sem a função do servidor dormir;
+  - vínculo PNCP: as compras do item 4 da DLOG (UASG de 6 e de 5 dígitos) recebem o nº de
+    controle, e uma compra sem PNCP aparece como "sem registro no PNCP";
+  - BPS pela API: 410020 com processo e ata preenchidos, `capacidade` dividida por 100, descrição
+    sem HTML;
+  - recoletar o mesmo CATMAT **mantém os ids** e as exclusões da curadoria continuam aplicadas;
+  - `import_extrator_da.py --dry-run` sobre uma saída real do extrator grava as mesmas chaves que a
+    coleta pelo painel (comparar 410020 pelos dois caminhos);
+  - os espelhos TS/Python de `mapear` (unidade, modalidade, chave de 22 dígitos, limpeza de
+    descrição) passam nos mesmos casos de teste.
 - **D1–D4:**
   - janela de 12 meses aplicada;
   - ampliar sem justificativa é bloqueado;
@@ -896,8 +1116,11 @@ Excel e no LibreOffice.
    - critério e teto escolhíveis por item;
    - `conferir_mapa_dlog.py`.
    **É a entrega que a DLOG pode começar a usar.**
-3. **D0 + D3 + D4:** tabelas, coleta e probe da API; fonte Compras.gov.br; PNCP com nº de controle;
-   atas; identificação da contratação; links. O XLSX ganha as colunas C, F, G, H, I, R, S e T.
+3. **D0 + D3 + D4**, em três PRs:
+   - **3a:** tabelas, `mapear` com espelho Python, `import_extrator_da.py`, fonte Compras.gov.br
+     (a carga pelo extrator já alimenta o XLSX com as colunas C, G, H, I, R e S);
+   - **3b:** coleta pelo painel (Compras.gov.br e BPS), probe e `bps` pela API (processo e ata);
+   - **3c:** vínculo PNCP (`PncpVinculo`), coluna F, link na coluna T, atas.
 4. **D1 + D2:** período e IPCA. O XLSX ganha V–X reais e a aba `Índices IPCA`.
 5. **E2:** justificativa editável e gravada; aba `Parâmetros`; dois tetos com a alíquota da seção 7
    do prompt CMED, se já estiver na `main`; duplicidades (P18).
@@ -916,6 +1139,11 @@ Os passos 3, 4 e 7 pedem scripts rodados localmente pelo usuário (`--dry-run`, 
 - Não recalcular preço no gerador do XLSX: ele lê o `ResultadoPesquisa`.
 - Não chamar a API do Compras.gov.br dentro da emissão de relatório nem em requisição sem
   paginação; não tratar 404 da API como "sem preço".
+- Não fazer o vínculo PNCP por `idCompra` para a base inteira dentro do painel (a cota é de
+  ~100/min por cliente). Lote grande é o extrator (seção 13).
+- Não desligar a verificação TLS (`verify=False`) em nenhum script; não usar `cuid()` como id de
+  registro de preço (as exclusões da curadoria dependem de id estável).
+- Não copiar o código do Extrator-CATMAT-DA para o painel: portar as regras, com testes.
 - Não inventar nº de compra, UASG ou link; não renomear status; não gravar medicamento fora do
   dicionário.
 - Não corrigir o teto CMED pelo IPCA nem aplicar IPCA "para trás"; não ampliar o período
@@ -936,10 +1164,11 @@ Os passos 3, 4 e 7 pedem scripts rodados localmente pelo usuário (`--dry-run`, 
   - `CestaItem.justificativa` (DDL);
   - `scripts/conferir_mapa_dlog.py`.
 - **D:**
-  - `lib/dados-abertos/{cliente,mapear}.ts`;
-  - rota `/api/precos/dados-abertos/coletar`;
-  - `scripts/{create_dadosabertos_tables,coletar_dados_abertos,probe_dados_abertos}.py`;
-  - fonte `comprasgov`, PNCP e atas em `pesquisarPrecos`;
+  - `lib/dados-abertos/{cliente,comprasgov,bps,pncp-vinculo,mapear}.ts`;
+  - rotas `/api/precos/dados-abertos/coletar` e `/api/precos/dados-abertos/vincular-pncp`;
+  - `scripts/{create_dadosabertos_tables,coletar_dados_abertos,import_extrator_da,probe_dados_abertos}.py`
+    (com o espelho Python de `mapear` e o autoteste);
+  - fontes `comprasgov` e `bps` (pela API), PNCP e atas em `pesquisarPrecos`; `PncpVinculo`;
   - `lib/pesquisa-preco-periodo.ts`, `lib/ipca.ts`, `lib/pncp.ts`, `scripts/import_ipca.py`;
   - `contratacao` em `RegistroMercado`;
   - `docs/api/compras-dadosabertos.md`.
@@ -963,10 +1192,75 @@ Um parágrafo por observação, em linguagem não técnica, com o estado de cada
 **esclarecimento**. Obrigatório:
 
 - **Planilha:** o painel passa a gerar o "Mapa comparativo de Preços" **no mesmo modelo**, com a
-  base do Compras.gov.br, nº da compra, UASG e link do PNCP. Diga o que já está disponível e quais
+  base do Compras.gov.br, nº da compra, UASG e link do PNCP, e com o BPS trazendo o processo e a
+  ata da compra. Diga o que já está disponível e quais
   colunas dependem da coleta pela API. Liste as decisões de método da seção 8.4. Com tato, cite os
   pontos da seção 8.5 que a automação resolve (em especial o `#N/A` do IPCA no arquivo enviado).
 - **"Cessar Atos":** não foi excluído dos critérios; explique, pelo diagnóstico 3.1, por que não
   apareceu.
 - **Relatórios:** Panorama Executivo disponível (ou em homologação); Risco e ARP com as datas que o
   usuário informar. Não invente datas.
+
+---
+
+## 13. Anexo — prompt separado para o Extrator-CATMAT-DA (vínculo com o PNCP)
+
+> Cole o bloco abaixo numa sessão do Claude Code aberta no repositório
+> `abelogliari/Extrator-CATMAT-DA`. Ele **não** faz parte do trabalho no `djud-painel`. O painel
+> só depende de o extrator gravar as colunas novas com os nomes abaixo, para o
+> `scripts/import_extrator_da.py` (P23) carregá-las.
+
+```text
+Tarefa: acrescentar ao Extrator-CATMAT-DA o vínculo de cada registro do Compras.gov.br (aba
+"Dados CATMAT") com a contratação no PNCP, e o link público dela.
+
+Contexto do código (leia antes de editar):
+- O motor existe em DUAS cópias, que precisam mudar juntas (README, "Extração sem interface"):
+  ExtratorCatmat.py e extrator_comprasgov.py. As funções são copiadas de propósito, por causa do
+  PyInstaller.
+- Toda chamada ao Compras.gov.br passa por _get_compras(), que respeita a cota global
+  _cota_compras (90/min; ~100 medidas em 29/09/2026) e o Retry-After dos 429. O vínculo gasta da
+  MESMA cota.
+- Erros vão para _erros_api.registrar(fonte, diagnosticar(...)). Crie a fonte "PNCP".
+- O relatório de integridade é montado em gravar_relatorio() (uma linha por código).
+
+O que fazer:
+1. Chave da compra: idCompra (16 ou 17 dígitos) normalizado com zfill(17). Chave do item:
+   idCompra.zfill(17) + numeroItemCompra.zfill(5), a mesma da consolidação DW + DA.
+2. Vínculo por compra (listas pequenas): para cada idCompra DISTINTO da extração, chame
+   GET /modulo-contratacoes/1.1_consultarContratacoes_PNCP_14133_Id?tipo=idCompra&codigo=<idCompra>
+   (pagina=1, tamanhoPagina=10).
+   - Primeiro confirme, numa chamada manual, se a API quer o idCompra com ou sem o zero à
+     esquerda quando a UASG tem 5 dígitos.
+   - Lista vazia = "sem registro no PNCP" (compra anterior à Lei 14.133 ou não publicada). Isso
+     não é erro.
+   - tipo só aceita "idCompra" ou "numeroControlePNCPCompra" (outro valor → HTTP 500).
+3. Vínculo em lote (opção --vincular-pncp=lote, para classes inteiras): monte o índice
+   idCompra → numeroControlePNCP pela listagem
+   /modulo-contratacoes/1_consultarContratacoes_PNCP_14133 (500 por página), mês a mês, dentro do
+   período da extração. Descubra no Swagger quais filtros ela exige (codigoModalidade?) e se a
+   resposta traz idCompra. Se não trouxer, documente e deixe só o modo por compra.
+4. Cache persistente entre execuções: cache_pncp.sqlite (ou .csv) na pasta do programa, com
+   idCompra, encontrado, numeroControlePNCP, situacao, processo, consultadoEm. "Encontrado" é
+   permanente; "não encontrado" vale 30 dias.
+5. Colunas novas na aba "Dados CATMAT", ao fim de ordem_final_colunas, sem mexer nas existentes:
+   chaveItemCompra22, numeroCompra ("NNNNN/AAAA", tirado do idCompra), numeroControlePNCP,
+   linkPNCP (https://pncp.gov.br/app/editais/{cnpj}/{ano}/{sequencial sem zeros}, derivado do
+   numeroControlePNCP "CNPJ-1-SEQ/ANO"; confira em 5 registros reais), situacaoPNCP.
+   No .xlsx, linkPNCP vira hiperlink.
+6. Relatório de integridade: colunas "compras", "vinculadas ao PNCP", "sem PNCP" e "erro PNCP" por
+   código. Na apuração final, a contagem por fonte "PNCP".
+7. Interface e CLI:
+   - checkbox "Vincular ao PNCP" (padrão ligado para listas de até 2.000 compras; desligado para
+     classes);
+   - opção --vincular-pncp {nao,compra,lote} no extrator_comprasgov.py;
+   - estimativa de tempo antes de começar: compras distintas ÷ 90 por minuto.
+8. Aproveite para corrigir o que o README lista em "Pontos em aberto" e que afeta esses dados:
+   - verify=False no TLS (tente verify=True; só recue com aviso explícito);
+   - descarte de colunas vazias por página: passe a descartar só no fim.
+
+Teste com:
+- CATMAT 410020, de 01-08-2025 a 11-08-2026. As compras 90041/2026 (UASG 120195) e 90007/2026
+  (UASG 160166) precisam sair com numeroControlePNCP e o link abrindo a contratação certa.
+- Uma compra de UASG com 5 dígitos (por exemplo, a UASG 90201).
+- Uma execução cancelada no meio: o cache precisa manter o que já foi consultado.
