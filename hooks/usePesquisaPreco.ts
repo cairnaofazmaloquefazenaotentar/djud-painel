@@ -88,6 +88,11 @@ export interface ParametrosBusca {
   };
   /** Atualização pelo IPCA dos incisos I e II (D2). */
   corrigirIpca: boolean;
+  /**
+   * Lista CMED consultada ("AAAA-MM"); null = a última publicada até a data
+   * de referência, a que o relatório usa sempre.
+   */
+  competenciaCmed?: string | null;
 }
 
 /** Pesquisa consolidada — dispara apenas quando os parâmetros são submetidos. */
@@ -106,6 +111,7 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       params?.periodo.justificativaAmpliacao,
       params?.periodo.inicio,
       params?.corrigirIpca,
+      params?.competenciaCmed ?? null,
     ],
     queryFn: async () => {
       if (!params) throw new Error("Parâmetros de pesquisa ausentes");
@@ -119,6 +125,7 @@ export function usePesquisaPrecos(params: ParametrosBusca | null) {
       if (params.periodo.inicio) sp.set("inicio", params.periodo.inicio);
       if (params.periodo.justificativaAmpliacao) sp.set("justificativaPeriodo", params.periodo.justificativaAmpliacao);
       if (!params.corrigirIpca) sp.set("ipca", "0");
+      if (params.competenciaCmed) sp.set("competencia", params.competenciaCmed);
       const res = await fetch(apiPath(`/api/precos/buscar?${sp.toString()}`));
       if (!res.ok) await lerErro(res, "Erro na pesquisa de preços");
       return res.json();
@@ -161,5 +168,25 @@ export function useSugestoesFiltro(p: {
     placeholderData: keepPreviousData,
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+  });
+}
+
+export interface CompetenciasCmed {
+  competencias: Array<{ competencia: string; rotulo: string; registros: number; capPercentual: number | null }>;
+  /** A última publicada até hoje — a que os relatórios usam. */
+  vigente: string | null;
+}
+
+/** Listas mensais da CMED carregadas, para o seletor "Lista CMED" da pesquisa. */
+export function useCompetenciasCmed() {
+  return useQuery<CompetenciasCmed>({
+    queryKey: ["precos-cmed-competencias"],
+    queryFn: async () => {
+      const res = await fetch(apiPath("/api/precos/cmed/competencias"));
+      if (!res.ok) await lerErro(res, "Erro ao listar as listas CMED");
+      return res.json();
+    },
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   });
 }

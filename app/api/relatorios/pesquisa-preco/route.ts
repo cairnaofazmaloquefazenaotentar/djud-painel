@@ -45,6 +45,7 @@ import {
   validadeEm,
   type MetaRelatorio,
 } from "@/lib/relatorio-pesquisa-preco";
+import { rotuloCap } from "@/lib/cmed-competencia";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +76,7 @@ function gerarHTML(resultado: ResultadoPesquisa, emissao: Emissao, meta: MetaRel
       <p style="font-size:22px;font-weight:bold;color:#1a3a5c;">${fmtBRL(recomendacao.precoFinal)}<span style="font-size:12px;font-weight:normal;color:#555;margin-left:8px;">por ${esc(unidade)}</span></p>
       <p style="font-size:11px;color:#333;margin-top:4px;">Quantidade: <strong>${emissao.quantidade.toLocaleString("pt-BR")}</strong> · Valor total estimado: <strong>${valorTotal === null ? "—" : fmtBRL(valorTotal, 2)}</strong> · Método: ${esc(recomendacao.descricaoMetodo)}</p>
       ${pmvgAplicado ? `<p style="font-size:10px;color:#c0392b;margin-top:4px;">* Teto PMVG aplicado — preço de mercado estava acima do limite regulatório ANVISA/CMED</p>` : ""}
-      ${capAplica ? `<p style="font-size:10px;color:#c0392b;margin-top:2px;">* Produto sujeito a desconto CAP de 21,53% sobre o PF nas aquisições não judiciais</p>` : ""}
+      ${capAplica ? `<p style="font-size:10px;color:#c0392b;margin-top:2px;">* Produto sujeito a desconto CAP de ${rotuloCap(resultado.resultados.cmed.lista?.capPercentual)} sobre o PF nas aquisições não judiciais</p>` : ""}
     </div>
     <p style="font-size:11px;margin-bottom:10px;"><strong>Justificativa do preço adotado:</strong> ${esc(emissao.justificativa)}</p>
     ${conteudoObservacoes(resultado)}

@@ -8,6 +8,8 @@ import { carregarIpca } from "@/lib/ipca-indices";
 import { fontesDoResultado } from "@/lib/pesquisa-preco-fontes";
 import type { ResultadoPesquisa } from "@/lib/pesquisa-preco";
 import type { MapaItem } from "@/lib/mapa-dlog/dados";
+import { escolherLista, listarCompetencias } from "@/lib/cmed";
+import { hojeBrasilia } from "@/lib/pesquisa-preco-periodo";
 import type { MetaMapa } from "@/lib/mapa-dlog/gerar";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,6 +21,8 @@ import type { MetaMapa } from "@/lib/mapa-dlog/gerar";
 export interface ContextoBases {
   cmedVigencia: Date | null;
   cmedPublicacao: Date | null;
+  /** Lista mensal do teto ("ago/2026"): a última publicada até a data de referência. */
+  cmedLista: string | null;
   versaoDados: string | null;
   fontesConsultadas: string[];
 }
@@ -32,8 +36,12 @@ function faixa(min: Date | null | undefined, max: Date | null | undefined): stri
   return a === b ? a : `${a}–${b}`;
 }
 
-export async function contextoBases(): Promise<ContextoBases> {
-  const [cmed, bps, siasg, pncp, versao] = await Promise.all([
+/**
+ * `dataReferencia` ("AAAA-MM-DD") escolhe a lista CMED pela mesma regra da
+ * pesquisa (escolherLista): a última publicada até essa data.
+ */
+export async function contextoBases(dataReferencia: string = hojeBrasilia()): Promise<ContextoBases> {
+  const [cmed, bps, siasg, pncp, versao, competencias] = await Promise.all([
     db.precoCmed.aggregate({ _max: { vigencia: true } }),
     db.precoBps.aggregate({ _min: { data: true }, _max: { data: true } }),
     db.precoSiasg.aggregate({ _min: { data: true }, _max: { data: true }, where: { acaoJudicial: true } }),
@@ -41,16 +49,20 @@ export async function contextoBases(): Promise<ContextoBases> {
     getDataVersion(["precoCmed", "precoBps", "precoSiasg", "precoPncp", "catmatItem", "cmedRegistro"]).catch(
       () => null
     ),
+    listarCompetencias(),
   ]);
   const vigencia = cmed._max.vigencia ?? null;
+  const lista = escolherLista(competencias, dataReferencia, null);
   return {
     cmedVigencia: vigencia,
-    // A tela ainda lê PrecoCmed; a data oficial de publicação entra com a
-    // seção 7 do prompt CMED mensal (competência e alíquota escolhidas).
+    // As listas mensais não trazem a data oficial de publicação.
     cmedPublicacao: null,
+    cmedLista: lista?.rotulo ?? null,
     versaoDados: versao,
     fontesConsultadas: [
-      `CMED/ANVISA — tabela vigente no painel${vigencia ? ` (vigência ${vigencia.toISOString().slice(0, 10).split("-").reverse().join("/")})` : ""}; preço por embalagem ÷ Qt_Embal do registro ANVISA.`,
+      lista
+        ? `CMED/ANVISA — lista de ${lista.rotulo}, a última publicada até a data de referência; preço por embalagem ÷ Qt_Embal do registro ANVISA.`
+        : `CMED/ANVISA — tabela vigente no painel${vigencia ? ` (vigência ${vigencia.toISOString().slice(0, 10).split("-").reverse().join("/")})` : ""}; preço por embalagem ÷ Qt_Embal do registro ANVISA.`,
       `Compras.gov.br — uma fonte com três bases: a API de dados abertos do Painel de Preços (coletada por CATMAT), o SIASG/Comprasnet judicial carregado no painel (${faixa(siasg._min.data, siasg._max.data)}) e a base de contratos do PNCP carregada no painel (${faixa(pncp._min.data, pncp._max.data)}). O PNCP é também o link da contratação de cada compra (coluna Referência).`,
       `BPS — API de dados abertos do Ministério da Saúde quando coletado; senão, base carregada no painel, compras de ${faixa(bps._min.data, bps._max.data)}.`,
       "Atas de registro de preços — API de dados abertos do Compras.gov.br (vigência iniciada nos últimos 12 meses).",

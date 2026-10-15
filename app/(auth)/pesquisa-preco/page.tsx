@@ -43,7 +43,8 @@ import { CampoFiltroSugestoes } from "@/components/pesquisa-preco/campo-filtro-s
 import { CuradoriaDialog } from "@/components/pesquisa-preco/curadoria-dialog";
 import { CamposEscolhaPreco, PreviaPrecoAdotado } from "@/components/pesquisa-preco/escolha-preco";
 import { DadosAbertosPanel } from "@/components/pesquisa-preco/dados-abertos-panel";
-import { useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
+import { useCompetenciasCmed, useItemPesquisa, usePesquisaPrecos, type ParametrosBusca } from "@/hooks/usePesquisaPreco";
+import { competenciaVigenteEm, rotuloCompetencia } from "@/lib/cmed-competencia";
 import { useAdicionarItemCesta } from "@/hooks/useCesta";
 // Os filtros opcionais vêm do módulo puro: importar lib/pesquisa-preco aqui
 // arrastaria o Prisma para o bundle do navegador (ver o cabeçalho de lá).
@@ -379,9 +380,19 @@ function CmedPanel({
           {fabricante && (
             <Badge variant="outline" className="text-xs font-normal">{fabricante}</Badge>
           )}
+          {data?.lista && (
+            <Badge variant="outline" className="text-xs font-normal">Lista {data.lista.rotulo}</Badge>
+          )}
         </div>
         {data && <Badge variant="outline" className="text-xs shrink-0">{data.total} registro(s)</Badge>}
       </div>
+
+      {data?.lista && data.lista.competencia !== data.lista.vigente && (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          Consulta na lista de {data.lista.rotulo}. O relatório usa a de {data.lista.rotuloVigente}, a
+          última publicada até a data de referência — o teto impresso pode ser outro.
+        </p>
+      )}
 
       {loading && (
         <div className="h-10 flex items-center text-muted-foreground text-sm animate-pulse">
@@ -395,8 +406,9 @@ function CmedPanel({
 
       {!loading && data && data.total === 0 && (
         <p className="text-sm text-amber-600">
-          Nenhum registro ANVISA{fabricante ? " do fabricante informado" : ""} com preço CMED vigente
-          para este código e unidade.
+          Nenhum registro ANVISA{fabricante ? " do fabricante informado" : ""} com preço{" "}
+          {data.lista ? `na lista CMED de ${data.lista.rotulo}` : "CMED vigente"} para este código e
+          unidade.
         </p>
       )}
 
@@ -659,6 +671,16 @@ export default function PesquisaPrecoPage() {
   const [inicioPeriodo, setInicioPeriodo] = useState("");
   const [justificativaPeriodo, setJustificativaPeriodo] = useState("");
   const [corrigirIpca, setCorrigirIpca] = useState(true);
+  // Lista CMED do teto (decisão do usuário, out/2026): a tela consulta qualquer
+  // lista carregada; o relatório usa sempre a última publicada até a data de
+  // referência. "" = essa última.
+  const [competenciaCmed, setCompetenciaCmed] = useState("");
+  const { data: listasCmed } = useCompetenciasCmed();
+  const competenciasCmed = listasCmed?.competencias ?? [];
+  const cmedVigenteNaReferencia = competenciaVigenteEm(
+    competenciasCmed.map((c) => c.competencia),
+    dataReferencia
+  );
 
   // "Mais filtros" — recorte opcional, recolhido por padrão.
   const [maisFiltros, setMaisFiltros] = useState(false);
@@ -811,8 +833,15 @@ export default function PesquisaPrecoPage() {
         inicio: inicioEscolhido,
       },
       corrigirIpca,
+      competenciaCmed: competenciaCmed || null,
     });
-  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca, inicioEscolhido]);
+  }, [material, unidade, uf, fornecedor, fabricante, cnpjComprador, dataReferencia, mesesMercado, periodoAmpliado, justificativaPeriodo, corrigirIpca, inicioEscolhido, competenciaCmed]);
+
+  /** Troca a lista CMED; com uma pesquisa na tela, já refaz a consulta. */
+  const escolherListaCmed = useCallback((v: string) => {
+    setCompetenciaCmed(v);
+    setParams((p) => (p ? { ...p, competenciaCmed: v || null } : p));
+  }, []);
 
   const handleAdicionarCesta = useCallback(() => {
     if (!params) return;
@@ -1033,7 +1062,7 @@ export default function PesquisaPrecoPage() {
         {/* Parâmetros da apuração (art. 5º e IPCA) — valem para a tela e para os relatórios */}
         <div className="border-t pt-3 space-y-2">
           <p className="text-xs font-medium">Parâmetros da apuração</p>
-          <div className="grid gap-3 md:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[10rem_minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
             <div className="space-y-1.5">
               <Label className="text-xs" htmlFor="data-referencia">Data de referência</Label>
               <Input
@@ -1082,6 +1111,28 @@ export default function PesquisaPrecoPage() {
                 <p className="text-[11px] text-destructive">Informe a data inicial (até a data de referência).</p>
               )}
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs" htmlFor="lista-cmed">Lista CMED (teto)</Label>
+              <Select
+                value={competenciaCmed || "vigente"}
+                onValueChange={(v) => escolherListaCmed(v === "vigente" ? "" : v)}
+                disabled={!competenciasCmed.length}
+              >
+                <SelectTrigger id="lista-cmed" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vigente">
+                    Última publicada{cmedVigenteNaReferencia ? ` (${rotuloCompetencia(cmedVigenteNaReferencia)})` : ""}
+                  </SelectItem>
+                  {competenciasCmed.map((c) => (
+                    <SelectItem key={c.competencia} value={c.competencia}>
+                      {c.rotulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <label className="flex items-center gap-2 text-xs cursor-pointer md:pb-2">
               <input
                 type="checkbox"
@@ -1124,7 +1175,9 @@ export default function PesquisaPrecoPage() {
           <p className="text-[11px] text-muted-foreground">
             Art. 5º da IN 65/2021: bases e contratações similares de até 1 ano; mídia especializada e
             cotação com fornecedor de até 6 meses; nota fiscal de até 1 ano. O IPCA corrige só os
-            incisos I e II, a partir do mês seguinte ao do preço; o teto CMED não é corrigido.
+            incisos I e II, a partir do mês seguinte ao do preço; o teto CMED não é corrigido. Outra
+            lista CMED serve para consulta na tela: o relatório usa sempre a última publicada até a
+            data de referência.
           </p>
         </div>
 
@@ -1522,6 +1575,27 @@ export default function PesquisaPrecoPage() {
               )}
             </div>
           )}
+          {/* O relatório usa sempre a última lista CMED publicada até a data de
+              referência; consultando outra, a prévia abaixo não é a do documento. */}
+          {result?.resultados.cmed.lista &&
+            result.resultados.cmed.lista.competencia !== result.resultados.cmed.lista.vigente && (
+              <div className="flex items-start justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                <p>
+                  A tela está na lista CMED de {result.resultados.cmed.lista.rotulo}. O relatório sai com a de{" "}
+                  {result.resultados.cmed.lista.rotuloVigente}, a última publicada até a data de referência: o
+                  teto e o preço impressos podem ser diferentes da prévia.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 shrink-0 text-xs"
+                  onClick={() => escolherListaCmed("")}
+                >
+                  Ver com {result.resultados.cmed.lista.rotuloVigente}
+                </Button>
+              </div>
+            )}
           <div className="grid gap-3 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">

@@ -535,6 +535,8 @@ export interface CuradoriaDialogProps {
       inicio?: string | null;
     } | null;
     corrigirIpca?: boolean;
+    /** Lista CMED consultada na tela; ausente = a última publicada (a do relatório). */
+    competenciaCmed?: string | null;
   } | null;
   exclusoesIniciais: ExclusaoRegistro[];
   orcamentosIniciais: OrcamentoFornecedor[];

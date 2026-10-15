@@ -44,7 +44,7 @@ const FONTES: Fonte[] = [
     sistema:   "ANVISA — lista de preços",
     sistemaUrl: "https://www.gov.br/anvisa/pt-br/assuntos/medicamentos/cmed/precos",
     dataKey:   "cmed",
-    descricao: "Preço máximo de venda ao governo (PMVG), teto da Pesquisa de Preços. Data = vigência da tabela carregada.",
+    descricao: "Preço máximo de venda ao governo (PMVG), teto da Pesquisa de Preços. Data = mês da última lista mensal carregada; os relatórios usam a última publicada até a data de referência.",
   },
   {
     nome:       "Compras.gov.br — Painel de Preços",

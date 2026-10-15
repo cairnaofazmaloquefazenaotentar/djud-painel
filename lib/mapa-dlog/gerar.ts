@@ -64,6 +64,8 @@ export interface MetaMapa {
   cmedVigencia: Date | null;
   /** Publicação oficial da lista CMED usada, quando conhecida. */
   cmedPublicacao: Date | null;
+  /** Lista mensal do teto ("ago/2026"); null sem as listas mensais. */
+  cmedLista?: string | null;
   /** Linhas "fonte — situação" para a aba Parâmetros. */
   fontesConsultadas: string[];
   /** Período aplicado às fontes (texto para a aba Parâmetros). */
@@ -689,9 +691,11 @@ function abaCmed(wb: ExcelJS.Workbook, itens: MapaItem[], meta: MetaMapa, plano:
   ws.getCell("A1").font = { name: FONTE, size: 16, bold: true };
   ws.getCell("A2").value = TITULO.cmedSub;
   ws.getCell("A2").font = { name: FONTE, size: 11, bold: true };
-  ws.getCell("A3").value = meta.cmedPublicacao
-    ? `Publicada em ${fmtDataCalendario(meta.cmedPublicacao)}.`
-    : `Lista CMED vigente no painel${meta.cmedVigencia ? ` (vigência de ${fmtDataCalendario(meta.cmedVigencia)})` : ""}.`;
+  ws.getCell("A3").value = meta.cmedLista
+    ? `Lista CMED de ${meta.cmedLista} — a última publicada até a data de referência.`
+    : meta.cmedPublicacao
+      ? `Publicada em ${fmtDataCalendario(meta.cmedPublicacao)}.`
+      : `Lista CMED vigente no painel${meta.cmedVigencia ? ` (vigência de ${fmtDataCalendario(meta.cmedVigencia)})` : ""}.`;
   ws.getCell("A3").font = { name: FONTE, size: 10, italic: true };
 
   for (const item of itens) {

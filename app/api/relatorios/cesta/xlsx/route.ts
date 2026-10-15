@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
         ...parametrosDoItem(c, dataReferencia, escolhaDo(c.id, c)),
         registrosCompletos: true,
       })),
-      contextoBases(),
+      contextoBases(dataReferencia),
     ]);
 
     const itens = apurados.map(({ item: c, resultado }, i) =>
@@ -98,6 +98,7 @@ export async function POST(request: NextRequest) {
       dataReferencia: new Date(`${dataReferencia}T12:00:00Z`),
       cmedVigencia: bases.cmedVigencia,
       cmedPublicacao: bases.cmedPublicacao,
+      cmedLista: bases.cmedLista,
       fontesConsultadas: bases.fontesConsultadas,
       periodo: periodoParaMapa(apurados.map((a) => a.resultado)),
       ipca: await ipcaParaMapa(apurados.map((a) => a.resultado)),

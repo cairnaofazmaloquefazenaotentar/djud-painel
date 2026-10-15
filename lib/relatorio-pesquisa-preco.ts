@@ -1,4 +1,5 @@
 import { ROTULO_FILTRO, filtrosAtivos } from "@/lib/pesquisa-preco-filtros";
+import { descreverListaCmed, rotuloCap } from "@/lib/cmed-competencia";
 import {
   NOME_FONTE_CURADA,
   ORDEM_TIPOS_INFORMADOS,
@@ -380,12 +381,16 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
   const { item, unidade, resultados } = resultado;
   const cmed = resultados.cmed;
   if (cmed.total === 0) {
-    return `<p style="color:#c0392b;font-style:italic;font-size:11px;">Nenhum registro ANVISA com preço CMED vigente para este código na unidade de fornecimento selecionada. Não há preço-teto regulado pela ANVISA para este item.</p>`;
+    return `<p style="color:#c0392b;font-style:italic;font-size:11px;">Nenhum registro ANVISA com preço ${
+      cmed.lista ? `na ${esc(descreverListaCmed(cmed.lista))}` : "CMED vigente"
+    } para este código na unidade de fornecimento selecionada. Não há preço-teto regulado pela ANVISA para este item.</p>`;
   }
   const capAplica = cmed.registros.some((r) => r.cap);
   const considerados = cmed.registros.filter((r) => r.excluidoPor === null);
   return `
-      <p style="font-size:11px;margin-bottom:8px;">Foram encontrados <strong>${cmed.total}</strong> registro(s) ANVISA com preço na tabela CMED vigente (Câmara de Regulação do Mercado de Medicamentos — ANVISA) para ${item.tipo === "CATMAT" ? `o CATMAT ${esc(item.catmat)}` : `o registro ${esc(item.registro)}`}, na unidade de fornecimento <strong>${esc(unidade)}</strong>. O PMVG da tabela CMED é expresso por embalagem; o valor unitário abaixo corresponde ao PMVG dividido pela quantidade de unidades por embalagem (Qt_Embal).${
+      <p style="font-size:11px;margin-bottom:8px;">Foram encontrados <strong>${cmed.total}</strong> registro(s) ANVISA com preço na ${
+        cmed.lista ? esc(descreverListaCmed(cmed.lista)) : "tabela CMED vigente"
+      } (Câmara de Regulação do Mercado de Medicamentos — ANVISA) para ${item.tipo === "CATMAT" ? `o CATMAT ${esc(item.catmat)}` : `o registro ${esc(item.registro)}`}, na unidade de fornecimento <strong>${esc(unidade)}</strong>. O PMVG da tabela CMED é expresso por embalagem; o valor unitário abaixo corresponde ao PMVG dividido pela quantidade de unidades por embalagem (Qt_Embal).${
         cmed.semQtEmbalagem > 0
           ? ` <strong>${cmed.semQtEmbalagem}</strong> registro(s) sem quantidade por embalagem informada aparecem apenas com o preço por embalagem e não compõem o teto.`
           : ""
@@ -402,7 +407,7 @@ export function conteudoCmed(resultado: ResultadoPesquisa): string {
           resultado.recomendacao.escolha.regraTeto === "pmvg_referencia"
         )}
         ${estatBox("PMVG unitário máximo (sem impostos)", fmtBRL(cmed.pmvgUnitMax))}
-        ${capAplica ? estatBox("Desconto CAP obrigatório", "21,53% sobre PF", true) : ""}
+        ${capAplica ? estatBox("Desconto CAP obrigatório", `${rotuloCap(cmed.lista?.capPercentual)} sobre PF`, true) : ""}
       </div>
       <p style="font-size:10px;color:#444;margin-bottom:8px;">Teto adotado neste item: <strong>${esc(
         rotuloRegraTeto(resultado.recomendacao.escolha.regraTeto, resultado.recomendacao.escolha.aliquota)

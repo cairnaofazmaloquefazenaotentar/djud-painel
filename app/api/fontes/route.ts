@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { listarCompetencias } from "@/lib/cmed";
 import { NextResponse } from "next/server";
 
 export interface FontesData {
@@ -68,6 +69,10 @@ export async function GET() {
       db.precoCmed.aggregate({ _max: { vigencia: true } }),
       ultimasColetas(),
     ]);
+    // Com as listas mensais carregadas, a data é o mês da última lista (o teto
+    // usa a última publicada até a data de referência); senão, a vigência da
+    // tabela CMED única.
+    const ultimaLista = (await listarCompetencias())[0]?.competencia ?? null;
 
     const row = sismatRow[0];
 
@@ -76,7 +81,7 @@ export async function GET() {
       sismatEntradas: row?.sismatEntradas?.toISOString()        ?? null,
       sismatSaidas:   row?.sismatSaidas?.toISOString()          ?? null,
       fns:            row?.fns?.toISOString()                   ?? null,
-      cmed:           cmed._max.vigencia?.toISOString()         ?? null,
+      cmed:           ultimaLista ? `${ultimaLista}-01T00:00:00.000Z` : cmed._max.vigencia?.toISOString() ?? null,
       ...coletas,
     };
 

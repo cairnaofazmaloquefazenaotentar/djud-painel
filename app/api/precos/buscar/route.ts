@@ -3,6 +3,8 @@ export const runtime = "nodejs";
 import { auth } from "@/lib/auth";
 import { hasPermission } from "@/lib/permissions";
 import { classificarCodigo, normalizarPeriodo, pesquisarPrecos, validarPeriodo } from "@/lib/pesquisa-preco";
+import { listarCompetencias } from "@/lib/cmed";
+import { rotuloCompetencia } from "@/lib/cmed-aliquotas";
 import { NextRequest, NextResponse } from "next/server";
 
 /**
@@ -42,6 +44,8 @@ export async function POST(request: NextRequest) {
     duplicidadesRevertidas: body?.duplicidadesRevertidas ?? [],
     periodo: body?.periodo ?? null,
     corrigirIpca: body?.corrigirIpca !== false,
+    // "competencia" na query; a curadoria repassa os parâmetros da tela, que a chamam "competenciaCmed".
+    competenciaCmed: body?.competencia || body?.competenciaCmed ? String(body.competencia || body.competenciaCmed) : null,
   });
 }
 
@@ -63,6 +67,7 @@ export async function GET(request: NextRequest) {
       inicio: sp.get("inicio"),
     },
     corrigirIpca: sp.get("ipca") !== "0",
+    competenciaCmed: sp.get("competencia") || null,
   });
 }
 
@@ -91,6 +96,16 @@ async function responder(p: Parameters<typeof pesquisarPrecos>[0]): Promise<Next
     // Ampliar o período sem justificativa é recusado, não corrigido em silêncio (D1).
     const erroPeriodo = validarPeriodo(normalizarPeriodo(p.periodo));
     if (erroPeriodo) return NextResponse.json({ error: erroPeriodo }, { status: 400 });
+    // Lista CMED consultada (só a tela): tem de ser uma das carregadas.
+    if (p.competenciaCmed) {
+      const carregadas = await listarCompetencias();
+      if (!/^\d{4}-\d{2}$/.test(p.competenciaCmed) || !carregadas.some((c) => c.competencia === p.competenciaCmed)) {
+        return NextResponse.json(
+          { error: `Lista CMED de ${rotuloCompetencia(p.competenciaCmed)} não está carregada no painel.` },
+          { status: 400 }
+        );
+      }
+    }
 
     const resultado = await pesquisarPrecos(p);
     if (!resultado) {

@@ -41,6 +41,7 @@ import {
 } from "@/lib/pesquisa-preco-fontes";
 import {
   descricaoPeriodo,
+  hojeBrasilia,
   janelaDaFonte,
   normalizarPeriodo,
   validarPeriodo,
@@ -55,6 +56,15 @@ import { marcarDuplicidades } from "@/lib/pesquisa-preco-duplicidade";
 import { consultarDadosAbertos, type ResultadoDadosAbertos } from "@/lib/dados-abertos/pesquisa";
 import { situacaoColetas, type OrigemColeta, type SituacaoColeta } from "@/lib/dados-abertos/situacao";
 import { urlPncp } from "@/lib/pncp";
+import {
+  escolherLista,
+  linhasDaCompetencia,
+  listarCompetencias,
+  registrosComPrecoNaCompetencia,
+  traduzirExclusoesLegadas,
+  type LinhaCmed,
+} from "@/lib/cmed";
+import { rotuloCap, type ListaCmedUsada } from "@/lib/cmed-competencia";
 import {
   ESCOLHA_PADRAO,
   ROTULO_METODO,
@@ -399,6 +409,8 @@ export interface CmedResultado {
   semQtEmbalagem: number;
   /** Registros de teto desconsiderados manualmente. */
   excluidosManualmente: number;
+  /** Lista mensal usada no teto; null sem as listas mensais (PrecoCmed). */
+  lista: ListaCmedUsada | null;
 }
 
 export interface Recomendacao {
@@ -495,6 +507,11 @@ export interface ParametrosPesquisa {
   corrigirIpca?: boolean;
   /** ids de prováveis duplicatas que o responsável manteve no conjunto único (P18). */
   duplicidadesRevertidas?: string[] | unknown;
+  /**
+   * Lista CMED consultada ("AAAA-MM"). Só a tela a envia: sem ela — e sempre
+   * nos relatórios — vale a última publicada até a data de referência.
+   */
+  competenciaCmed?: string | null;
   /**
    * Devolve TODOS os registros da amostra de cada fonte, e não só os
    * REGISTROS_ANALISE mais recentes, além do EAN da CMED. É o modo do mapa
@@ -848,6 +865,9 @@ export async function mapearUnidades(item: ItemPesquisa): Promise<MapaUnidades> 
   };
   const registrosComPreco = async (): Promise<string[]> => {
     if (!registrosIds.length) return [];
+    // A contagem "CMED" das unidades é a da lista vigente hoje — a do relatório.
+    const lista = escolherLista(await listarCompetencias(), hojeBrasilia(), null);
+    if (lista) return registrosComPrecoNaCompetencia(registrosIds, lista.competencia);
     const rows = await db.precoCmed.findMany({
       where: { registro: { in: registrosIds } },
       select: { registro: true },
@@ -985,6 +1005,31 @@ interface LinhaPncp {
 
 const toISO = (d: Date) => d.toISOString();
 
+/** Linha de PrecoCmed (sem listas mensais) no formato das listas mensais. */
+function linhaDePrecoCmed(r: PrecoCmed): LinhaCmed {
+  return {
+    id: r.id,
+    registro: r.registro,
+    codigoGgrem: r.codigoGgrem,
+    ean: null,
+    substancia: r.substancia,
+    produto: r.produto,
+    apresentacao: r.apresentacao,
+    laboratorio: r.laboratorio,
+    cnpj: r.cnpj,
+    classeTerap: r.classeTerap,
+    tipoProduto: r.tipoProduto,
+    regimePreco: r.regimePreco,
+    pmvgSemImpostos: r.pmvgSemImpostos,
+    pmvg0: r.pmvg0,
+    pmvg12: r.pmvg12,
+    pmvg17: r.pmvg17,
+    pmvg18: r.pmvg18,
+    pf0: r.pf0,
+    cap: r.cap,
+  };
+}
+
 /**
  * EAN 1 de cada apresentação (código GGREM), da versão mais recente na lista
  * mensal da CMED. A busca vai pelo registro (indexado) e o GGREM separa as
@@ -1028,10 +1073,14 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   if (periodoInvalido) periodo = { ...periodo, mesesMercado: 12, inicio: null, justificativaAmpliacao: null };
   const janela = (fonte: FonteMercadoChave): JanelaFonte => janelaDaFonte(fonte, periodo);
   const corrigirIpca = p.corrigirIpca !== false;
-  const [{ brutas, bpsDaApi }, coletas] = await Promise.all([
+  const [{ brutas, bpsDaApi }, coletas, competenciasCmed] = await Promise.all([
     mapearUnidades(item),
     item.catmat ? situacaoColetas(item.catmat) : Promise.resolve(null),
+    listarCompetencias(),
   ]);
+  // Lista CMED do teto: a consultada na tela, se houver; senão — e sempre nos
+  // relatórios — a última publicada até a data de referência.
+  const listaCmed = escolherLista(competenciasCmed, periodo.dataReferencia, p.competenciaCmed);
   const variantes = item.catmat ? variantesCatmat(item.catmat) : null;
 
   const brutasBps = brutas.bps.get(unidade) ?? [];
@@ -1182,13 +1231,14 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     });
     return rows;
   };
-  const buscarCmed = async (): Promise<PrecoCmed[]> => {
+  const buscarCmed = async (): Promise<LinhaCmed[]> => {
     if (!registrosDaUnidade.length) return [];
+    if (listaCmed) return linhasDaCompetencia(registrosDaUnidade, listaCmed.competencia);
     const rows = await db.precoCmed.findMany({
       where: { registro: { in: registrosDaUnidade } },
       orderBy: [{ substancia: "asc" }, { produto: "asc" }, { apresentacao: "asc" }],
     });
-    return rows;
+    return rows.map(linhaDePrecoCmed);
   };
   type Contagem = { total: number; fora: number; maisRecenteFora: string | null };
   const SEM_CONTAGEM: Contagem = { total: 0, fora: 0, maisRecenteFora: null };
@@ -1569,7 +1619,9 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
 
   // EAN só no modo do mapa: vem da lista mensal (CmedPrecoVersao), uma consulta
   // a mais que a tela não precisa.
-  const eans = completos ? await eansPorApresentacao(cmedRows) : new Map<string, string>();
+  // (As listas mensais já trazem o EAN em cada linha.)
+  const eans = completos && !listaCmed ? await eansPorApresentacao(cmedRows) : new Map<string, string>();
+  if (listaCmed) await traduzirExclusoesLegadas(excluidosPorFonte.get("cmed"));
 
   // CMED: preço por embalagem → por unidade de fornecimento (÷ Qt_Embal).
   const cmedTodos: RegistroCmedPreco[] = cmedRows.map((r) => {
@@ -1589,7 +1641,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
       apresentacao: r.apresentacao,
       laboratorio: r.laboratorio,
       cnpj: r.cnpj,
-      ean: (r.codigoGgrem ? eans.get(r.codigoGgrem) : undefined) ?? null,
+      ean: r.ean ?? (r.codigoGgrem ? eans.get(r.codigoGgrem) : undefined) ?? null,
       classeTerapeutica: r.classeTerap,
       tipoProduto: r.tipoProduto,
       regimePreco: r.regimePreco,
@@ -1632,6 +1684,7 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
     pmvgUnitMax: pmvgUnitarios.length ? Math.max(...pmvgUnitarios) : null,
     semQtEmbalagem: cmedConsiderados.filter((r) => r.pmvgUnitario == null).length,
     excluidosManualmente: cmedRegistros.length - cmedConsiderados.length,
+    lista: listaCmed,
   };
 
   // ── Consolidação (art. 6º — média, mediana e menor valor) ──
@@ -1756,7 +1809,17 @@ export async function pesquisarPrecos(p: ParametrosPesquisa): Promise<ResultadoP
   }
   if (capAplica) {
     observacoes.push(
-      "Produto sujeito ao desconto CAP de 21,53% sobre o PF nas aquisições não judiciais."
+      `Produto sujeito ao desconto CAP de ${rotuloCap(listaCmed?.capPercentual)} sobre o PF nas aquisições não judiciais.`
+    );
+  }
+  if (listaCmed && listaCmed.competencia !== listaCmed.vigente) {
+    observacoes.push(
+      `Teto consultado na lista CMED de ${listaCmed.rotulo}. O relatório usa a lista de ${listaCmed.rotuloVigente}, a última publicada até a data de referência — o teto impresso pode ser outro.`
+    );
+  }
+  if (listaCmed && !listaCmed.semImpostosPublicado) {
+    observacoes.push(
+      `A lista CMED de ${listaCmed.rotulo} não publica o PMVG sem impostos: o teto do painel usa o PMVG a 0%.`
     );
   }
   if (cmed.semQtEmbalagem > 0) {

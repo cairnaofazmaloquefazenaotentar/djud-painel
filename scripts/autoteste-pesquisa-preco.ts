@@ -1,7 +1,8 @@
 /**
  * Autoteste dos módulos puros da Pesquisa de Preços que a avaliação da DLOG
  * (out/2026) acrescentou: período do art. 5º (D1), IPCA (D2), duplicidade
- * entre bases (P18) e a escolha gravada na cesta (P11/P12).
+ * entre bases (P18), a escolha gravada na cesta (P11/P12) e a lista CMED do
+ * teto (a consultada na tela × a vigente na data de referência, do relatório).
  *
  * Uso:
  *   npx tsx scripts/autoteste-pesquisa-preco.ts
@@ -21,6 +22,14 @@ import { fatorIpca, mesAnterior, mesBaseIpca, type IndicesIpca } from "../lib/ip
 import { marcarDuplicidades, type RegistroParaDuplicidade } from "../lib/pesquisa-preco-duplicidade";
 import { corrigidoPeloIpca, ORDEM_FONTES } from "../lib/pesquisa-preco-fontes";
 import { escolhaGravada } from "../lib/pesquisa-preco-metodo";
+import {
+  chaveApresentacaoCmed,
+  competenciaVigenteEm,
+  descreverListaCmed,
+  rotuloCap,
+  valorNaAliquota,
+} from "../lib/cmed-competencia";
+import { ALIQUOTAS_ICMS } from "../lib/cmed-aliquotas";
 
 let falhas = 0;
 let casos = 0;
@@ -260,6 +269,34 @@ confere(
   "valor desconhecido é ignorado",
   escolhaGravada({ metodoPreco: "inventado", regraTeto: "pmvg_referencia", aliquotaTeto: "99" }),
   { regraTeto: "pmvg_referencia" }
+);
+
+// ── Lista CMED do teto (decisão do usuário, out/2026) ───────────────────────
+
+const listas = ["2026-08", "2026-07", "2026-06", "2020-01"];
+confere("lista vigente: a última até o mês da referência", competenciaVigenteEm(listas, "2026-10-15"), "2026-08");
+confere("lista vigente: o próprio mês da referência conta", competenciaVigenteEm(listas, "2026-07-01"), "2026-07");
+confere("lista vigente: referência no passado", competenciaVigenteEm(listas, "2026-06-30"), "2026-06");
+confere("lista vigente: antes da primeira lista", competenciaVigenteEm(listas, "2019-12-31"), null);
+confere("lista vigente: sem listas", competenciaVigenteEm([], "2026-10-15"), null);
+
+const pmvg = ALIQUOTAS_ICMS.map((_, i) => (i === 0 ? 100 : i === 4 ? 121.95 : null));
+confere("alíquota sem impostos (posição 0)", valorNaAliquota(pmvg, "SEM_IMPOSTOS"), 100);
+confere("alíquota 17% (posição 4)", valorNaAliquota(pmvg, "17"), 121.95);
+confere("alíquota não publicada", valorNaAliquota(pmvg, "18"), null);
+confere("array antigo, mais curto: posição ausente = sem preço", valorNaAliquota([100, 90], "23_ALC"), null);
+confere("JSON que não é array", valorNaAliquota({ "0": 1 }, "0"), null);
+
+confere("chave da apresentação: registro + GGREM", chaveApresentacaoCmed("1006811320035", "526815070044017", 77), "cmed:1006811320035:526815070044017");
+confere("chave sem GGREM: a versão", chaveApresentacaoCmed("1006811320035", null, 77), "cmed:1006811320035:v77");
+confere("CAP da lista", rotuloCap(21.5349), "21,53%");
+confere("CAP sem lista mensal", rotuloCap(null), "21,53%");
+const usada = { competencia: "2026-08", rotulo: "ago/2026", vigente: "2026-08", rotuloVigente: "ago/2026", capPercentual: 21.53, semImpostosPublicado: true };
+confere("descrição: a lista do relatório", descreverListaCmed(usada), "lista CMED de ago/2026, a última publicada até a data de referência");
+confere(
+  "descrição: consulta de outra lista",
+  descreverListaCmed({ ...usada, competencia: "2026-03", rotulo: "mar/2026" }),
+  "lista CMED de mar/2026 (consulta; o relatório usa a de ago/2026, a última publicada até a data de referência)"
 );
 
 console.log(`${casos - falhas}/${casos} caso(s) conferido(s).`);

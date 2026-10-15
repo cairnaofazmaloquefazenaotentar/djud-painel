@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
         duplicidadesRevertidas: b.duplicidadesRevertidas,
         registrosCompletos: true,
       }),
-      contextoBases(),
+      contextoBases(periodo.dataReferencia),
     ]);
     if (!resultado) {
       return NextResponse.json(
@@ -113,6 +113,7 @@ export async function POST(request: NextRequest) {
       dataReferencia: new Date(`${resultado.periodo.dataReferencia}T12:00:00Z`),
       cmedVigencia: bases.cmedVigencia,
       cmedPublicacao: bases.cmedPublicacao,
+      cmedLista: bases.cmedLista,
       fontesConsultadas: bases.fontesConsultadas,
       periodo: periodoParaMapa([resultado]),
       ipca: await ipcaParaMapa([resultado]),

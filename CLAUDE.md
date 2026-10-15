@@ -349,8 +349,19 @@ python scripts/conferir_mapa_dlog.py --gerado Mapa.xlsx [--modelo DLOG.xlsx] [--
   por sha1 do conteúdo) e `CmedVigencia` (competência × versão), carregadas por
   `scripts/import_cmed_mensal.py` das planilhas `NNN.mmm.aa.xlsx` (001 = jan/2017; a pasta
   `cmed_originais_arr/` fica fora do git). **Carregado: jan/2020 → ago/2026 (037–116).**
-- **A tela ainda lê `PrecoCmed`.** Os filtros Mês de Competência / Alíquota ICMS e o uso destas tabelas
-  no teto são o passo seguinte de `PROMPT_CMED_mensal_pesquisa_precos.md` (seção 7).
+- **O teto da Pesquisa de Preços lê estas listas** (`lib/cmed.ts`, no mesmo formato de linha que
+  `PrecoCmed` tinha — o resto do cálculo não muda). Decisão do usuário (out/2026): a tela consulta
+  qualquer competência carregada (seletor "Lista CMED (teto)"), mas **os relatórios — HTML e XLSX,
+  avulsa e cesta — usam sempre a última lista publicada até a data de referência**
+  (`competenciaVigenteEm`, `lib/cmed-competencia.ts`, puro). As rotas de relatório montam os
+  parâmetros campo a campo e nunca repassam a competência; a tela e a modal de emissão avisam
+  quando a consulta está noutra lista. Sem listas mensais, a pesquisa cai para `PrecoCmed`.
+- Curadoria da CMED pela chave estável da apresentação, `cmed:<registro>:<GGREM>` (vale em qualquer
+  competência); exclusões gravadas com o id de `PrecoCmed` são traduzidas por
+  `traduzirExclusoesLegadas`. O CAP impresso é o `capPercentual` da lista (`rotuloCap`).
+- Ainda não feito da seção 7 do prompt CMED: o filtro de **Alíquota ICMS** (o teto do painel segue
+  "sem impostos", ou 0% na lista que não o publica; o da DLOG, a alíquota da escolha), P4 (isento a
+  0%), P7 (liberados listados), P8 (alerta de Qt_Embal) e P9 (regra do catálogo).
 - `pf`/`pmvg` = arrays JSON alinhados a `ALIQUOTAS_ICMS` (`lib/cmed-aliquotas.ts`, espelho
   `scripts/cmed_layout.py`). **Append-only**: nunca reordenar; alíquota nova entra no fim dos dois
   arquivos (o hash usa código → valor, então acrescentar não muda versões gravadas; arrays antigos

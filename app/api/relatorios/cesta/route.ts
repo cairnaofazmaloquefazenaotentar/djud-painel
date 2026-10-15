@@ -48,6 +48,7 @@ import {
   validadeEm,
   type MetaRelatorio,
 } from "@/lib/relatorio-pesquisa-preco";
+import { rotuloCap } from "@/lib/cmed-competencia";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,7 +215,7 @@ function detalhamentoItem(p: ItemProcessado, indice: number): string {
       </tr>
     </table>
     ${pmvgAplicado ? `<p style="font-size:10px;color:#c0392b;margin-bottom:4px;">* Teto PMVG aplicado — preço de mercado acima do limite regulatório ANVISA/CMED.</p>` : ""}
-    ${capAplica ? `<p style="font-size:10px;color:#c0392b;margin-bottom:4px;">* Produto sujeito a desconto CAP de 21,53% sobre o PF nas aquisições não judiciais.</p>` : ""}
+    ${capAplica ? `<p style="font-size:10px;color:#c0392b;margin-bottom:4px;">* Produto sujeito a desconto CAP de ${rotuloCap(r.resultados.cmed.lista?.capPercentual)} sobre o PF nas aquisições não judiciais.</p>` : ""}
     <p style="font-size:10px;margin-bottom:4px;"><strong>Método:</strong> ${esc(ROTULO_METODO[r.recomendacao.escolha.metodo].longo)} · <strong>Teto:</strong> ${esc(rotuloRegraTeto(r.recomendacao.escolha.regraTeto, r.recomendacao.escolha.aliquota))}</p>
     <p style="font-size:10px;margin-bottom:6px;"><strong>Justificativa do preço adotado:</strong> ${esc(p.justificativa)}</p>
     ${p.cesta.observacao ? `<p style="font-size:10px;margin-bottom:6px;"><strong>Observação do solicitante:</strong> ${esc(p.cesta.observacao)}</p>` : ""}`;
