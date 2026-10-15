@@ -1,0 +1,35 @@
+{
+ "_fonte": "GET /modulo-arp/1.1_consultarARP_Id?numeroControlePncpAta=00394429000100-1-000617/2026-000014 (15/10/2026)",
+ "resultado": [
+  {
+   "numeroAtaRegistroPreco": "00676/2026",
+   "codigoUnidadeGerenciadora": "120195",
+   "nomeUnidadeGerenciadora": "CENTRO DE AQUISICOES ESPECIFICAS",
+   "codigoOrgao": 52111,
+   "nomeOrgao": "COMANDO DA AERONAUTICA",
+   "linkAtaPNCP": "https://pncp.gov.br/app/atas/00394429000100/2026/617/14",
+   "linkCompraPNCP": "https://pncp.gov.br/app/editais/00394429000100/2026/000617",
+   "numeroCompra": "90041",
+   "anoCompra": "2026",
+   "codigoModalidadeCompra": "05",
+   "nomeModalidadeCompra": "Pregão",
+   "dataAssinatura": "2026-06-11",
+   "dataVigenciaInicial": "2026-06-12",
+   "dataVigenciaFinal": "2027-06-11",
+   "valorTotal": 1479841.28,
+   "statusAta": "Ata de Registro de Preços",
+   "objeto": "ABERTURA DE PROCESSO ADMINISTRATIVO DE GESTÃO - MEDICAMENTOS ESPECÍFICOS.",
+   "quantidadeItens": 14,
+   "dataHoraAtualizacao": "2026-06-12T11:54:03",
+   "dataHoraInclusao": "2026-05-20T15:55:10",
+   "dataHoraExclusao": null,
+   "ataExcluido": false,
+   "numeroControlePncpAta": "00394429000100-1-000617/2026-000014",
+   "numeroControlePncpCompra": "00394429000100-1-000617/2026",
+   "idCompra": "12019505900412026"
+  }
+ ],
+ "totalRegistros": 1,
+ "totalPaginas": 1,
+ "paginasRestantes": 0
+}
